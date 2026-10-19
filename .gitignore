@@ -1,0 +1,75 @@
+# ──────────────────────────────────────────────
+# OpenSourceLens — .gitignore
+# ──────────────────────────────────────────────
+
+# ─── Python ───────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg
+*.egg-info/
+dist/
+build/
+*.whl
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# ─── Node.js / Next.js ───────────────────────
+node_modules/
+.next/
+out/
+.turbo/
+*.tsbuildinfo
+
+# ─── Data ─────────────────────────────────────
+# Raw and processed data (too large for version control)
+data/raw/
+data/processed/
+*.parquet
+
+# ─── Model Artifacts ─────────────────────────
+# Trained models, weights, and serialized objects
+models/
+*.pt
+*.pth
+*.pkl
+*.joblib
+*.bin
+*.safetensors
+*.onnx
+*.h5
+
+# ─── Environment and Secrets ─────────────────
+.env
+.env.local
+.env.*.local
+.env.production
+.env.development
+
+# ─── Jupyter ──────────────────────────────────
+.ipynb_checkpoints/
+
+# ─── IDE ──────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# ─── OS ───────────────────────────────────────
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# ─── Logs ─────────────────────────────────────
+*.log
+logs/
+
+# ─── Misc ─────────────────────────────────────
+*.bak
+*.tmp
+.cache/
