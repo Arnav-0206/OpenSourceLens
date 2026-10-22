@@ -1,0 +1,565 @@
+{
+  "generated_at_utc": "2026-10-19T11:33:25.369547+00:00",
+  "raw_directory": "data\\raw",
+  "global_summary": {
+    "total_repositories": 4,
+    "total_issues": 2400,
+    "total_open_issues": 1200,
+    "total_closed_issues": 1200,
+    "total_empty_bodies": 5,
+    "empty_bodies_percent": 0.21,
+    "total_missing_authors": 0,
+    "total_unlabeled_issues": 409,
+    "unlabeled_percent": 17.04,
+    "average_body_length_chars": 3436.3,
+    "total_distinct_labels": 350,
+    "top_15_global_labels": [
+      {
+        "name": "bot-triaged",
+        "count": 537
+      },
+      {
+        "name": "triaged",
+        "count": 448
+      },
+      {
+        "name": "needs-triage",
+        "count": 408
+      },
+      {
+        "name": "kind/bug",
+        "count": 251
+      },
+      {
+        "name": "oncall: pt2",
+        "count": 228
+      },
+      {
+        "name": "sig/node",
+        "count": 192
+      },
+      {
+        "name": "bug",
+        "count": 191
+      },
+      {
+        "name": "triage/accepted",
+        "count": 186
+      },
+      {
+        "name": "Feature request",
+        "count": 146
+      },
+      {
+        "name": "new release",
+        "count": 141
+      },
+      {
+        "name": "skipped",
+        "count": 138
+      },
+      {
+        "name": "module: correctness (silent)",
+        "count": 120
+      },
+      {
+        "name": "release triage",
+        "count": 115
+      },
+      {
+        "name": "module: inductor",
+        "count": 107
+      },
+      {
+        "name": "sig/api-machinery",
+        "count": 106
+      }
+    ]
+  },
+  "repositories": {
+    "huggingface/transformers": {
+      "metadata": {
+        "file": "huggingface__transformers.json",
+        "name": "transformers",
+        "owner": "huggingface",
+        "stars": 167850,
+        "forks": 34906,
+        "watchers": 1248,
+        "open_issues_github": 2326,
+        "language": "Python",
+        "license": "Apache License 2.0",
+        "created_at": "2018-10-29T13:56:00Z",
+        "updated_at": "2026-10-19T11:11:30Z"
+      },
+      "issues": {
+        "total": 600,
+        "open": 300,
+        "closed": 300,
+        "earliest_created": "2024-12-07T11:40:30Z",
+        "latest_created": "2026-10-19T11:15:54Z",
+        "earliest_closed": "2026-08-03T04:44:35Z",
+        "latest_closed": "2026-10-19T11:03:20Z",
+        "body_stats": {
+          "average_chars": 3716.1,
+          "median_chars": 2590,
+          "empty_bodies": 1,
+          "empty_percent": 0.17
+        },
+        "comments_stats": {
+          "issues_with_comments": 514,
+          "total_comments_declared": 1856,
+          "sampled_files": 7,
+          "sampled_comments": 8
+        },
+        "events_stats": {
+          "sampled_files": 10,
+          "sampled_events": 43,
+          "top_event_types": [
+            {
+              "event": "mentioned",
+              "count": 13
+            },
+            {
+              "event": "subscribed",
+              "count": 11
+            },
+            {
+              "event": "closed",
+              "count": 10
+            },
+            {
+              "event": "referenced",
+              "count": 4
+            },
+            {
+              "event": "assigned",
+              "count": 3
+            },
+            {
+              "event": "labeled",
+              "count": 2
+            }
+          ]
+        },
+        "labels": {
+          "distinct_count": 19,
+          "unlabeled_count": 253,
+          "unlabeled_percent": 42.17,
+          "top_10": [
+            {
+              "name": "Feature request",
+              "count": 146
+            },
+            {
+              "name": "bug",
+              "count": 123
+            },
+            {
+              "name": "New model",
+              "count": 55
+            },
+            {
+              "name": "WIP",
+              "count": 31
+            },
+            {
+              "name": "Vision",
+              "count": 6
+            },
+            {
+              "name": "Good Difficult Issue",
+              "count": 5
+            },
+            {
+              "name": "Good Second Issue",
+              "count": 5
+            },
+            {
+              "name": "Code agent slop",
+              "count": 4
+            },
+            {
+              "name": "contributions-welcome",
+              "count": 4
+            },
+            {
+              "name": "kernels",
+              "count": 2
+            }
+          ]
+        },
+        "quality": {
+          "missing_authors": 0,
+          "closed_missing_closed_at": 0
+        }
+      }
+    },
+    "kubernetes/kubernetes": {
+      "metadata": {
+        "file": "kubernetes__kubernetes.json",
+        "name": "kubernetes",
+        "owner": "kubernetes",
+        "stars": 128464,
+        "forks": 47442,
+        "watchers": 3268,
+        "open_issues_github": 3204,
+        "language": "Go",
+        "license": "Apache License 2.0",
+        "created_at": "2014-06-06T22:56:04Z",
+        "updated_at": "2026-10-19T11:09:54Z"
+      },
+      "issues": {
+        "total": 600,
+        "open": 300,
+        "closed": 300,
+        "earliest_created": "2026-06-26T09:47:50Z",
+        "latest_created": "2026-10-19T07:05:02Z",
+        "earliest_closed": "2026-06-29T14:28:05Z",
+        "latest_closed": "2026-10-16T18:32:20Z",
+        "body_stats": {
+          "average_chars": 3493.7,
+          "median_chars": 2659,
+          "empty_bodies": 0,
+          "empty_percent": 0.0
+        },
+        "comments_stats": {
+          "issues_with_comments": 600,
+          "total_comments_declared": 3166,
+          "sampled_files": 10,
+          "sampled_comments": 34
+        },
+        "events_stats": {
+          "sampled_files": 10,
+          "sampled_events": 76,
+          "top_event_types": [
+            {
+              "event": "labeled",
+              "count": 40
+            },
+            {
+              "event": "added_to_project_v2",
+              "count": 7
+            },
+            {
+              "event": "mentioned",
+              "count": 7
+            },
+            {
+              "event": "closed",
+              "count": 6
+            },
+            {
+              "event": "project_v2_item_status_changed",
+              "count": 5
+            },
+            {
+              "event": "assigned",
+              "count": 4
+            },
+            {
+              "event": "subscribed",
+              "count": 4
+            },
+            {
+              "event": "unlabeled",
+              "count": 2
+            }
+          ]
+        },
+        "labels": {
+          "distinct_count": 67,
+          "unlabeled_count": 0,
+          "unlabeled_percent": 0.0,
+          "top_10": [
+            {
+              "name": "needs-triage",
+              "count": 408
+            },
+            {
+              "name": "kind/bug",
+              "count": 251
+            },
+            {
+              "name": "sig/node",
+              "count": 192
+            },
+            {
+              "name": "triage/accepted",
+              "count": 186
+            },
+            {
+              "name": "sig/api-machinery",
+              "count": 106
+            },
+            {
+              "name": "kind/flake",
+              "count": 100
+            },
+            {
+              "name": "sig/scheduling",
+              "count": 89
+            },
+            {
+              "name": "kind/failing-test",
+              "count": 63
+            },
+            {
+              "name": "kind/feature",
+              "count": 58
+            },
+            {
+              "name": "needs-sig",
+              "count": 57
+            }
+          ]
+        },
+        "quality": {
+          "missing_authors": 0,
+          "closed_missing_closed_at": 0
+        }
+      }
+    },
+    "microsoft/vscode": {
+      "metadata": {
+        "file": "microsoft__vscode.json",
+        "name": "vscode",
+        "owner": "microsoft",
+        "stars": 193939,
+        "forks": 45875,
+        "watchers": 3552,
+        "open_issues_github": 21922,
+        "language": "TypeScript",
+        "license": "MIT License",
+        "created_at": "2015-09-03T20:23:38Z",
+        "updated_at": "2026-10-19T11:12:59Z"
+      },
+      "issues": {
+        "total": 600,
+        "open": 300,
+        "closed": 300,
+        "earliest_created": "2026-10-10T16:03:54Z",
+        "latest_created": "2026-10-19T11:09:40Z",
+        "earliest_closed": "2026-10-10T16:05:54Z",
+        "latest_closed": "2026-10-19T10:14:54Z",
+        "body_stats": {
+          "average_chars": 2842.3,
+          "median_chars": 2033,
+          "empty_bodies": 3,
+          "empty_percent": 0.5
+        },
+        "comments_stats": {
+          "issues_with_comments": 354,
+          "total_comments_declared": 722,
+          "sampled_files": 8,
+          "sampled_comments": 8
+        },
+        "events_stats": {
+          "sampled_files": 10,
+          "sampled_events": 42,
+          "top_event_types": [
+            {
+              "event": "labeled",
+              "count": 16
+            },
+            {
+              "event": "closed",
+              "count": 10
+            },
+            {
+              "event": "unlabeled",
+              "count": 7
+            },
+            {
+              "event": "assigned",
+              "count": 3
+            },
+            {
+              "event": "milestoned",
+              "count": 2
+            },
+            {
+              "event": "mentioned",
+              "count": 1
+            },
+            {
+              "event": "subscribed",
+              "count": 1
+            },
+            {
+              "event": "unsubscribed",
+              "count": 1
+            }
+          ]
+        },
+        "labels": {
+          "distinct_count": 90,
+          "unlabeled_count": 152,
+          "unlabeled_percent": 25.33,
+          "top_10": [
+            {
+              "name": "new release",
+              "count": 141
+            },
+            {
+              "name": "insiders-released",
+              "count": 75
+            },
+            {
+              "name": "bug",
+              "count": 68
+            },
+            {
+              "name": "triage-needed",
+              "count": 55
+            },
+            {
+              "name": "spam",
+              "count": 47
+            },
+            {
+              "name": "testplan-item",
+              "count": 38
+            },
+            {
+              "name": "info-needed",
+              "count": 30
+            },
+            {
+              "name": "feature-request",
+              "count": 18
+            },
+            {
+              "name": "WSL",
+              "count": 16
+            },
+            {
+              "name": "regression",
+              "count": 16
+            }
+          ]
+        },
+        "quality": {
+          "missing_authors": 0,
+          "closed_missing_closed_at": 0
+        }
+      }
+    },
+    "pytorch/pytorch": {
+      "metadata": {
+        "file": "pytorch__pytorch.json",
+        "name": "pytorch",
+        "owner": "pytorch",
+        "stars": 104908,
+        "forks": 32875,
+        "watchers": 1814,
+        "open_issues_github": 17671,
+        "language": "Python",
+        "license": "Other",
+        "created_at": "2016-08-13T05:26:41Z",
+        "updated_at": "2026-10-19T11:09:55Z"
+      },
+      "issues": {
+        "total": 600,
+        "open": 300,
+        "closed": 300,
+        "earliest_created": "2026-09-14T17:39:09Z",
+        "latest_created": "2026-10-19T08:46:13Z",
+        "earliest_closed": "2026-09-15T04:02:45Z",
+        "latest_closed": "2026-10-19T08:00:14Z",
+        "body_stats": {
+          "average_chars": 3693.3,
+          "median_chars": 2542,
+          "empty_bodies": 1,
+          "empty_percent": 0.17
+        },
+        "comments_stats": {
+          "issues_with_comments": 394,
+          "total_comments_declared": 817,
+          "sampled_files": 8,
+          "sampled_comments": 19
+        },
+        "events_stats": {
+          "sampled_files": 10,
+          "sampled_events": 79,
+          "top_event_types": [
+            {
+              "event": "labeled",
+              "count": 38
+            },
+            {
+              "event": "mentioned",
+              "count": 19
+            },
+            {
+              "event": "subscribed",
+              "count": 15
+            },
+            {
+              "event": "added_to_project_v2",
+              "count": 3
+            },
+            {
+              "event": "closed",
+              "count": 3
+            },
+            {
+              "event": "assigned",
+              "count": 1
+            }
+          ]
+        },
+        "labels": {
+          "distinct_count": 176,
+          "unlabeled_count": 4,
+          "unlabeled_percent": 0.67,
+          "top_10": [
+            {
+              "name": "bot-triaged",
+              "count": 537
+            },
+            {
+              "name": "triaged",
+              "count": 448
+            },
+            {
+              "name": "oncall: pt2",
+              "count": 228
+            },
+            {
+              "name": "skipped",
+              "count": 138
+            },
+            {
+              "name": "module: correctness (silent)",
+              "count": 120
+            },
+            {
+              "name": "release triage",
+              "count": 115
+            },
+            {
+              "name": "module: inductor",
+              "count": 107
+            },
+            {
+              "name": "triage review",
+              "count": 106
+            },
+            {
+              "name": "module: flaky-tests",
+              "count": 63
+            },
+            {
+              "name": "enhancement",
+              "count": 58
+            }
+          ]
+        },
+        "quality": {
+          "missing_authors": 0,
+          "closed_missing_closed_at": 0
+        }
+      }
+    }
+  }
+}

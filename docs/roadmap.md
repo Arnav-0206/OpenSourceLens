@@ -23,7 +23,7 @@ This roadmap defines the complete project execution plan from definition through
 
 ---
 
-## Phase 1 — Data Source & Collection Pipeline
+## Phase 1 — Data Source & Collection Pipeline ✅
 
 **Goal:** Build the pipeline: GitHub repository → GitHub API → raw dataset.
 
@@ -31,22 +31,22 @@ This roadmap defines the complete project execution plan from definition through
 
 | Step | Title | Description | Status |
 |---|---|---|---|
-| 1.1 | GitHub API exploration | Understand repository, issues, labels, comments, events, pagination, rate limit endpoints | Pending |
-| 1.2 | Build repository collector | Input: owner/repo → Output: repository metadata | Pending |
-| 1.3 | Build issue collector | Collect issue ID, title, body, state, timestamps, author, labels | Pending |
-| 1.4 | Build comment collector | Collect issue comments | Pending |
-| 1.5 | Build event collector | Collect useful issue events | Pending |
-| 1.6 | Handle pagination | Retrieve thousands of records, not just the first page | Pending |
-| 1.7 | Handle rate limits/errors | Authentication, retry handling, rate-limit handling, API errors | Pending |
-| 1.8 | Save raw data | Create `data/raw/` structure for repositories, issues, comments, events | Pending |
-| 1.9 | Run collection on selected repositories | Collect initial dataset from candidate repos | Pending |
-| 1.10 | Data inventory | Generate report: repo stats, issue counts, labels, comments, time range, missing data | Pending |
+| 1.1 | GitHub API exploration | Understand repository, issues, labels, comments, events, pagination, rate limit endpoints | ✅ Complete (`docs/1.1-github-api-exploration.md`) |
+| 1.2 | Build repository collector | Input: owner/repo → Output: repository metadata | ✅ Complete (`ml/data_collection/repository_collector.py`) |
+| 1.3 | Build issue collector | Collect issue ID, title, body, state, timestamps, author, labels | ✅ Complete (`ml/data_collection/issue_collector.py`) |
+| 1.4 | Build comment collector | Collect issue comments | ✅ Complete (`ml/data_collection/comment_collector.py`) |
+| 1.5 | Build event collector | Collect useful issue events | ✅ Complete (`ml/data_collection/event_collector.py`) |
+| 1.6 | Handle pagination | Retrieve thousands of records, not just the first page | ✅ Complete (`ml/data_collection/paginator.py`) |
+| 1.7 | Handle rate limits/errors | Authentication, retry handling, rate-limit handling, API errors | ✅ Complete (`ml/data_collection/github_client.py`) |
+| 1.8 | Save raw data | Create `data/raw/` structure for repositories, issues, comments, events | ✅ Complete (`ml/data_collection/storage.py`) |
+| 1.9 | Run collection on selected repositories | Collect initial dataset from candidate repos | ✅ Complete (`ml/data_collection/pipeline.py`) |
+| 1.10 | Data inventory | Generate report: repo stats, issue counts, labels, comments, time range, missing data | ✅ Complete (`docs/1.10-data-inventory.md`) |
 
 **Output:** A reproducible GitHub → raw-data pipeline.
 
 ---
 
-## Phase 2 — Data Cleaning & Dataset Construction
+## Phase 2 — Data Cleaning & Dataset Construction ✅
 
 **Goal:** Turn messy GitHub data into a proper dataset for analysis and modeling.
 
@@ -54,16 +54,16 @@ This roadmap defines the complete project execution plan from definition through
 
 | Step | Title | Status |
 |---|---|---|
-| 2.1 | Load raw data | Pending |
-| 2.2 | Inspect dataset | Pending |
-| 2.3 | Clean issue text | Pending |
-| 2.4 | Clean timestamps | Pending |
-| 2.5 | Handle missing values | Pending |
-| 2.6 | Remove irrelevant data | Pending |
-| 2.7 | Normalize labels | Pending |
-| 2.8 | Construct issue dataset | Pending |
-| 2.9 | Construct derived features | Pending |
-| 2.10 | Save processed dataset | Pending |
+| 2.1 | Load raw data | ✅ Complete (`ml/preprocessing/loader.py`) |
+| 2.2 | Inspect dataset | ✅ Complete (`ml/preprocessing/inspector.py`) |
+| 2.3 | Clean issue text | ✅ Complete (`ml/preprocessing/text_cleaner.py`) |
+| 2.4 | Clean timestamps | ✅ Complete (`ml/preprocessing/timestamp_cleaner.py`) |
+| 2.5 | Handle missing values | ✅ Complete (`ml/preprocessing/missing_handler.py`) |
+| 2.6 | Remove irrelevant data | ✅ Complete (`ml/preprocessing/filter.py`) |
+| 2.7 | Normalize labels | ✅ Complete (`ml/preprocessing/label_normalizer.py`) |
+| 2.8 | Construct issue dataset | ✅ Complete (`ml/preprocessing/dataset_builder.py`) |
+| 2.9 | Construct derived features | ✅ Complete (`ml/preprocessing/features.py`) |
+| 2.10 | Save processed dataset | ✅ Complete (`ml/preprocessing/storage_processed.py`) |
 
 **Output:** A clean, documented OpenSourceLens dataset.
 

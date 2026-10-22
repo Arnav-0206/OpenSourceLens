@@ -1,0 +1,9 @@
+# OpenSourceLens Project Dependencies
+
+# HTTP & API Collection
+requests>=2.31.0
+python-dotenv>=1.0.0
+
+# Tabular Data Processing & Storage (Phase 2+)
+pandas>=3.0.0
+pyarrow>=26.0.0

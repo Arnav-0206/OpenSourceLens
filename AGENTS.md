@@ -145,9 +145,9 @@ OpenSourceLens/
 | Phase | Title | Status |
 |---|---|---|
 | 0 | Project Definition & Planning | ✅ Complete |
-| 1 | Data Source & Collection Pipeline | 🔜 Next |
-| 2 | Data Cleaning & Dataset Construction | Pending |
-| 3 | Exploratory Data Analysis | Pending |
+| 1 | Data Source & Collection Pipeline | ✅ Complete |
+| 2 | Data Cleaning & Dataset Construction | ✅ Complete |
+| 3 | Exploratory Data Analysis | 🔜 Next |
 | 4 | Machine Learning Baseline | Pending |
 | 5 | NLP Enhancement | Pending |
 | 6 | Deep Learning & Transformer Model | Pending |
