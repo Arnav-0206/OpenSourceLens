@@ -149,8 +149,8 @@ OpenSourceLens/
 | 2 | Data Cleaning & Dataset Construction | ✅ Complete |
 | 3 | Exploratory Data Analysis | ✅ Complete |
 | 4 | Machine Learning Baseline | ✅ Complete |
-| 5 | NLP Enhancement | 🔜 Next |
-| 6 | Deep Learning & Transformer Model | Pending |
+| 5 | NLP Enhancement | ✅ Complete |
+| 6 | Deep Learning & Transformer Model | 🔜 Next |
 | 7 | Related Issue Detection | Pending |
 | 8 | Resolution Analysis & Prediction | Pending |
 | 9 | Database & Backend | Pending |

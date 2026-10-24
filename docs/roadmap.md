@@ -113,7 +113,7 @@ This roadmap defines the complete project execution plan from definition through
 
 ---
 
-## Phase 5 — NLP Enhancement
+## Phase 5 — NLP Enhancement ✅
 
 **Goal:** Improve how we represent GitHub issue text.
 
@@ -124,8 +124,8 @@ This roadmap defines the complete project execution plan from definition through
 | 5.1 | Improve text preprocessing | ✅ Complete (`ml/nlp/enhanced_preprocessor.py`) |
 | 5.2 | Experiment with title + body | ✅ Complete (`ml/nlp/title_body_experiment.py`) |
 | 5.3 | Experiment with different text representations | ✅ Complete (`ml/nlp/representations.py`) |
-| 5.4 | Analyze vocabulary/features | Pending |
-| 5.5 | Establish final classical NLP pipeline | Pending |
+| 5.4 | Analyze vocabulary/features | ✅ Complete (`ml/nlp/vocab_analysis.py`) |
+| 5.5 | Establish final classical NLP pipeline | ✅ Complete (`ml/nlp/final_pipeline.py`) |
 
 **Output:** A strong classical NLP baseline.
 
