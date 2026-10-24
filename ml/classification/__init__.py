@@ -10,6 +10,7 @@ from ml.classification.split import DatasetSplitter
 from ml.classification.features import TextFeaturePipeline
 from ml.classification.logistic_regression import LogisticRegressionBaseline
 from ml.classification.svm import SVMBaseline
+from ml.classification.evaluator import ClassifierEvaluator
 
 __all__ = [
     "ClassificationTargetDefiner",
@@ -17,4 +18,5 @@ __all__ = [
     "TextFeaturePipeline",
     "LogisticRegressionBaseline",
     "SVMBaseline",
+    "ClassifierEvaluator",
 ]

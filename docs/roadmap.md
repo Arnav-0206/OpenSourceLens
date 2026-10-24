@@ -106,7 +106,7 @@ This roadmap defines the complete project execution plan from definition through
 | 4.3 | Build feature representation (TF-IDF) | ✅ Complete (`ml/classification/features.py`) |
 | 4.4 | Train baseline model (Logistic Regression) | ✅ Complete (`ml/classification/logistic_regression.py`) |
 | 4.5 | Train second baseline (SVM) | ✅ Complete (`ml/classification/svm.py`) |
-| 4.6 | Evaluate | Pending |
+| 4.6 | Evaluate | ✅ Complete (`ml/classification/evaluator.py`) |
 | 4.7 | Error analysis | Pending |
 
 **Output:** A working classical ML issue classifier.
