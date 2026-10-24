@@ -101,7 +101,7 @@ This roadmap defines the complete project execution plan from definition through
 
 | Step | Title | Status |
 |---|---|---|
-| 4.1 | Define classification target | Pending |
+| 4.1 | Define classification target | ✅ Complete (`ml/classification/target_definition.py`) |
 | 4.2 | Define training/test strategy | Pending |
 | 4.3 | Build feature representation (TF-IDF) | Pending |
 | 4.4 | Train baseline model (Logistic Regression) | Pending |
