@@ -7,8 +7,10 @@ evaluation metrics, and error analysis.
 
 from ml.classification.target_definition import ClassificationTargetDefiner
 from ml.classification.split import DatasetSplitter
+from ml.classification.features import TextFeaturePipeline
 
 __all__ = [
     "ClassificationTargetDefiner",
     "DatasetSplitter",
+    "TextFeaturePipeline",
 ]
