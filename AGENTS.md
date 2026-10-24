@@ -148,8 +148,8 @@ OpenSourceLens/
 | 1 | Data Source & Collection Pipeline | ✅ Complete |
 | 2 | Data Cleaning & Dataset Construction | ✅ Complete |
 | 3 | Exploratory Data Analysis | ✅ Complete |
-| 4 | Machine Learning Baseline | 🟡 In Progress (Step 4.1 Done) |
-| 5 | NLP Enhancement | Pending |
+| 4 | Machine Learning Baseline | ✅ Complete |
+| 5 | NLP Enhancement | 🔜 Next |
 | 6 | Deep Learning & Transformer Model | Pending |
 | 7 | Related Issue Detection | Pending |
 | 8 | Resolution Analysis & Prediction | Pending |

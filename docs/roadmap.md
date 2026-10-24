@@ -93,7 +93,7 @@ This roadmap defines the complete project execution plan from definition through
 
 ---
 
-## Phase 4 — Machine Learning Baseline
+## Phase 4 — Machine Learning Baseline ✅
 
 **Goal:** Build the first predictive model. No Transformers yet.
 
@@ -107,7 +107,7 @@ This roadmap defines the complete project execution plan from definition through
 | 4.4 | Train baseline model (Logistic Regression) | ✅ Complete (`ml/classification/logistic_regression.py`) |
 | 4.5 | Train second baseline (SVM) | ✅ Complete (`ml/classification/svm.py`) |
 | 4.6 | Evaluate | ✅ Complete (`ml/classification/evaluator.py`) |
-| 4.7 | Error analysis | Pending |
+| 4.7 | Error analysis | ✅ Complete (`ml/classification/error_analysis.py`) |
 
 **Output:** A working classical ML issue classifier.
 

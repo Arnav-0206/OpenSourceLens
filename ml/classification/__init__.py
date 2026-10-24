@@ -11,6 +11,7 @@ from ml.classification.features import TextFeaturePipeline
 from ml.classification.logistic_regression import LogisticRegressionBaseline
 from ml.classification.svm import SVMBaseline
 from ml.classification.evaluator import ClassifierEvaluator
+from ml.classification.error_analysis import ClassificationErrorAnalyzer
 
 __all__ = [
     "ClassificationTargetDefiner",
@@ -19,4 +20,5 @@ __all__ = [
     "LogisticRegressionBaseline",
     "SVMBaseline",
     "ClassifierEvaluator",
+    "ClassificationErrorAnalyzer",
 ]
