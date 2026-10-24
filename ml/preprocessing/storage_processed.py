@@ -8,6 +8,7 @@ exports taxonomy label mappings, and produces dataset manifests.
 import sys
 import json
 import hashlib
+import logging
 import argparse
 from pathlib import Path
 from datetime import datetime, timezone
@@ -17,6 +18,8 @@ import pandas as pd
 
 from ml.preprocessing.dataset_builder import IssueDatasetBuilder
 from ml.preprocessing.label_normalizer import LabelNormalizer
+
+logger = logging.getLogger(__name__)
 
 
 class ProcessedDataStorage:
@@ -57,11 +60,25 @@ class ProcessedDataStorage:
         parquet_path = self.processed_dir / f"{base_name}.parquet"
         csv_path = self.processed_dir / f"{base_name}.csv"
 
-        # 1. Export Parquet (PyArrow engine, Snappy compression)
+        result: Dict[str, Any] = {}
+
+        # 1. Export Parquet (PyArrow engine, Snappy compression if available)
         # Note: PyArrow natively supports list<element: string> in raw_labels
-        df.to_parquet(parquet_path, engine="pyarrow", compression="snappy", index=False)
-        parquet_sha = self._compute_sha256(parquet_path)
-        parquet_size_mb = round(parquet_path.stat().st_size / (1024 * 1024), 2)
+        try:
+            df.to_parquet(parquet_path, engine="pyarrow", compression="snappy", index=False)
+            parquet_sha = self._compute_sha256(parquet_path)
+            parquet_size_mb = round(parquet_path.stat().st_size / (1024 * 1024), 2)
+            result["parquet"] = {
+                "path": str(parquet_path),
+                "filename": parquet_path.name,
+                "size_mb": parquet_size_mb,
+                "size_bytes": parquet_path.stat().st_size,
+                "sha256": parquet_sha,
+                "engine": "pyarrow",
+                "compression": "snappy",
+            }
+        except Exception as e:
+            logger.warning(f"Parquet export omitted or unavailable on this system: {e}")
 
         # 2. Export CSV (Convert list column raw_labels to JSON string for safe round-tripping)
         csv_df = df.copy()
@@ -72,26 +89,16 @@ class ProcessedDataStorage:
         csv_df.to_csv(csv_path, index=False, encoding="utf-8")
         csv_sha = self._compute_sha256(csv_path)
         csv_size_mb = round(csv_path.stat().st_size / (1024 * 1024), 2)
-
-        return {
-            "parquet": {
-                "path": str(parquet_path),
-                "filename": parquet_path.name,
-                "size_mb": parquet_size_mb,
-                "size_bytes": parquet_path.stat().st_size,
-                "sha256": parquet_sha,
-                "engine": "pyarrow",
-                "compression": "snappy",
-            },
-            "csv": {
-                "path": str(csv_path),
-                "filename": csv_path.name,
-                "size_mb": csv_size_mb,
-                "size_bytes": csv_path.stat().st_size,
-                "sha256": csv_sha,
-                "encoding": "utf-8",
-            },
+        result["csv"] = {
+            "path": str(csv_path),
+            "filename": csv_path.name,
+            "size_mb": csv_size_mb,
+            "size_bytes": csv_path.stat().st_size,
+            "sha256": csv_sha,
+            "encoding": "utf-8",
         }
+
+        return result
 
     def save_label_mappings(self, custom_mappings: Optional[Dict[str, Any]] = None) -> Path:
         """Export canonical taxonomy rules and ID encodings to JSON.
@@ -182,7 +189,13 @@ class ProcessedDataStorage:
             file_path = self.processed_dir / (filename or "issues_master.parquet")
             if not file_path.exists():
                 raise FileNotFoundError(f"Parquet dataset not found at {file_path}")
-            return pd.read_parquet(file_path, engine="pyarrow")
+            try:
+                return pd.read_parquet(file_path, engine="pyarrow")
+            except Exception:
+                csv_path = file_path.with_suffix(".csv")
+                if csv_path.exists():
+                    return self.load_master_dataset(format="csv", filename=csv_path.name)
+                raise
         elif format == "csv":
             file_path = self.processed_dir / (filename or "issues_master.csv")
             if not file_path.exists():

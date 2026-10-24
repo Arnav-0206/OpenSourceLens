@@ -31,7 +31,7 @@ This roadmap defines the complete project execution plan from definition through
 
 | Step | Title | Description | Status |
 |---|---|---|---|
-| 1.1 | GitHub API exploration | Understand repository, issues, labels, comments, events, pagination, rate limit endpoints | ✅ Complete (`docs/1.1-github-api-exploration.md`) |
+| 1.1 | GitHub API exploration | Understand repository, issues, labels, comments, events, pagination, rate limit endpoints | ✅ Complete (`ml/data_collection/explore_github_api.py`) |
 | 1.2 | Build repository collector | Input: owner/repo → Output: repository metadata | ✅ Complete (`ml/data_collection/repository_collector.py`) |
 | 1.3 | Build issue collector | Collect issue ID, title, body, state, timestamps, author, labels | ✅ Complete (`ml/data_collection/issue_collector.py`) |
 | 1.4 | Build comment collector | Collect issue comments | ✅ Complete (`ml/data_collection/comment_collector.py`) |
@@ -40,7 +40,7 @@ This roadmap defines the complete project execution plan from definition through
 | 1.7 | Handle rate limits/errors | Authentication, retry handling, rate-limit handling, API errors | ✅ Complete (`ml/data_collection/github_client.py`) |
 | 1.8 | Save raw data | Create `data/raw/` structure for repositories, issues, comments, events | ✅ Complete (`ml/data_collection/storage.py`) |
 | 1.9 | Run collection on selected repositories | Collect initial dataset from candidate repos | ✅ Complete (`ml/data_collection/pipeline.py`) |
-| 1.10 | Data inventory | Generate report: repo stats, issue counts, labels, comments, time range, missing data | ✅ Complete (`docs/1.10-data-inventory.md`) |
+| 1.10 | Data inventory | Generate report: repo stats, issue counts, labels, comments, time range, missing data | ✅ Complete (`ml/data_collection/inventory.py`) |
 
 **Output:** A reproducible GitHub → raw-data pipeline.
 
@@ -69,7 +69,7 @@ This roadmap defines the complete project execution plan from definition through
 
 ---
 
-## Phase 3 — Exploratory Data Analysis
+## Phase 3 — Exploratory Data Analysis ✅
 
 **Goal:** Understand the data before building any model. This is the core Data Science phase.
 
@@ -77,17 +77,17 @@ This roadmap defines the complete project execution plan from definition through
 
 | Step | Title | Status |
 |---|---|---|
-| 3.1 | Dataset overview | Pending |
-| 3.2 | Issue state analysis | Pending |
-| 3.3 | Label analysis | Pending |
-| 3.4 | Issue volume over time | Pending |
-| 3.5 | Repository comparison | Pending |
-| 3.6 | Issue text analysis | Pending |
-| 3.7 | Comment analysis | Pending |
-| 3.8 | Resolution-time analysis | Pending |
-| 3.9 | Correlation analysis | Pending |
-| 3.10 | Generate final visualizations | Pending |
-| 3.11 | Write actual findings | Pending |
+| 3.1 | Dataset overview | ✅ Complete (`ml/eda/overview.py`) |
+| 3.2 | Issue state analysis | ✅ Complete (`ml/eda/state_analysis.py`) |
+| 3.3 | Label analysis | ✅ Complete (`ml/eda/label_analysis.py`) |
+| 3.4 | Issue volume over time | ✅ Complete (`ml/eda/temporal_analysis.py`) |
+| 3.5 | Repository comparison | ✅ Complete (`ml/eda/repo_comparison.py`) |
+| 3.6 | Issue text analysis | ✅ Complete (`ml/eda/text_analysis.py`) |
+| 3.7 | Comment analysis | ✅ Complete (`ml/eda/comment_analysis.py`) |
+| 3.8 | Resolution-time analysis | ✅ Complete (`ml/eda/resolution_analysis.py`) |
+| 3.9 | Correlation analysis | ✅ Complete (`ml/eda/correlation_analysis.py`) |
+| 3.10 | Generate final visualizations | ✅ Complete (`ml/eda/visualizations.py`) |
+| 3.11 | Write actual findings | ✅ Complete (`ml/eda/report.py`, `ml/eda/eda_findings.ipynb`, `ml/eda/FINDINGS.md`) |
 
 **Output:** An EDA notebook/report with actual findings.
 
