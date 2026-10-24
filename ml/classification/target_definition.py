@@ -239,7 +239,7 @@ class ClassificationTargetDefiner:
             Clean pd.DataFrame guaranteed free of data leakage columns.
         """
         # Base identification and text features
-        base_cols = ["issue_id", "repo_name", "clean_title", "clean_body", "combined_text"]
+        base_cols = ["issue_id", "repo_name", "created_at", "clean_title", "clean_body", "combined_text"]
         available_base = [c for c in base_cols if c in self.labeled_df.columns]
 
         # Target columns
@@ -264,7 +264,7 @@ class ClassificationTargetDefiner:
 
     def get_unlabeled_pool(self) -> pd.DataFrame:
         """Return the reserved pool of unlabeled issues with all label leakage columns dropped."""
-        base_cols = ["issue_id", "repo_name", "clean_title", "clean_body", "combined_text"]
+        base_cols = ["issue_id", "repo_name", "created_at", "clean_title", "clean_body", "combined_text"]
         available_base = [c for c in base_cols if c in self.unlabeled_df.columns]
 
         aux_cols = [c for c in self.SAFE_AUXILIARY_FEATURES if c in self.unlabeled_df.columns and c not in self.LEAKAGE_COLUMNS]

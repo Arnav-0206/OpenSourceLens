@@ -6,7 +6,9 @@ evaluation metrics, and error analysis.
 """
 
 from ml.classification.target_definition import ClassificationTargetDefiner
+from ml.classification.split import DatasetSplitter
 
 __all__ = [
     "ClassificationTargetDefiner",
+    "DatasetSplitter",
 ]
