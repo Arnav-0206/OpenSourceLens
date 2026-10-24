@@ -5,7 +5,9 @@ vocabulary analysis, and feature refinement pipelines.
 """
 
 from ml.nlp.enhanced_preprocessor import EnhancedIssueTextPreprocessor
+from ml.nlp.title_body_experiment import TitleBodyExperimentRunner
 
 __all__ = [
     "EnhancedIssueTextPreprocessor",
+    "TitleBodyExperimentRunner",
 ]
