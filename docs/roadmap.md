@@ -121,7 +121,7 @@ This roadmap defines the complete project execution plan from definition through
 
 | Step | Title | Status |
 |---|---|---|
-| 5.1 | Improve text preprocessing | Pending |
+| 5.1 | Improve text preprocessing | ✅ Complete (`ml/nlp/enhanced_preprocessor.py`) |
 | 5.2 | Experiment with title + body | Pending |
 | 5.3 | Experiment with different text representations | Pending |
 | 5.4 | Analyze vocabulary/features | Pending |
