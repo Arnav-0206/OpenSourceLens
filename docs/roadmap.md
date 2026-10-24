@@ -131,7 +131,7 @@ This roadmap defines the complete project execution plan from definition through
 
 ---
 
-## Phase 6 — Deep Learning & Transformer Model
+## Phase 6 — Deep Learning & Transformer Model ✅
 
 **Goal:** Add a proper deep-learning/transformer component.
 
@@ -139,14 +139,14 @@ This roadmap defines the complete project execution plan from definition through
 
 | Step | Title | Status |
 |---|---|---|
-| 6.1 | Choose transformer (DistilBERT/BERT) | Pending |
-| 6.2 | Prepare transformer dataset | Pending |
-| 6.3 | Tokenization | Pending |
-| 6.4 | Fine-tune pretrained model | Pending |
-| 6.5 | Evaluate | Pending |
-| 6.6 | Compare with classical ML | Pending |
-| 6.7 | Error analysis | Pending |
-| 6.8 | Save trained model | Pending |
+| 6.1 | Choose transformer (DistilBERT/BERT) | ✅ Complete (`ml/deep_learning/model_selection.py`) |
+| 6.2 | Prepare transformer dataset | ✅ Complete (`ml/deep_learning/dataset_preparation.py`) |
+| 6.3 | Tokenization | ✅ Complete (`ml/deep_learning/tokenizer.py`) |
+| 6.4 | Fine-tune pretrained model | ✅ Complete (`ml/deep_learning/train.py`) |
+| 6.5 | Evaluate | ✅ Complete (`ml/deep_learning/evaluator.py`) |
+| 6.6 | Compare with classical ML | ✅ Complete (`ml/deep_learning/comparator.py`) |
+| 6.7 | Error analysis | ✅ Complete (`ml/deep_learning/error_analyzer.py`) |
+| 6.8 | Save trained model | ✅ Complete (`ml/deep_learning/pipeline.py`) |
 
 **Output:** A working transformer-based issue classifier and model comparison.
 
