@@ -8,9 +8,11 @@ evaluation metrics, and error analysis.
 from ml.classification.target_definition import ClassificationTargetDefiner
 from ml.classification.split import DatasetSplitter
 from ml.classification.features import TextFeaturePipeline
+from ml.classification.logistic_regression import LogisticRegressionBaseline
 
 __all__ = [
     "ClassificationTargetDefiner",
     "DatasetSplitter",
     "TextFeaturePipeline",
+    "LogisticRegressionBaseline",
 ]

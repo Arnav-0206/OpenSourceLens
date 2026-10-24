@@ -104,7 +104,7 @@ This roadmap defines the complete project execution plan from definition through
 | 4.1 | Define classification target | ✅ Complete (`ml/classification/target_definition.py`) |
 | 4.2 | Define training/test strategy | ✅ Complete (`ml/classification/split.py`) |
 | 4.3 | Build feature representation (TF-IDF) | ✅ Complete (`ml/classification/features.py`) |
-| 4.4 | Train baseline model (Logistic Regression) | Pending |
+| 4.4 | Train baseline model (Logistic Regression) | ✅ Complete (`ml/classification/logistic_regression.py`) |
 | 4.5 | Train second baseline (SVM) | Pending |
 | 4.6 | Evaluate | Pending |
 | 4.7 | Error analysis | Pending |
