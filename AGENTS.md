@@ -150,9 +150,9 @@ OpenSourceLens/
 | 3 | Exploratory Data Analysis | ✅ Complete |
 | 4 | Machine Learning Baseline | ✅ Complete |
 | 5 | NLP Enhancement | ✅ Complete |
-| 6 | Deep Learning & Transformer Model | 🔜 Next |
-| 7 | Related Issue Detection | Pending |
-| 8 | Resolution Analysis & Prediction | Pending |
+| 6 | Deep Learning & Transformer Model | ✅ Complete |
+| 7 | Related Issue Detection | ✅ Complete |
+| 8 | Resolution Analysis & Prediction | 🔜 Next |
 | 9 | Database & Backend | Pending |
 | 10 | Frontend / UI | Pending |
 | 11 | Full Integration | Pending |

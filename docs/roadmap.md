@@ -152,7 +152,7 @@ This roadmap defines the complete project execution plan from definition through
 
 ---
 
-## Phase 7 — Related Issue Detection
+## Phase 7 — Related Issue Detection ✅
 
 **Goal:** Given a new issue, find potentially related historical issues.
 
@@ -160,13 +160,13 @@ This roadmap defines the complete project execution plan from definition through
 
 | Step | Title | Status |
 |---|---|---|
-| 7.1 | Generate embeddings for issues | Pending |
-| 7.2 | Store embeddings | Pending |
-| 7.3 | Build similarity calculation | Pending |
-| 7.4 | Retrieve top-K similar issues | Pending |
-| 7.5 | Set/validate similarity threshold | Pending |
-| 7.6 | Evaluate retrieval quality | Pending |
-| 7.7 | Build related-issue output | Pending |
+| 7.1 | Generate embeddings for issues | ✅ Complete (`ml/related_issues/embedder.py`) |
+| 7.2 | Store embeddings | ✅ Complete (`ml/related_issues/store.py`) |
+| 7.3 | Build similarity calculation | ✅ Complete (`ml/related_issues/similarity.py`) |
+| 7.4 | Retrieve top-K similar issues | ✅ Complete (`ml/related_issues/retriever.py`) |
+| 7.5 | Set/validate similarity threshold | ✅ Complete (`ml/related_issues/threshold.py`) |
+| 7.6 | Evaluate retrieval quality | ✅ Complete (`ml/related_issues/evaluator.py`) |
+| 7.7 | Build related-issue output | ✅ Complete (`ml/related_issues/pipeline.py`) |
 
 **Output:** Working semantic related-issue detection.
 
