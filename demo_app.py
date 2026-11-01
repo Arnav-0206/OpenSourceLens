@@ -1,18 +1,15 @@
 """
-OpenSourceLens — Milestone Demonstration Application (Phases 0–7)
-Interactive Streamlit Dashboard for Academic Milestone Evaluation.
-
-Features:
-1. Live Dual-Model Classification: Fine-Tuned DistilBERT vs. Classical Champion LinearSVC
-   - Confidence scoring, uncertainty triage thresholds (<0.55), and local feature explainability.
-2. Semantic Related-Issue Retrieval & Duplicate Detection:
-   - Real-time cosine similarity search across 2,328 curated issues via all-MiniLM-L6-v2.
-   - Confidence tiers (HIGH / MEDIUM / LOW), duplicate warning alerts (>=0.85), and direct GitHub links.
-3. Research Analytics & Benchmark Gallery:
-   - Empirical performance comparison tables (Phases 4, 5, 6, and 7).
-   - Publication-quality evaluation figures (confusion matrices, ROC curves, loss curves, retrieval benchmarks).
-4. Interactive Preset Scenarios:
-   - 1-click test cases for Bug, Feature, Documentation, and Duplicate queries.
+OpenSourceLens — Interactive Demonstration Platform (Phases 0–7)
+Clean Two-Mode Application:
+1. 🌐 Repository Analyzer (The Live Product):
+   - Real-time GitHub repository ingestion (25-30 active issues).
+   - Automated category breakdown (Bug, Feature, Other) via Fine-Tuned DistilBERT.
+   - Intra-repository semantic duplicate detection via Sentence-BERT.
+   - Interactive issue explorer with direct GitHub links.
+2. 🔬 Model Lab & Benchmarks (Supporting Technical Proof):
+   - Single-issue dual-model classification & explainability.
+   - Historical semantic retrieval across the 2,328-issue training corpus.
+   - Publication figures gallery & empirical benchmark tables.
 """
 
 from datetime import datetime, timezone
@@ -29,193 +26,141 @@ PROJECT_ROOT = Path(__file__).resolve().parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-# Import pipeline classes
+# Core pipeline imports
 from ml.deep_learning.pipeline import TransformerIssueClassifier
 from ml.nlp.final_pipeline import FinalClassicalNLPPipeline
+from ml.related_issues.embedder import IssueEmbedder
 from ml.related_issues.pipeline import RelatedIssuePipeline
+from ml.repository_analyzer import (
+    analyze_repository,
+    calculate_category_breakdown,
+    classify_issues_batch,
+    fetch_repo_metadata_and_issues,
+    find_intra_repo_duplicates,
+    normalize_repo_input,
+)
 
-# Ensure pickle compatibility for classical pipeline
+# Pickle alias for classical pipeline
 sys.modules["__main__"].FinalClassicalNLPPipeline = FinalClassicalNLPPipeline
 
-# ---------------------------------------------------------------------------
-# Preset Queries for Quick Academic Demonstrations
-# ---------------------------------------------------------------------------
-PRESETS: Dict[str, Dict[str, str]] = {
-    "Select a preset or custom input...": {
-        "title": "",
-        "body": "",
-        "description": "Choose a preset from the dropdown or type custom text below.",
+# Quick Presets for Repository Analyzer
+REPO_PRESETS = [
+    {
+        "name": "psf/requests",
+        "label": "📦 psf/requests",
+        "desc": "Standard Python HTTP library (>54k stars)",
     },
-    "🐛 Preset 1: Bug Report (VS Code Crash)": {
-        "title": "VS Code editor crashes when opening large TypeScript workspace with out of memory error",
-        "body": (
-            "Steps to Reproduce:\n"
-            "1. Open a monorepo workspace containing >50,000 TypeScript files.\n"
-            "2. Trigger global symbol search via Ctrl+Shift+F.\n"
-            "3. The renderer process hangs and immediately crashes with: "
-            "'FATAL ERROR: Ineffective mark-compacts near heap limit Allocation failed - JavaScript heap out of memory'.\n"
-            "Expected: Graceful truncation of search index without terminating the main application."
-        ),
-        "description": "Demonstrates bug detection with high confidence and memory leak keywords.",
+    {
+        "name": "pallets/flask",
+        "label": "📦 pallets/flask",
+        "desc": "Lightweight WSGI web application framework (>67k stars)",
     },
-    "✨ Preset 2: Feature Request (PyTorch Quantization)": {
-        "title": "Add native GPU acceleration support for quantized Int4 matrix multiplications in PyTorch",
-        "body": (
-            "Motivation:\n"
-            "Currently, running 4-bit quantized LLM inference requires custom external kernels. "
-            "We would like to propose a first-class torch.nn.functional.qlinear_int4 API that leverages "
-            "Tensor Core hardware acceleration on modern CUDA architectures.\n"
-            "Proposed API:\n"
-            "output = torch.ops.aten.int4_matmul(input_tensor, quantized_weights, scales, zeros)"
-        ),
-        "description": "Demonstrates feature enhancement detection with high confidence.",
+    {
+        "name": "scikit-learn/scikit-learn",
+        "label": "📦 scikit-learn",
+        "desc": "Industry-standard machine learning library (>60k stars)",
     },
-    "📖 Preset 3: Documentation / Other (Hugging Face)": {
-        "title": "Update documentation links and fix typos in transformers quickstart tutorial guide",
-        "body": (
-            "The quickstart tutorial documentation page for AutoModelForCausalLM contains a broken hyperlink "
-            "pointing to an outdated v4.28 example notebook. Also fixed two grammatical typos in the tokenizer "
-            "truncation section on line 42 of docs/source/en/quickstart.md."
-        ),
-        "description": "Demonstrates documentation/other classification.",
+]
+
+# Single-issue testing presets for Model Lab
+SINGLE_ISSUE_PRESETS = {
+    "Select an issue scenario...": {"title": "", "body": ""},
+    "🐛 Memory Leak Crash (VS Code)": {
+        "title": "VS Code renderer crashes with JavaScript heap out of memory error",
+        "body": "Opening a repository with >50k files causes the renderer process to hang and crash with 'Allocation failed - JavaScript heap out of memory'.",
     },
-    "🚨 Preset 4: Potential Duplicate (Memory / CUDA Issue)": {
-        "title": "CUDA error: out of memory when running multi-gpu distributed training with torch.cuda.empty_cache",
-        "body": (
-            "RuntimeError: CUDA out of memory. Tried to allocate 2.00 GiB (GPU 0; 11.76 GiB total capacity; "
-            "9.50 GiB already allocated; 1.20 GiB free; 9.80 GiB reserved in total by PyTorch). "
-            "Calling torch.cuda.empty_cache() does not release reserved cache blocks."
-        ),
-        "description": "Demonstrates semantic similarity retrieval and duplicate detection alerting (>=85% score).",
+    "✨ Hardware Quantization (PyTorch)": {
+        "title": "Add native GPU acceleration for 4-bit quantized matrix multiplication",
+        "body": "Propose first-class torch.nn.functional.qlinear_int4 kernel utilizing Tensor Core hardware acceleration.",
+    },
+    "📖 Documentation Deadlink (Hugging Face)": {
+        "title": "Fix broken quickstart documentation tutorial hyperlinks in quickstart.md",
+        "body": "Quickstart tutorial page contains a 404 broken URL pointing to outdated example notebook on line 42.",
     },
 }
 
-
 # ---------------------------------------------------------------------------
-# Figure Catalog for Research Tab
+# Figure Catalog for Academic Tab
 # ---------------------------------------------------------------------------
 FIGURE_GALLERY = {
     "🏆 Model Comparison & Tradeoffs": [
         {
             "title": "Figure 22: Comprehensive Model Comparison (Radar & Performance Bars)",
             "path": "ml/deep_learning/figures/fig22_model_comparison_radar_bars.png",
-            "caption": (
-                "Multi-metric comparison (Accuracy, Macro F1, Precision, Recall, Inference Speed) across "
-                "Phase 4 Baseline Logistic Regression, Phase 4 Baseline LinearSVC, Phase 5 Enhanced LinearSVC, "
-                "and Phase 6 Fine-Tuned DistilBERT."
-            ),
+            "caption": "Multi-metric comparison across Phase 4 Baselines, Phase 5 Enhanced LinearSVC, and Phase 6 DistilBERT.",
         },
         {
             "title": "Figure 16: Phase 4 vs. Phase 5 Performance Gains",
             "path": "ml/nlp/figures/fig16_phase4_vs_phase5_performance.png",
-            "caption": (
-                "Empirical validation of NLP enhancements: 3x title weighting, software token normalization, "
-                "and sublinear TF-IDF scaling yield significant F1 gains across all issue categories."
-            ),
+            "caption": "Validation of domain NLP enhancements: 3x title weighting, code token handling, and sublinear TF-IDF.",
         },
     ],
     "🎯 Confusion Matrices & Calibration": [
         {
             "title": "Figure 20: Fine-Tuned DistilBERT Confusion Matrix",
             "path": "ml/deep_learning/figures/fig20_transformer_confusion_matrix.png",
-            "caption": (
-                "Normalized confusion matrix on unseen test split (N=350) showing 76.5% test accuracy "
-                "with balanced per-class diagonal concentration across bug, feature, and other categories."
-            ),
+            "caption": "Test split (N=350) confusion matrix showing 76.5% accuracy with balanced per-class separation.",
         },
         {
             "title": "Figure 21: DistilBERT ROC and Precision-Recall Curves",
             "path": "ml/deep_learning/figures/fig21_transformer_roc_pr_curves.png",
-            "caption": (
-                "Multi-class ROC curves (Macro-AUC: 0.90) and Precision-Recall curves verifying robust separation "
-                "across varying decision thresholds."
-            ),
+            "caption": "Multi-class ROC curves (Macro-AUC: 0.90) demonstrating sharp class boundary discrimination.",
         },
         {
-            "title": "Figure 10: Baseline Model Confusion Matrices (Phase 4)",
+            "title": "Figure 10: Baseline Confusion Matrices (Phase 4)",
             "path": "ml/classification/figures/fig10_baseline_confusion_matrices.png",
-            "caption": (
-                "Side-by-side comparison of baseline Logistic Regression and LinearSVC classifiers on raw TF-IDF."
-            ),
+            "caption": "Phase 4 baseline Logistic Regression and LinearSVC confusion matrices on raw TF-IDF.",
         },
     ],
-    "📉 Deep Learning Training Dynamics": [
+    "📉 Training Dynamics & Loss": [
         {
-            "title": "Figure 19: DistilBERT Fine-Tuning Loss & Accuracy Curves",
+            "title": "Figure 19: DistilBERT Fine-Tuning Loss & Accuracy Progression",
             "path": "ml/deep_learning/figures/fig19_transformer_training_curves.png",
-            "caption": (
-                "Training vs. validation loss and accuracy progression over 4 epochs (AdamW optimizer, lr=3e-5, "
-                "linear warm-up, weight decay 0.01) confirming stable convergence without overfitting."
-            ),
+            "caption": "Training vs. validation loss over 4 epochs (lr=3e-5, AdamW, linear warm-up) showing stable convergence.",
         },
         {
             "title": "Figure 18: Token Length Distribution & Truncation Budget",
             "path": "ml/deep_learning/figures/fig18_token_length_distribution.png",
-            "caption": (
-                "Distribution of issue token lengths supporting the chosen max_sequence_length=256 budget, "
-                "capturing >92% of complete issue titles and descriptions."
-            ),
+            "caption": "Sequence length distribution confirming max_length=256 captures >92% of issue content.",
         },
     ],
-    "🔍 Semantic Retrieval & Duplicate Benchmarks": [
+    "🔍 Semantic Retrieval Benchmarks": [
         {
             "title": "Figure 28: Retrieval Evaluation & Precision-Recall Benchmark",
             "path": "ml/related_issues/figures/fig28_retrieval_evaluation_benchmark.png",
-            "caption": (
-                "Precision@K, Recall@K, and MRR@K evaluation across K=[1, 3, 5, 10] on the 2,328 issue vector store. "
-                "Achieves 84.2% Top-1 Precision and 96.8% Top-5 Recall."
-            ),
+            "caption": "Precision@K, Recall@K, and MRR@K across K=[1, 3, 5, 10] on the 2,328 issue vector store (96.8% Top-5 Recall).",
         },
         {
             "title": "Figure 27: Similarity Threshold Calibration & Confidence Tiers",
             "path": "ml/related_issues/figures/fig27_similarity_threshold_calibration.png",
-            "caption": (
-                "Empirical calibration of similarity cutoff boundaries: HIGH (>=0.70), MEDIUM (0.55-0.70), "
-                "LOW (0.45-0.55), and Duplicate Alert Threshold (>=0.85)."
-            ),
+            "caption": "Empirical calibration: HIGH (>=0.70), MEDIUM (0.55-0.70), LOW (0.45-0.55), Duplicate Alert (>=0.80).",
         },
         {
-            "title": "Figure 26: Top-K Nearest Neighbor Semantic Distribution",
+            "title": "Figure 26: Top-K Nearest Neighbor Distribution",
             "path": "ml/related_issues/figures/fig26_topk_retrieval_analysis.png",
-            "caption": (
-                "Cosine similarity score decay profiles across rank positions 1 through 10, demonstrating sharp "
-                "discrimination between true related issues and background corpus noise."
-            ),
-        },
-        {
-            "title": "Figure 24: Embedding Norms & Inference Latency Distribution",
-            "path": "ml/related_issues/figures/fig24_embedding_norm_and_latency.png",
-            "caption": (
-                "Verification of L2 unit-normalization (norm=1.000) and query latency distribution "
-                "(mean: ~14 ms on CPU), proving production readiness."
-            ),
+            "caption": "Cosine similarity decay across top-10 neighbors illustrating clean discrimination from corpus noise.",
         },
     ],
     "📊 Dataset & Exploratory Analysis": [
         {
             "title": "Figure 9: Master Exploratory Data Analysis Dashboard",
             "path": "ml/eda/figures/fig9_master_eda_dashboard.png",
-            "caption": (
-                "Comprehensive overview of dataset characteristics across target repositories: "
-                "microsoft/vscode, pytorch/pytorch, kubernetes/kubernetes, huggingface/transformers."
-            ),
+            "caption": "Overview of dataset distributions across target repositories.",
         },
         {
             "title": "Figure 1: Target Label Distribution & Class Proportions",
             "path": "ml/eda/figures/fig1_label_distribution.png",
-            "caption": (
-                "Empirical class balance: Bug (42.5%), Feature (34.1%), Other (23.4%) across 2,328 curated issues."
-            ),
+            "caption": "Corpus class distribution: Bug (42.5%), Feature (34.1%), Other (23.4%).",
         },
     ],
 }
 
 
 # ---------------------------------------------------------------------------
-# Cached Model Loaders (Streamlit Resource Cache)
+# Cached Model Resources
 # ---------------------------------------------------------------------------
 @st.cache_resource(show_spinner="Loading Fine-Tuned DistilBERT Classifier (Phase 6)...")
-def load_transformer_classifier() -> Optional[TransformerIssueClassifier]:
+def get_transformer_classifier() -> Optional[TransformerIssueClassifier]:
     """Load production TransformerIssueClassifier."""
     try:
         model_path = PROJECT_ROOT / "models" / "distilbert_finetuned"
@@ -223,12 +168,12 @@ def load_transformer_classifier() -> Optional[TransformerIssueClassifier]:
             return None
         return TransformerIssueClassifier(model_dir=model_path)
     except Exception as exc:
-        st.error(f"Failed to load DistilBERT model: {exc}")
+        st.error(f"Error loading DistilBERT model: {exc}")
         return None
 
 
 @st.cache_resource(show_spinner="Loading Classical NLP Pipeline (Phase 5)...")
-def load_classical_pipeline() -> Optional[FinalClassicalNLPPipeline]:
+def get_classical_pipeline() -> Optional[FinalClassicalNLPPipeline]:
     """Load production FinalClassicalNLPPipeline."""
     try:
         model_path = PROJECT_ROOT / "models" / "final_classical_nlp_pipeline.joblib"
@@ -236,116 +181,473 @@ def load_classical_pipeline() -> Optional[FinalClassicalNLPPipeline]:
             return None
         return FinalClassicalNLPPipeline.load(model_path=model_path)
     except Exception as exc:
-        st.error(f"Failed to load Classical NLP pipeline: {exc}")
+        st.error(f"Error loading Classical pipeline: {exc}")
         return None
 
 
-@st.cache_resource(show_spinner="Loading Semantic Retrieval Vector Index (Phase 7)...")
-def load_retrieval_pipeline() -> Optional[RelatedIssuePipeline]:
-    """Load production RelatedIssuePipeline with precomputed embeddings."""
+@st.cache_resource(show_spinner="Loading Sentence-BERT Embedder (Phase 7)...")
+def get_sentence_embedder() -> Optional[IssueEmbedder]:
+    """Load production IssueEmbedder."""
+    try:
+        return IssueEmbedder(model_name="all-MiniLM-L6-v2", normalize_embeddings=True)
+    except Exception as exc:
+        st.error(f"Error loading Sentence Embedder: {exc}")
+        return None
+
+
+@st.cache_resource(show_spinner="Loading Related Issues Vector Index (Phase 7)...")
+def get_retrieval_pipeline() -> Optional[RelatedIssuePipeline]:
+    """Load historical vector index pipeline."""
     try:
         store_path = PROJECT_ROOT / "models" / "related_issues"
         if not store_path.exists():
             return None
-        pipeline = RelatedIssuePipeline(store_dir=store_path)
-        pipeline._ensure_initialized()
-        return pipeline
+        pipe = RelatedIssuePipeline(store_dir=store_path)
+        pipe._ensure_initialized()
+        return pipe
     except Exception as exc:
-        st.error(f"Failed to load Related Issue pipeline: {exc}")
+        st.error(f"Error loading Related Issue pipeline: {exc}")
         return None
 
 
-# ---------------------------------------------------------------------------
-# Helper Inference & Formatting Functions (Testable)
-# ---------------------------------------------------------------------------
-def get_preset_issues() -> Dict[str, Dict[str, str]]:
-    """Return catalog of interactive preset issues."""
-    return PRESETS
-
-
-def classify_with_transformer(
-    classifier: TransformerIssueClassifier,
-    title: str,
-    body: str = "",
-) -> Dict[str, Any]:
-    """Execute single-issue inference using the fine-tuned DistilBERT classifier."""
-    return classifier.predict_one(title=title, body=body)
-
-
-def classify_with_classical(
-    pipeline: FinalClassicalNLPPipeline,
-    title: str,
-    body: str = "",
-    top_k_features: int = 6,
-) -> Dict[str, Any]:
-    """Execute single-issue inference and explainability using the classical pipeline."""
-    return pipeline.explain_prediction(title=title, body=body, top_k=top_k_features)
-
-
-def retrieve_related_issues(
-    pipeline: RelatedIssuePipeline,
-    title: str,
-    body: str = "",
-    repo_filter: Optional[str] = None,
-    top_k: int = 5,
-    min_confidence: str = "ALL",
-    state_filter: Optional[str] = None,
-) -> Dict[str, Any]:
-    """Execute semantic issue retrieval and duplicate detection."""
-    actual_repo = None if repo_filter in (None, "All Repositories") else repo_filter
-    actual_state = None if state_filter in (None, "all") else state_filter
-    return pipeline.find_related_by_text(
-        title=title,
-        body=body,
-        repo_name=actual_repo,
-        top_k=top_k,
-        min_confidence=min_confidence,
-        state_filter=actual_state,
+@st.cache_data(show_spinner="Ingesting repository data and running inference...", ttl=600)
+def run_cached_repository_analysis(repo_name: str, target_count: int = 25) -> Dict[str, Any]:
+    """Cached wrapper executing end-to-end repository analysis."""
+    classifier = get_transformer_classifier()
+    embedder = get_sentence_embedder()
+    if classifier is None or embedder is None:
+        raise RuntimeError("Required ML models could not be loaded.")
+    return analyze_repository(
+        repo_str=repo_name,
+        classifier=classifier,
+        embedder=embedder,
+        target_count=target_count,
     )
 
 
-def format_badge(label: str) -> str:
-    """Format label badge with color-coded markdown styling."""
-    color_map = {
-        "bug": "#d73a49",      # GitHub red
-        "feature": "#0366d6",  # GitHub blue
-        "other": "#6a737d",    # GitHub gray
-        "HIGH": "#28a745",     # Green
-        "MEDIUM": "#d9822b",   # Amber
-        "LOW": "#6c757d",      # Gray
-    }
-    color = color_map.get(label.lower(), color_map.get(label.upper(), "#0366d6"))
+# ---------------------------------------------------------------------------
+# UI Helpers & Badges
+# ---------------------------------------------------------------------------
+def render_category_badge(category: str) -> str:
+    """Format category with high-contrast color badge."""
+    c = category.lower()
+    if c == "bug":
+        color = "#ef4444"
+        icon = "🐛"
+    elif c == "feature":
+        color = "#3b82f6"
+        icon = "✨"
+    else:
+        color = "#6b7280"
+        icon = "📖"
+
     return (
-        f'<span style="background-color: {color}; color: white; padding: 4px 10px; '
-        f'border-radius: 12px; font-weight: 600; font-size: 0.85rem; letter-spacing: 0.5px;">'
-        f'{label.upper()}</span>'
+        f'<span style="background-color: {color}; color: white; padding: 3px 10px; '
+        f'border-radius: 12px; font-weight: 700; font-size: 0.8rem; letter-spacing: 0.3px;">'
+        f'{icon} {category.upper()}</span>'
     )
 
 
 # ---------------------------------------------------------------------------
-# Streamlit Application Presentation Layer
+# MODE 1: 🌐 REPOSITORY ANALYZER (THE PRODUCT)
 # ---------------------------------------------------------------------------
-def render_header() -> None:
-    """Render top application header and academic project metadata."""
+def render_repository_analyzer_view() -> None:
+    """Render the primary repository issue ecosystem analyzer view."""
     st.markdown(
         """
-        <div style="padding: 1.2rem 1.5rem; background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%);
-                    border-radius: 10px; margin-bottom: 1.5rem; border: 1px solid #334155; color: white;">
+        <div style="margin-bottom: 1.2rem;">
+            <h2 style="margin: 0; font-size: 1.8rem; font-weight: 800; color: #f8fafc;">
+                🌐 GitHub Repository Issue Analyzer
+            </h2>
+            <p style="margin: 4px 0 0 0; color: #94a3b8; font-size: 0.95rem;">
+                Ingest any public open-source repository to automatically classify issue types, 
+                detect intra-repository duplicates, and map maintenance workload.
+            </p>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    # Initialize session state for input
+    if "repo_input_val" not in st.session_state:
+        st.session_state["repo_input_val"] = "psf/requests"
+
+    # Input and Action Row
+    col_input, col_btn = st.columns([4, 1])
+    with col_input:
+        repo_input = st.text_input(
+            "Enter Repository (Slug or GitHub URL):",
+            value=st.session_state["repo_input_val"],
+            placeholder="e.g. psf/requests, pallets/flask, or https://github.com/scikit-learn/scikit-learn",
+            key="repo_text_field",
+        )
+    with col_btn:
+        st.markdown("<div style='height: 28px;'></div>", unsafe_allow_html=True)
+        analyze_clicked = st.button("🚀 Analyze Repository", type="primary", use_container_width=True)
+
+    # Quick Preset Buttons
+    col_p_label, col_p1, col_p2, col_p3 = st.columns([1.2, 1.5, 1.5, 1.5])
+    col_p_label.markdown("<div style='padding-top: 6px; font-weight: 600; font-size: 0.85rem; color: #94a3b8;'>Quick Presets:</div>", unsafe_allow_html=True)
+    
+    if col_p1.button("📦 psf/requests", use_container_width=True):
+        st.session_state["repo_input_val"] = "psf/requests"
+        st.rerun()
+    if col_p2.button("📦 pallets/flask", use_container_width=True):
+        st.session_state["repo_input_val"] = "pallets/flask"
+        st.rerun()
+    if col_p3.button("📦 scikit-learn", use_container_width=True):
+        st.session_state["repo_input_val"] = "scikit-learn/scikit-learn"
+        st.rerun()
+
+    active_repo = repo_input.strip() or st.session_state["repo_input_val"]
+
+    # Trigger Analysis
+    if analyze_clicked or active_repo:
+        try:
+            with st.spinner(f"Connecting to GitHub API and analyzing issues in '{active_repo}'..."):
+                result = run_cached_repository_analysis(active_repo, target_count=25)
+        except Exception as exc:
+            st.error(f"Failed to analyze repository '{active_repo}': {exc}")
+            st.info("Tip: Enter repository as 'owner/repo' (e.g. 'psf/requests') or full URL.")
+            return
+
+        repo_meta = result["repository"]
+        issues = result["issues"]
+        breakdown = result["breakdown"]
+        duplicates = result["duplicates"]
+        exec_meta = result["execution_metadata"]
+
+        st.markdown("<div style='height: 10px;'></div>", unsafe_allow_html=True)
+
+        # ---------------- 1. Summary Cards ----------------
+        col_c1, col_c2, col_c3, col_c4 = st.columns(4)
+        col_c1.metric(
+            "📦 Repository",
+            repo_meta["full_name"],
+            f"{repo_meta['language']}",
+        )
+        col_c2.metric(
+            "⭐ GitHub Stars",
+            f"{repo_meta['stars']:,}",
+            f"{repo_meta['forks']:,} forks",
+        )
+        col_c3.metric(
+            "📂 Open Issues",
+            f"{repo_meta['open_issues_count']:,}",
+            "on GitHub",
+        )
+        col_c4.metric(
+            "⚡ Analyzed Issues",
+            f"{exec_meta['analyzed_count']} issues",
+            f"in {exec_meta['latency_ms']} ms",
+        )
+
+        st.markdown("---")
+
+        # ---------------- 2. Automated Issue Breakdown ----------------
+        st.markdown("#### 📊 Automated Issue Breakdown & Workload Distribution")
+        pcts = breakdown["percentages"]
+        counts = breakdown["counts"]
+        total_iss = breakdown["total"]
+
+        col_b1, col_b2, col_b3 = st.columns(3)
+        col_b1.markdown(
+            f"""
+            <div style="padding: 1rem; border-radius: 8px; background: #1e293b; border-left: 5px solid #ef4444;">
+                <div style="font-size: 0.85rem; color: #94a3b8; font-weight: 600;">BUG REPORTS</div>
+                <div style="font-size: 1.8rem; font-weight: 800; color: #ef4444;">{pcts['bug']}%</div>
+                <div style="font-size: 0.8rem; color: #cbd5e1;">{counts['bug']} of {total_iss} issues classified</div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+        col_b2.markdown(
+            f"""
+            <div style="padding: 1rem; border-radius: 8px; background: #1e293b; border-left: 5px solid #3b82f6;">
+                <div style="font-size: 0.85rem; color: #94a3b8; font-weight: 600;">FEATURE REQUESTS</div>
+                <div style="font-size: 1.8rem; font-weight: 800; color: #3b82f6;">{pcts['feature']}%</div>
+                <div style="font-size: 0.8rem; color: #cbd5e1;">{counts['feature']} of {total_iss} issues classified</div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+        col_b3.markdown(
+            f"""
+            <div style="padding: 1rem; border-radius: 8px; background: #1e293b; border-left: 5px solid #6b7280;">
+                <div style="font-size: 0.85rem; color: #94a3b8; font-weight: 600;">DOCS / OTHER</div>
+                <div style="font-size: 1.8rem; font-weight: 800; color: #9ca3af;">{pcts['other']}%</div>
+                <div style="font-size: 0.8rem; color: #cbd5e1;">{counts['other']} of {total_iss} issues classified</div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+        st.markdown("<div style='height: 8px;'></div>", unsafe_allow_html=True)
+
+        # ---------------- 3. Duplicate Warning Alert ----------------
+        st.markdown("#### 🔍 Intra-Repository Duplicate Detection")
+        if duplicates["has_duplicates"]:
+            dup_pairs = duplicates["duplicate_pairs"]
+            top_dup = dup_pairs[0]
+            iss1 = top_dup["issue_1"]
+            iss2 = top_dup["issue_2"]
+            sim_score = top_dup["similarity_pct"]
+
+            st.markdown(
+                f"""
+                <div style="padding: 1.2rem; background-color: #451a1a; border: 2px solid #ef4444; border-radius: 8px; margin-bottom: 1rem;">
+                    <div style="display: flex; align-items: center; font-size: 1.15rem; font-weight: 800; color: #fca5a5;">
+                        <span style="font-size: 1.5rem; margin-right: 8px;">🚨</span>
+                        POTENTIAL INTRA-REPO DUPLICATE DETECTED ({sim_score}% SIMILARITY)
+                    </div>
+                    <div style="margin-top: 8px; font-size: 0.92rem; color: #fee2e2;">
+                        <strong>Pair 1:</strong> Issue #{iss1.get('issue_number')} — <em>"{iss1.get('title')}"</em><br>
+                        <strong>Pair 2:</strong> Issue #{iss2.get('issue_number')} — <em>"{iss2.get('title')}"</em>
+                    </div>
+                    <div style="margin-top: 8px; font-size: 0.85rem; color: #fca5a5; background: #2f1212; padding: 6px 12px; border-radius: 6px;">
+                        💡 <strong>Action Recommendation:</strong> Issues discuss the same component defect. Merge discussion into #{min(iss1.get('issue_number'), iss2.get('issue_number'))} before developer triage.
+                    </div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+        else:
+            highest = duplicates.get("highest_similarity_pair")
+            top_msg = ""
+            if highest:
+                top_msg = (
+                    f" (Closest semantic pair: #{highest['issue_1'].get('issue_number')} and "
+                    f"#{highest['issue_2'].get('issue_number')} at {highest['similarity_pct']}%)"
+                )
+            st.markdown(
+                f"""
+                <div style="padding: 0.9rem 1.2rem; background: #132e22; border-left: 5px solid #10b981; border-radius: 6px; margin-bottom: 1rem;">
+                    <span style="font-weight: 700; color: #6ee7b7;">✅ Zero High-Confidence Duplicates Detected:</span>
+                    <span style="color: #d1fae5; font-size: 0.9rem;"> All analyzed issues describe distinct defects or feature requests.{top_msg}</span>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+
+        # ---------------- 4. Issue Explorer Table ----------------
+        st.markdown("#### 📋 Ingested Issue Explorer")
+
+        # Category Filter
+        filter_col, _ = st.columns([2, 3])
+        with filter_col:
+            cat_filter = st.selectbox(
+                "Filter Issues by Predicted Category:",
+                ["All Categories", "Bug", "Feature", "Other"],
+                index=0,
+            )
+
+        filtered_issues = issues
+        if cat_filter != "All Categories":
+            filtered_issues = [i for i in issues if i.get("predicted_category", "").lower() == cat_filter.lower()]
+
+        # Prepare Table Data
+        table_rows = []
+        for it in filtered_issues:
+            table_rows.append({
+                "Issue #": f"#{it.get('issue_number')}",
+                "Title": it.get("title", ""),
+                "Predicted Category": it.get("predicted_category", "").upper(),
+                "Confidence": f"{it.get('confidence', 0.0) * 100:.1f}%",
+                "State": it.get("state", "open").upper(),
+                "GitHub Link": it.get("html_url", "#"),
+            })
+
+        st.dataframe(
+            pd.DataFrame(table_rows),
+            column_config={
+                "GitHub Link": st.column_config.LinkColumn("GitHub Link", display_text="Open on GitHub ↗"),
+            },
+            hide_index=True,
+            use_container_width=True,
+        )
+
+        # Detailed item expander
+        with st.expander("🔍 Inspect Full Issue Content & Model Probabilities"):
+            selected_num = st.selectbox(
+                "Select Issue # to Inspect:",
+                [f"#{it.get('issue_number')} - {it.get('title')[:60]}..." for it in issues],
+            )
+            sel_idx = [f"#{it.get('issue_number')} - {it.get('title')[:60]}..." for it in issues].index(selected_num)
+            sel_issue = issues[sel_idx]
+
+            st.write(f"**Title:** {sel_issue.get('title')}")
+            st.write(f"**Predicted Category:** {sel_issue.get('predicted_category', '').upper()} ({sel_issue.get('confidence', 0.0)*100:.1f}% confidence)")
+            st.markdown(f"[🔗 View #{sel_issue.get('issue_number')} directly on GitHub]({sel_issue.get('html_url')})")
+            st.text_area("Body / Description:", value=sel_issue.get("body", "No description"), height=120, disabled=True)
+
+
+# ---------------------------------------------------------------------------
+# MODE 2: 🔬 MODEL LAB & BENCHMARKS (SUPPORTING PROOF)
+# ---------------------------------------------------------------------------
+def render_model_lab_view() -> None:
+    """Render the secondary technical evaluation and model laboratory view."""
+    st.markdown(
+        """
+        <div style="margin-bottom: 1.2rem;">
+            <h2 style="margin: 0; font-size: 1.8rem; font-weight: 800; color: #f8fafc;">
+                🔬 Model Lab & Academic Evaluation
+            </h2>
+            <p style="margin: 4px 0 0 0; color: #94a3b8; font-size: 0.95rem;">
+                Single-issue testing, local feature explainability, historical retrieval across the 2,328-issue training corpus, 
+                and publication benchmark figures.
+            </p>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    lab_tab1, lab_tab2, lab_tab3 = st.tabs([
+        "🎯 Single-Issue Dual Classifier",
+        "🔍 Historical Semantic Retrieval",
+        "📊 Benchmark Figures Gallery",
+    ])
+
+    # ---------------- Sub-Tab 1: Single Issue Classifier ----------------
+    with lab_tab1:
+        st.markdown("##### Test Any Custom Issue Text (DistilBERT vs. Calibrated LinearSVC)")
+        
+        # Scenario presets
+        preset_names = list(SINGLE_ISSUE_PRESETS.keys())
+        chosen_preset = st.selectbox("Choose a Test Scenario:", preset_names, index=0)
+        p_data = SINGLE_ISSUE_PRESETS[chosen_preset]
+
+        col_t1, col_t2 = st.columns([1, 1])
+        with col_t1:
+            inp_title = st.text_input("Issue Title:", value=p_data["title"], key="lab_title")
+        with col_t2:
+            st.markdown("<div style='height: 28px;'></div>", unsafe_allow_html=True)
+            classify_btn = st.button("⚡ Run Dual Classification", type="primary", use_container_width=True)
+
+        inp_body = st.text_area("Issue Body / Stack Trace:", value=p_data["body"], height=100, key="lab_body")
+
+        if classify_btn or (inp_title and len(inp_title) > 5):
+            distilbert = get_transformer_classifier()
+            classical = get_classical_pipeline()
+
+            c_left, c_right = st.columns(2)
+            with c_left:
+                st.markdown("###### 🤖 Phase 6: Fine-Tuned DistilBERT")
+                if distilbert:
+                    res = distilbert.predict_one(title=inp_title, body=inp_body)
+                    st.markdown(
+                        f"""
+                        <div style="padding: 1rem; border-radius: 8px; background: #1e293b; border: 1px solid #334155;">
+                            <div>Predicted: {render_category_badge(res['label'])}</div>
+                            <div style="font-size: 1.8rem; font-weight: 800; color: #38bdf8; margin: 4px 0;">
+                                {res['confidence']*100:.1f}% confidence
+                            </div>
+                        </div>
+                        """,
+                        unsafe_allow_html=True,
+                    )
+                    st.markdown("**Class Probabilities:**")
+                    for k, v in res["probabilities"].items():
+                        c1, c2 = st.columns([1, 4])
+                        c1.markdown(f"`{k.upper()}`")
+                        c2.progress(float(v), text=f"{v*100:.1f}%")
+
+            with c_right:
+                st.markdown("###### ⚡ Phase 5: Calibrated LinearSVC Champion")
+                if classical:
+                    c_res = classical.explain_prediction(title=inp_title, body=inp_body, top_k=5)
+                    st.markdown(
+                        f"""
+                        <div style="padding: 1rem; border-radius: 8px; background: #1e293b; border: 1px solid #334155;">
+                            <div>Predicted: {render_category_badge(c_res['predicted_class'])}</div>
+                            <div style="font-size: 1.8rem; font-weight: 800; color: #a78bfa; margin: 4px 0;">
+                                {c_res['confidence']*100:.1f}% probability
+                            </div>
+                        </div>
+                        """,
+                        unsafe_allow_html=True,
+                    )
+                    st.markdown("**Top Contributing Keywords (Explainability):**")
+                    if c_res.get("top_contributing_features"):
+                        terms_df = pd.DataFrame(c_res["top_contributing_features"])[["feature", "contribution_score"]]
+                        terms_df.columns = ["Token / N-gram", "Contribution"]
+                        st.dataframe(terms_df, hide_index=True, use_container_width=True)
+
+    # ---------------- Sub-Tab 2: Historical Semantic Retrieval ----------------
+    with lab_tab2:
+        st.markdown("##### Semantic Retrieval across the 2,328-Issue Curated Corpus")
+        ret_pipe = get_retrieval_pipeline()
+        
+        q_title = st.text_input("Query Title:", value="CUDA out of memory error during backward pass", key="ret_pipe_title")
+        q_repo = st.selectbox("Constrain to Repository:", ["All Repositories", "microsoft/vscode", "pytorch/pytorch", "kubernetes/kubernetes", "huggingface/transformers"])
+        q_k = st.slider("Top Candidates (K):", 3, 10, 5)
+
+        if st.button("🔎 Search Training Vector Index", type="primary"):
+            if ret_pipe:
+                repo_filt = None if q_repo == "All Repositories" else q_repo
+                ret_res = ret_pipe.find_related_by_text(title=q_title, top_k=q_k, repo_name=repo_filt)
+                for item in ret_res["related_issues"]:
+                    st.markdown(
+                        f"""
+                        <div style="padding: 0.8rem; background: #1e293b; border-radius: 6px; margin-bottom: 6px; border: 1px solid #334155;">
+                            <strong>{item.get('title')}</strong> — <span style="color: #38bdf8; font-weight: bold;">{item.get('similarity_score')*100:.1f}% similarity</span><br>
+                            <span style="font-size: 0.8rem; color: #94a3b8;">Repo: <code>{item.get('repo_name')}</code> | #{item.get('issue_number')} | {item.get('confidence_tier')} confidence</span>
+                        </div>
+                        """,
+                        unsafe_allow_html=True,
+                    )
+
+    # ---------------- Sub-Tab 3: Academic Figures Gallery ----------------
+    with lab_tab3:
+        st.markdown("##### Empirical Model Comparison (Test Split N=350)")
+        bench_df = pd.DataFrame([
+            {"Model": "Baseline Logistic Regression (Phase 4)", "Paradigm": "TF-IDF + LR", "Accuracy": "69.8%", "Macro F1": "0.694", "Latency": "< 1 ms"},
+            {"Model": "Baseline LinearSVC (Phase 4)", "Paradigm": "TF-IDF + SVM", "Accuracy": "70.8%", "Macro F1": "0.702", "Latency": "< 1 ms"},
+            {"Model": "Calibrated LinearSVC (Phase 5 Champion)", "Paradigm": "Domain NLP + Platt Scaling", "Accuracy": "73.1%", "Macro F1": "0.729", "Latency": "< 1 ms"},
+            {"Model": "Fine-Tuned DistilBERT (Phase 6 Champion)", "Paradigm": "Deep Transformer (66M)", "Accuracy": "76.5%", "Macro F1": "0.763", "Latency": "~18 ms"},
+            {"Model": "Sentence-BERT Index (Phase 7)", "Paradigm": "Dense Retrieval (MiniLM)", "Accuracy": "96.8% Top-5 Recall", "Macro F1": "0.842 P@1", "Latency": "~14 ms"},
+        ])
+        st.dataframe(bench_df, hide_index=True, use_container_width=True)
+
+        st.markdown("---")
+        st.markdown("##### Publication Evaluation Figures")
+        chosen_cat = st.radio("Figure Category:", list(FIGURE_GALLERY.keys()), horizontal=True)
+        for fig in FIGURE_GALLERY[chosen_cat]:
+            f_path = PROJECT_ROOT / fig["path"]
+            st.markdown(f"**{fig['title']}**")
+            if f_path.exists():
+                st.image(str(f_path), use_container_width=True)
+                st.caption(fig["caption"])
+
+
+# ---------------------------------------------------------------------------
+# Main App Execution
+# ---------------------------------------------------------------------------
+def main() -> None:
+    """Streamlit entrypoint with top mode selector."""
+    st.set_page_config(
+        page_title="OpenSourceLens | Repository Analyzer",
+        page_icon="🔍",
+        layout="wide",
+        initial_sidebar_state="collapsed",
+    )
+
+    # Top App Header
+    st.markdown(
+        """
+        <div style="padding: 1rem 1.4rem; background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
+                    border-radius: 8px; margin-bottom: 1.2rem; border: 1px solid #334155;">
             <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap;">
                 <div>
-                    <h1 style="margin: 0; font-size: 2.1rem; color: #f8fafc; font-weight: 800;">
-                        OpenSourceLens <span style="font-size: 1.2rem; color: #38bdf8; font-weight: 500;">| Milestone Demo</span>
+                    <h1 style="margin: 0; font-size: 1.9rem; color: #f8fafc; font-weight: 800;">
+                        OpenSourceLens <span style="font-size: 1.1rem; color: #38bdf8; font-weight: 500;">| Intelligent Issue Triage</span>
                     </h1>
-                    <p style="margin: 6px 0 0 0; color: #94a3b8; font-size: 0.95rem;">
-                        Intelligent GitHub Issue Analytics, Dual-Model Classification & Semantic Retrieval Platform
-                    </p>
                 </div>
-                <div style="text-align: right; margin-top: 8px;">
-                    <span style="background: #0284c7; color: white; padding: 5px 12px; border-radius: 6px; font-size: 0.8rem; font-weight: bold; margin-right: 6px;">
-                        Phase 0–7 Complete (75% Milestone)
+                <div>
+                    <span style="background: #0284c7; color: white; padding: 4px 10px; border-radius: 6px; font-size: 0.8rem; font-weight: bold; margin-right: 6px;">
+                        Phase 0–7 Complete
                     </span>
-                    <span style="background: #334155; color: #cbd5e1; padding: 5px 12px; border-radius: 6px; font-size: 0.8rem;">
-                        504 Tests Passing
+                    <span style="background: #334155; color: #cbd5e1; padding: 4px 10px; border-radius: 6px; font-size: 0.8rem;">
+                        515 Tests Passing
                     </span>
                 </div>
             </div>
@@ -354,492 +656,20 @@ def render_header() -> None:
         unsafe_allow_html=True,
     )
 
-
-def render_sidebar(
-    distilbert_loaded: bool,
-    classical_loaded: bool,
-    retrieval_loaded: bool,
-    corpus_size: int,
-) -> Tuple[str, str, str]:
-    """Render sidebar with model statuses, preset loader, and global configurations."""
-    st.sidebar.markdown("### 🎛️ System Status & Models")
-
-    def status_indicator(loaded: bool, name: str, details: str):
-        color = "#10b981" if loaded else "#ef4444"
-        symbol = "●" if loaded else "○"
-        st.sidebar.markdown(
-            f"""
-            <div style="padding: 8px 12px; border-radius: 6px; background-color: #1e293b; margin-bottom: 8px; border-left: 4px solid {color};">
-                <div style="font-weight: 600; font-size: 0.88rem; color: #f1f5f9;">
-                    <span style="color: {color}; margin-right: 6px;">{symbol}</span>{name}
-                </div>
-                <div style="font-size: 0.75rem; color: #94a3b8; margin-top: 2px;">{details}</div>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
-
-    status_indicator(
-        distilbert_loaded,
-        "DistilBERT Fine-Tuned",
-        "Phase 6 Deep Learning • 66M Params • MaxLen 256",
-    )
-    status_indicator(
-        classical_loaded,
-        "Calibrated LinearSVC",
-        "Phase 5 Champion • Platt Scaled • 5,000 Vocab",
-    )
-    status_indicator(
-        retrieval_loaded,
-        "Sentence-BERT Vector Store",
-        f"Phase 7 Semantic Index • {corpus_size:,} Issues • 384-dim",
+    # Navigation Mode Selector
+    mode = st.radio(
+        "Navigation Mode:",
+        ["🌐 Repository Analyzer (The Product)", "🔬 Model Lab & Benchmarks (Supporting Proof)"],
+        horizontal=True,
+        label_visibility="collapsed",
     )
 
-    st.sidebar.markdown("---")
-    st.sidebar.markdown("### ⚡ Interactive Presets")
-    st.sidebar.caption("Select a preconfigured academic scenario to test the models instantly:")
+    st.markdown("<div style='height: 8px;'></div>", unsafe_allow_html=True)
 
-    preset_keys = list(PRESETS.keys())
-    selected_preset = st.sidebar.selectbox("Choose Scenario:", preset_keys, index=0)
-
-    preset_data = PRESETS[selected_preset]
-    st.sidebar.info(preset_data["description"])
-
-    st.sidebar.markdown("---")
-    st.sidebar.markdown("### 🎯 Target Repositories")
-    st.sidebar.markdown(
-        """
-        - `microsoft/vscode`
-        - `pytorch/pytorch`
-        - `kubernetes/kubernetes`
-        - `huggingface/transformers`
-        """
-    )
-    st.sidebar.caption("OpenSourceLens Milestone Demo • Built for Academic Evaluation")
-
-    return selected_preset, preset_data["title"], preset_data["body"]
-
-
-def render_tab_classification(
-    transformer_model: Optional[TransformerIssueClassifier],
-    classical_model: Optional[FinalClassicalNLPPipeline],
-    default_title: str,
-    default_body: str,
-) -> None:
-    """Render Tab 1: Live Dual-Model Issue Classification."""
-    st.markdown("### 🎯 Live Issue Classification (Head-to-Head Comparison)")
-    st.caption(
-        "Enter any GitHub issue title and description to run live classification across our fine-tuned "
-        "transformer and calibrated classical baseline."
-    )
-
-    col_in1, col_in2 = st.columns([1, 1])
-    with col_in1:
-        issue_title = st.text_input(
-            "Issue Title:",
-            value=default_title,
-            placeholder="e.g., Memory leak in renderer process when opening large workspace",
-            key="cls_title",
-        )
-    with col_in2:
-        st.markdown("<div style='height: 28px;'></div>", unsafe_allow_html=True)
-        classify_button = st.button("⚡ Run Live Classification", type="primary", use_container_width=True)
-
-    issue_body = st.text_area(
-        "Issue Description / Stack Trace (Optional):",
-        value=default_body,
-        placeholder="Paste full error logs, reproduction steps, or feature requirements...",
-        height=140,
-        key="cls_body",
-    )
-
-    if classify_button or (default_title and len(default_title) > 5):
-        if not issue_title.strip():
-            st.warning("Please provide at least an issue title to run classification.")
-            return
-
-        col_left, col_right = st.columns(2)
-
-        # ---------------- DistilBERT Inference ----------------
-        with col_left:
-            st.markdown("#### 🤖 Phase 6: Fine-Tuned DistilBERT")
-            if transformer_model is None:
-                st.error("Transformer model could not be loaded from disk.")
-            else:
-                t0 = time.perf_counter()
-                trans_res = classify_with_transformer(transformer_model, issue_title, issue_body)
-                trans_lat = (time.perf_counter() - t0) * 1000.0
-
-                label = trans_res["label"]
-                conf = trans_res["confidence"]
-                is_uncertain = trans_res.get("is_uncertain", False)
-                probs = trans_res["probabilities"]
-
-                st.markdown(
-                    f"""
-                    <div style="padding: 1.1rem; border-radius: 8px; background-color: #1e293b; border: 1px solid #334155;">
-                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
-                            <span style="font-size: 1.1rem; font-weight: bold; color: #f8fafc;">Predicted Class:</span>
-                            {format_badge(label)}
-                        </div>
-                        <div style="font-size: 2.2rem; font-weight: 800; color: #38bdf8; margin: 4px 0;">
-                            {conf * 100:.1f}% <span style="font-size: 0.9rem; color: #94a3b8; font-weight: normal;">confidence</span>
-                        </div>
-                        <div style="font-size: 0.78rem; color: #94a3b8;">
-                            Inference Latency: <strong>{trans_lat:.1f} ms</strong>
-                        </div>
-                    </div>
-                    """,
-                    unsafe_allow_html=True,
-                )
-
-                if is_uncertain:
-                    st.warning(
-                        "⚠️ **Uncertainty Alert (< 55%):** Model confidence is below the automated triage threshold. "
-                        "Recommendation: Routed to human triage queue."
-                    )
-                else:
-                    st.success("✅ **High Confidence Decision:** Eligible for automated issue labeling.")
-
-                st.markdown("**Class Probability Distribution:**")
-                for c_name, c_prob in probs.items():
-                    col_p1, col_p2 = st.columns([1, 4])
-                    col_p1.markdown(f"`{c_name.upper()}`")
-                    col_p2.progress(float(c_prob), text=f"{c_prob * 100:.1f}%")
-
-        # ---------------- Classical LinearSVC Inference ----------------
-        with col_right:
-            st.markdown("#### ⚡ Phase 5: Calibrated LinearSVC Champion")
-            if classical_model is None:
-                st.error("Classical pipeline could not be loaded from disk.")
-            else:
-                t0 = time.perf_counter()
-                class_res = classify_with_classical(classical_model, issue_title, issue_body)
-                class_lat = (time.perf_counter() - t0) * 1000.0
-
-                c_label = class_res["predicted_class"]
-                c_conf = class_res["confidence"]
-                c_probs = class_res["class_probabilities"]
-                top_terms = class_res.get("top_contributing_features", [])
-
-                st.markdown(
-                    f"""
-                    <div style="padding: 1.1rem; border-radius: 8px; background-color: #1e293b; border: 1px solid #334155;">
-                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
-                            <span style="font-size: 1.1rem; font-weight: bold; color: #f8fafc;">Predicted Class:</span>
-                            {format_badge(c_label)}
-                        </div>
-                        <div style="font-size: 2.2rem; font-weight: 800; color: #a78bfa; margin: 4px 0;">
-                            {c_conf * 100:.1f}% <span style="font-size: 0.9rem; color: #94a3b8; font-weight: normal;">calibrated probability</span>
-                        </div>
-                        <div style="font-size: 0.78rem; color: #94a3b8;">
-                            Inference Latency: <strong>{class_lat:.2f} ms</strong> (sub-millisecond CPU execution)
-                        </div>
-                    </div>
-                    """,
-                    unsafe_allow_html=True,
-                )
-
-                st.markdown("**Class Probability Distribution:**")
-                for c_name, c_prob in c_probs.items():
-                    col_p1, col_p2 = st.columns([1, 4])
-                    col_p1.markdown(f"`{c_name.upper()}`")
-                    col_p2.progress(float(c_prob), text=f"{c_prob * 100:.1f}%")
-
-                st.markdown("**🔍 Local Feature Importance (Explainability):**")
-                if top_terms:
-                    terms_df = pd.DataFrame(top_terms)[["feature", "contribution_score", "tfidf_value"]]
-                    terms_df.columns = ["Token / N-gram", "Class Contribution", "TF-IDF Weight"]
-                    st.dataframe(terms_df, hide_index=True, use_container_width=True)
-                else:
-                    st.caption("No significant contributing n-grams detected in vocabulary.")
-
-
-def render_tab_retrieval(
-    retrieval_model: Optional[RelatedIssuePipeline],
-    default_title: str,
-    default_body: str,
-) -> None:
-    """Render Tab 2: Semantic Related-Issue Retrieval & Duplicate Detection."""
-    st.markdown("### 🔍 Semantic Related-Issue Finder & Duplicate Detection")
-    st.caption(
-        "Leverages dense sentence embeddings (`all-MiniLM-L6-v2`) to retrieve historical issues with shared "
-        "architectural concepts, error signatures, or duplicate reporting."
-    )
-
-    col_q1, col_q2 = st.columns([2, 1])
-    with col_q1:
-        query_title = st.text_input(
-            "Query Issue Title:",
-            value=default_title,
-            placeholder="Type or paste issue title to search across corpus...",
-            key="ret_title",
-        )
-        query_body = st.text_area(
-            "Query Body / Stack Trace:",
-            value=default_body,
-            placeholder="Optional detailed description to enrich dense query embedding...",
-            height=100,
-            key="ret_body",
-        )
-
-    with col_q2:
-        st.markdown("**Search Controls & Filters:**")
-        repo_choice = st.selectbox(
-            "Filter by Repository:",
-            [
-                "All Repositories",
-                "microsoft/vscode",
-                "pytorch/pytorch",
-                "kubernetes/kubernetes",
-                "huggingface/transformers",
-            ],
-            index=0,
-        )
-        top_k = st.slider("Top Candidates (K):", min_value=3, max_value=10, value=5)
-        min_tier = st.selectbox(
-            "Minimum Confidence Filter:",
-            ["ALL", "LOW (>= 45%)", "MEDIUM (>= 55%)", "HIGH (>= 70%)"],
-            index=0,
-        )
-        tier_clean = min_tier.split()[0]
-        search_button = st.button("🔎 Search Semantic Index", type="primary", use_container_width=True)
-
-    if search_button or (default_title and len(default_title) > 5):
-        if not query_title.strip():
-            st.warning("Please provide an issue title to perform retrieval.")
-            return
-
-        if retrieval_model is None:
-            st.error("Related issue pipeline is not available.")
-            return
-
-        with st.spinner("Embedding query and computing cosine similarities across corpus..."):
-            res = retrieve_related_issues(
-                pipeline=retrieval_model,
-                title=query_title,
-                body=query_body,
-                repo_filter=repo_choice,
-                top_k=top_k,
-                min_confidence=tier_clean,
-            )
-
-        summary = res["summary"]
-        related = res["related_issues"]
-        meta = res["execution_metadata"]
-
-        has_duplicate = summary.get("has_potential_duplicate", False)
-        max_score = summary.get("highest_similarity_score", 0.0)
-
-        # ---------------- Duplicate Alert Banner ----------------
-        if has_duplicate:
-            st.markdown(
-                f"""
-                <div style="padding: 1.2rem; background-color: #451a1a; border: 2px solid #ef4444;
-                            border-radius: 8px; margin: 1rem 0; color: #fecaca;">
-                    <div style="font-size: 1.25rem; font-weight: 800; display: flex; align-items: center;">
-                        <span style="font-size: 1.6rem; margin-right: 8px;">🚨</span> POTENTIAL DUPLICATE DETECTED ({max_score * 100:.1f}% SIMILARITY)
-                    </div>
-                    <div style="margin-top: 6px; font-size: 0.92rem; color: #fca5a5;">
-                        {summary.get('primary_recommendation', 'An existing issue closely matches this report.')}
-                    </div>
-                </div>
-                """,
-                unsafe_allow_html=True,
-            )
-        else:
-            st.markdown(
-                f"""
-                <div style="padding: 0.8rem 1.2rem; background-color: #1e293b; border-left: 4px solid #38bdf8;
-                            border-radius: 6px; margin: 0.8rem 0; color: #cbd5e1; font-size: 0.9rem;">
-                    💡 <strong>Triage Recommendation:</strong> {summary.get('primary_recommendation', 'Unique report.')}
-                </div>
-                """,
-                unsafe_allow_html=True,
-            )
-
-        # Metrics Row
-        col_m1, col_m2, col_m3, col_m4 = st.columns(4)
-        col_m1.metric("Retrieved Candidates", f"{len(related)} issues")
-        col_m2.metric("Highest Similarity", f"{max_score * 100:.1f}%")
-        col_m3.metric("Retrieval Latency", f"{meta.get('latency_ms', 0):.1f} ms")
-        col_m4.metric("Indexed Corpus Size", f"{meta.get('corpus_size', 0):,} issues")
-
-        st.markdown("---")
-        st.markdown(f"#### Top {len(related)} Most Semantically Similar Historical Issues")
-
-        if not related:
-            st.info("No issues matched the selected confidence tier or repository filter.")
-            return
-
-        for idx, item in enumerate(related, start=1):
-            score_pct = item["similarity_score"] * 100.0
-            tier = item["confidence_tier"]
-            repo = item["repo_name"]
-            issue_num = item.get("issue_number", "?")
-            html_url = item.get("html_url", "#")
-            state = item.get("state", "open")
-            state_color = "#22c55e" if state == "open" else "#a855f7"
-
-            with st.container():
-                st.markdown(
-                    f"""
-                    <div style="padding: 1rem; border-radius: 8px; background-color: #1e293b; margin-bottom: 0.8rem;
-                                border: 1px solid #334155;">
-                        <div style="display: flex; justify-content: space-between; align-items: flex-start; flex-wrap: wrap;">
-                            <div style="font-size: 1.05rem; font-weight: 700; color: #f8fafc; max-width: 80%;">
-                                <span style="color: #38bdf8; margin-right: 6px;">#{idx}</span>
-                                {item.get('title', 'Untitled Issue')}
-                            </div>
-                            <div>
-                                {format_badge(tier)}
-                                <span style="font-size: 1.1rem; font-weight: 800; color: #38bdf8; margin-left: 8px;">
-                                    {score_pct:.1f}%
-                                </span>
-                            </div>
-                        </div>
-                        <div style="margin-top: 8px; font-size: 0.82rem; color: #94a3b8; display: flex; gap: 14px; flex-wrap: wrap; align-items: center;">
-                            <span>📦 <strong>Repo:</strong> <code style="color: #cbd5e1;">{repo}</code></span>
-                            <span>🔢 <strong>Issue:</strong> #{issue_num}</span>
-                            <span>🏷️ <strong>Category:</strong> {format_badge(item.get('canonical_label', 'other'))}</span>
-                            <span>Status: <strong style="color: {state_color};">{state.upper()}</strong></span>
-                            <span>🔗 <a href="{html_url}" target="_blank" style="color: #38bdf8; text-decoration: none; font-weight: 600;">Open on GitHub ↗</a></span>
-                        </div>
-                    </div>
-                    """,
-                    unsafe_allow_html=True,
-                )
-                clean_snippet = item.get("clean_title", "")
-                if clean_snippet:
-                    with st.expander(f"View Normalized Issue Context (#{issue_num})"):
-                        st.write(f"**Cleaned Title:** {item.get('clean_title', '')}")
-                        st.write(f"**Action Recommendation:** {item.get('action_recommendation', '')}")
-
-
-def render_tab_benchmarks() -> None:
-    """Render Tab 3: Research Benchmarks & Academic Figures Gallery."""
-    st.markdown("### 📊 Research Analytics & Academic Benchmark Gallery")
-    st.caption(
-        "Empirical evaluation results across Phases 0–7 generated for the conference paper and "
-        "milestone evaluation defense."
-    )
-
-    # ---------------- Performance Comparison Table ----------------
-    st.markdown("#### 🏆 Comprehensive Model Comparison (Test Split N=350)")
-    benchmark_data = [
-        {
-            "Model / System": "Baseline Logistic Regression (Phase 4)",
-            "Paradigm": "Classical ML (TF-IDF)",
-            "Accuracy": "69.8%",
-            "Macro F1": "0.694",
-            "Inference Speed": "< 1 ms",
-            "Hardware": "CPU",
-        },
-        {
-            "Model / System": "Baseline LinearSVC (Phase 4)",
-            "Paradigm": "Classical ML (TF-IDF)",
-            "Accuracy": "70.8%",
-            "Macro F1": "0.702",
-            "Inference Speed": "< 1 ms",
-            "Hardware": "CPU",
-        },
-        {
-            "Model / System": "Enhanced LinearSVC + Platt Scaling (Phase 5 Champion)",
-            "Paradigm": "NLP Feature Engineering",
-            "Accuracy": "73.1%",
-            "Macro F1": "0.729",
-            "Inference Speed": "< 1 ms",
-            "Hardware": "CPU",
-        },
-        {
-            "Model / System": "Fine-Tuned DistilBERT (Phase 6 Champion)",
-            "Paradigm": "Deep Transformer (66M)",
-            "Accuracy": "76.5%",
-            "Macro F1": "0.763",
-            "Inference Speed": "~18 ms",
-            "Hardware": "CPU / CUDA",
-        },
-        {
-            "Model / System": "Sentence-BERT Semantic Index (Phase 7)",
-            "Paradigm": "Dense Retrieval (MiniLM)",
-            "Accuracy": "96.8% Top-5 Recall",
-            "Macro F1": "0.842 Precision@1",
-            "Inference Speed": "~14 ms",
-            "Hardware": "CPU / CUDA",
-        },
-    ]
-    st.dataframe(pd.DataFrame(benchmark_data), hide_index=True, use_container_width=True)
-
-    st.markdown("---")
-    st.markdown("#### 📈 Publication Figures Gallery")
-
-    categories = list(FIGURE_GALLERY.keys())
-    chosen_cat = st.radio("Select Research Category:", categories, horizontal=True)
-
-    cat_figures = FIGURE_GALLERY[chosen_cat]
-    for fig_info in cat_figures:
-        fig_path = PROJECT_ROOT / fig_info["path"]
-        st.markdown(f"##### {fig_info['title']}")
-        if fig_path.exists():
-            st.image(str(fig_path), use_container_width=True)
-            st.caption(f"**Empirical Analysis:** {fig_info['caption']}")
-        else:
-            st.warning(f"Figure file not found at expected path: {fig_info['path']}")
-        st.markdown("<div style='height: 18px;'></div>", unsafe_allow_html=True)
-
-
-# ---------------------------------------------------------------------------
-# Main App Execution
-# ---------------------------------------------------------------------------
-def main() -> None:
-    """Streamlit entry point."""
-    st.set_page_config(
-        page_title="OpenSourceLens | Milestone Demo",
-        page_icon="🔍",
-        layout="wide",
-        initial_sidebar_state="expanded",
-    )
-
-    # Load cached pipelines
-    distilbert_clf = load_transformer_classifier()
-    classical_pipe = load_classical_pipeline()
-    retrieval_pipe = load_retrieval_pipeline()
-
-    corpus_count = len(retrieval_pipe.store.embeddings) if (retrieval_pipe and retrieval_pipe.store.is_loaded) else 2328
-
-    # Render header & sidebar
-    render_header()
-    _, preset_title, preset_body = render_sidebar(
-        distilbert_loaded=(distilbert_clf is not None),
-        classical_loaded=(classical_pipe is not None),
-        retrieval_loaded=(retrieval_pipe is not None),
-        corpus_size=corpus_count,
-    )
-
-    # Main Tabs
-    tab1, tab2, tab3 = st.tabs([
-        "🎯 Tab 1: Live Dual-Model Classification",
-        "🔍 Tab 2: Semantic Related Issues & Duplicates",
-        "📊 Tab 3: Research Benchmarks & Figures",
-    ])
-
-    with tab1:
-        render_tab_classification(
-            transformer_model=distilbert_clf,
-            classical_model=classical_pipe,
-            default_title=preset_title,
-            default_body=preset_body,
-        )
-
-    with tab2:
-        render_tab_retrieval(
-            retrieval_model=retrieval_pipe,
-            default_title=preset_title,
-            default_body=preset_body,
-        )
-
-    with tab3:
-        render_tab_benchmarks()
+    if mode.startswith("🌐"):
+        render_repository_analyzer_view()
+    else:
+        render_model_lab_view()
 
 
 if __name__ == "__main__":
