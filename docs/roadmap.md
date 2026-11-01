@@ -172,7 +172,7 @@ This roadmap defines the complete project execution plan from definition through
 
 ---
 
-## Phase 8 — Resolution Analysis & Prediction
+## Phase 8 — Resolution Analysis & Prediction ✅
 
 **Goal:** Understand and potentially predict issue resolution behavior.
 
@@ -180,13 +180,13 @@ This roadmap defines the complete project execution plan from definition through
 
 | Step | Title | Status |
 |---|---|---|
-| 8.1 | Define resolution time | Pending |
-| 8.2 | Analyze resolution distribution | Pending |
-| 8.3 | Identify useful features | Pending |
-| 8.4 | Investigate resolution-time factors | Pending |
-| 8.5 | Build baseline prediction model | Pending |
-| 8.6 | Evaluate | Pending |
-| 8.7 | Decide whether prediction is reliable | Pending |
+| 8.1 | Define resolution time | ✅ Complete (`ml/resolution_analysis/definition.py`) |
+| 8.2 | Analyze resolution distribution | ✅ Complete (`ml/resolution_analysis/distribution.py`) |
+| 8.3 | Identify useful features | ✅ Complete (`ml/resolution_analysis/features.py`) |
+| 8.4 | Investigate resolution-time factors | ✅ Complete (`ml/resolution_analysis/factors.py`) |
+| 8.5 | Build baseline prediction model | ✅ Complete (`ml/resolution_analysis/baseline_models.py`) |
+| 8.6 | Evaluate | ✅ Complete (`ml/resolution_analysis/evaluation.py`) |
+| 8.7 | Decide whether prediction is reliable | ✅ Complete (`ml/resolution_analysis/decision.py`, `docs/resolution_prediction_feasibility_report.md`) |
 
 **Output:** Resolution analytics, and potentially a resolution prediction model. Phase 8 prediction steps are **optional**.
 

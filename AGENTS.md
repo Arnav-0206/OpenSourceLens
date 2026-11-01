@@ -152,8 +152,8 @@ OpenSourceLens/
 | 5 | NLP Enhancement | ✅ Complete |
 | 6 | Deep Learning & Transformer Model | ✅ Complete |
 | 7 | Related Issue Detection | ✅ Complete |
-| 8 | Resolution Analysis & Prediction | 🔜 Next |
-| 9 | Database & Backend | Pending |
+| 8 | Resolution Analysis & Prediction | ✅ Complete |
+| 9 | Database & Backend | 🔜 Next |
 | 10 | Frontend / UI | Pending |
 | 11 | Full Integration | Pending |
 | 12 | Deployment | Pending |
