@@ -154,7 +154,7 @@ OpenSourceLens/
 | 7 | Related Issue Detection | ✅ Complete |
 | 8 | Resolution Analysis & Prediction | ✅ Complete |
 | 9 | Database & Backend | ✅ Complete |
-| 10 | Frontend / UI | Pending |
+| 10 | Frontend / UI | ✅ Complete |
 | 11 | Full Integration | Pending |
 | 12 | Deployment | Pending |
 | 13 | Evaluation & Final Results | Pending |
