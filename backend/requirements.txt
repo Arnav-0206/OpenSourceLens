@@ -1,0 +1,15 @@
+# OpenSourceLens Backend Requirements
+# Core API Framework
+fastapi>=0.115.0
+uvicorn[standard]>=0.30.0
+
+# Database & ORM
+sqlalchemy>=2.0.0
+pydantic>=2.0.0
+pydantic-settings>=2.0.0
+
+# Optional PostgreSQL driver (SQLite is supported out-of-the-box)
+# psycopg2-binary>=2.9.9
+
+# Environment & Utilities
+python-dotenv>=1.0.0

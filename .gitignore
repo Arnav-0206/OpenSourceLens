@@ -30,6 +30,8 @@ out/
 data/raw/
 data/processed/
 *.parquet
+*.db
+*.sqlite3
 
 # ─── Model Artifacts ─────────────────────────
 # Trained models, weights, and serialized objects

@@ -200,18 +200,18 @@ This roadmap defines the complete project execution plan from definition through
 
 | Step | Title | Status |
 |---|---|---|
-| 9.1 | Design database schema | Pending |
-| 9.2 | Create PostgreSQL database | Pending |
-| 9.3 | Load processed data | Pending |
-| 9.4 | Create FastAPI project | Pending |
-| 9.5 | Repository endpoints | Pending |
-| 9.6 | Analytics endpoints | Pending |
-| 9.7 | Classification endpoint | Pending |
-| 9.8 | Related-issue endpoint | Pending |
-| 9.9 | Resolution endpoint | Pending |
-| 9.10 | Integrate trained models | Pending |
-| 9.11 | Error handling | Pending |
-| 9.12 | API testing | Pending |
+| 9.1 | Design database schema | Complete |
+| 9.2 | Create PostgreSQL database | Complete |
+| 9.3 | Load processed data | Complete |
+| 9.4 | Create FastAPI project | Complete |
+| 9.5 | Repository endpoints | Complete |
+| 9.6 | Analytics endpoints | Complete |
+| 9.7 | Classification endpoint | Complete |
+| 9.8 | Related-issue endpoint | Complete |
+| 9.9 | Resolution endpoint | Complete |
+| 9.10 | Integrate trained models | Complete |
+| 9.11 | Error handling | Complete |
+| 9.12 | API testing | Complete |
 
 **Output:** A working ML/data backend.
 

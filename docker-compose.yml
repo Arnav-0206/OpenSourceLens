@@ -1,0 +1,21 @@
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: opensourcelens-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: opensource_lens
+      POSTGRES_USER: opensourcelens
+      POSTGRES_PASSWORD: lens_password_secure
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U opensourcelens -d opensource_lens"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  pgdata:
