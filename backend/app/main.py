@@ -46,6 +46,15 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     )
     # Ensure tables are present in database
     init_db(engine)
+
+    # Optional model pre-warming on application boot
+    if settings.PREWARM_ON_STARTUP:
+        from backend.app.services.model_manager import model_manager
+
+        logger.info("PREWARM_ON_STARTUP enabled: Pre-loading ML/DL models into host memory...")
+        model_manager.prewarm_all()
+        logger.info("All model artifacts pre-warmed successfully.")
+
     yield
     logger.info("Shutting down OpenSourceLens API...")
     engine.dispose()

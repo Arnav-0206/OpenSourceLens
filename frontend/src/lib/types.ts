@@ -235,6 +235,7 @@ export interface RelatedIssuesResponse {
 export interface RelatedSearchRequest {
   title: string;
   body?: string | null;
+  repo_name?: string | null;
   top_k?: number;
   state?: "open" | "closed" | null;
 }

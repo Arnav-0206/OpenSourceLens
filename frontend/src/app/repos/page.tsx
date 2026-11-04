@@ -13,8 +13,8 @@ import {
   Terminal,
 } from "lucide-react";
 import RepoSearchInput from "@/components/repository/RepoSearchInput";
-import { getRepositories } from "@/lib/api";
-import { RepositorySummary } from "@/lib/types";
+import { getAnalyticsComparison, getRepositories } from "@/lib/api";
+import { RepositoryComparisonItem, RepositorySummary } from "@/lib/types";
 import { formatHours, formatNumber, formatPercent } from "@/lib/utils";
 
 interface DirectoryRepo {
@@ -123,22 +123,50 @@ export default function RepositoriesPage() {
 
     async function fetchLiveRepos() {
       try {
-        const liveList: RepositorySummary[] = await getRepositories();
-        if (mounted && Array.isArray(liveList) && liveList.length > 0) {
+        const [reposRes, compRes] = await Promise.allSettled([
+          getRepositories(),
+          getAnalyticsComparison(),
+        ]);
+
+        const liveList =
+          reposRes.status === "fulfilled" && Array.isArray(reposRes.value)
+            ? reposRes.value
+            : [];
+        const compList =
+          compRes.status === "fulfilled" &&
+          Array.isArray(compRes.value?.repositories)
+            ? compRes.value.repositories
+            : [];
+
+        if (mounted && (liveList.length > 0 || compList.length > 0)) {
           const updated = initialRepos.map((base) => {
-            const match = liveList.find(
+            const matchSummary = liveList.find(
               (r) => r.repo_name.toLowerCase() === base.repo_name.toLowerCase()
             );
-            if (match) {
-              return {
-                ...base,
-                stars_count: match.stars_count,
-                forks_count: match.forks_count,
-                description: match.description || base.description,
-                primary_language: match.primary_language || base.primary_language,
-              };
-            }
-            return base;
+            const matchComp = compList.find(
+              (r) => r.repo_name.toLowerCase() === base.repo_name.toLowerCase()
+            );
+
+            return {
+              ...base,
+              stars_count:
+                matchSummary?.stars_count ??
+                matchComp?.stars_count ??
+                base.stars_count,
+              forks_count: matchSummary?.forks_count ?? base.forks_count,
+              description: matchSummary?.description || base.description,
+              primary_language:
+                matchSummary?.primary_language || base.primary_language,
+              total_issues: matchComp?.total_issues ?? base.total_issues,
+              closed_issues: matchComp?.closed_issues ?? base.closed_issues,
+              closure_rate: matchComp?.closure_rate ?? base.closure_rate,
+              median_hours:
+                matchComp?.median_resolution_hours ?? base.median_hours,
+              rapid_pct:
+                matchComp?.rapid_closure_percentage !== undefined
+                  ? matchComp.rapid_closure_percentage / 100
+                  : base.rapid_pct,
+            };
           });
           setRepos(updated);
         }

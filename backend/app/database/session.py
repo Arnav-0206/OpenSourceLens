@@ -10,7 +10,7 @@ import os
 from pathlib import Path
 from typing import Generator, Optional
 
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, event
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -53,7 +53,18 @@ def build_engine(url: Optional[str] = None) -> Engine:
 
     if db_url.startswith("sqlite"):
         connect_args["check_same_thread"] = False
-        return create_engine(db_url, connect_args=connect_args)
+        sqlite_engine = create_engine(db_url, connect_args=connect_args)
+
+        @event.listens_for(sqlite_engine, "connect")
+        def set_sqlite_pragma(dbapi_connection, connection_record):
+            cursor = dbapi_connection.cursor()
+            cursor.execute("PRAGMA journal_mode=WAL")
+            cursor.execute("PRAGMA synchronous=NORMAL")
+            cursor.execute("PRAGMA foreign_keys=ON")
+            cursor.execute("PRAGMA cache_size=-64000")
+            cursor.close()
+
+        return sqlite_engine
 
     # PostgreSQL pool settings
     return create_engine(

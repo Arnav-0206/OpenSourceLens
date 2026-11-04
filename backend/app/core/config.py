@@ -39,5 +39,10 @@ class Settings(BaseModel):
     OPENAPI_URL: str = "/openapi.json"
     REDOC_URL: str = "/redoc"
 
+    PREWARM_ON_STARTUP: bool = Field(
+        default_factory=lambda: os.getenv("PREWARM_ON_STARTUP", "false").lower()
+        in ("true", "1", "yes")
+    )
+
 
 settings = Settings()

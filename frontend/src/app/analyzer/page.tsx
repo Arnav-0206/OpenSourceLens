@@ -371,6 +371,7 @@ function AnalyzerContent() {
     try {
       const response = await searchRelatedIssues({
         title: relatedQuery.trim(),
+        repo_name: relatedRepo ? relatedRepo : null,
         top_k: relatedTopK,
         state:
           relatedState === "open" || relatedState === "closed"
