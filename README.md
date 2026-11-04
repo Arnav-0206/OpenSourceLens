@@ -105,8 +105,8 @@ You can run and test both the **FastAPI backend** and the **Next.js frontend** l
    # Activate Python virtual environment (Windows PowerShell)
    .\.venv\Scripts\Activate.ps1
 
-   # Start the FastAPI application with auto-reload
-   uvicorn backend.app.main:app --reload --port 8000
+   # Start the FastAPI application via python -m uvicorn with auto-reload
+   python -m uvicorn backend.app.main:app --reload --port 8000
    ```
 2. Verify the backend is online:
    - Root API status: `http://localhost:8000/`
