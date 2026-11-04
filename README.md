@@ -32,8 +32,8 @@
 | **Phase 8** | Resolution Analysis & Prediction | Random Forest velocity prediction, SLA horizons, IQR windows | ✅ Complete |
 | **Phase 9** | Database & Backend | PostgreSQL/SQLite schemas, FastAPI REST endpoints, 73 unit tests | ✅ Complete |
 | **Phase 10** | Frontend / OpenSourceLens UI | Next.js 15 App Router, Tailwind, Recharts, AI workspace, Skeletons | ✅ Complete |
-| **Phase 11** | Full Integration | End-to-end integration: Frontend ↔ FastAPI ↔ PostgreSQL ↔ PyTorch | 🔜 Next |
-| **Phase 12** | Deployment | Docker containerization, staging, and production hosting | Pending |
+| **Phase 11** | Full Integration | End-to-end integration: Frontend ↔ FastAPI ↔ SQLite/Postgres ↔ ML Ensembles | ✅ Complete |
+| **Phase 12** | Deployment | Docker containerization, staging, and production hosting | 🔜 Next |
 | **Phase 13** | Evaluation & Final Results | Cross-system benchmarking and quantitative validation | Pending |
 | **Phase 14** | Documentation & Conference Paper | Academic research paper and project presentation | Pending |
 | **Phase 15** | Final Evaluation | Final project defense and delivery | Pending |
@@ -46,11 +46,11 @@
 |---|---|
 | **Frontend Presentation** | **Next.js 15.5**, React 19, TypeScript 5.7, Tailwind CSS 3.4, Recharts 3.10, Lucide Icons |
 | **Backend API** | **FastAPI**, Pydantic v2, Uvicorn, SQLAlchemy 2.1 |
-| **Database** | **PostgreSQL** / SQLite with automated schema migrations and audit logs |
+| **Database** | **SQLite (WAL mode, 64MB cache)** / **PostgreSQL** with 24 query indexes and audit logging |
 | **Classical Machine Learning** | **scikit-learn** (TF-IDF vectorizer, Logistic Regression, Linear SVM, Random Forest) |
-| **Deep Learning & NLP** | **PyTorch**, Hugging Face **Transformers** (Fine-tuned `distilbert-base-uncased`) |
-| **Semantic Vector Retrieval** | **Sentence Transformers** (`all-MiniLM-L6-v2` dense embedding space) |
-| **Data Source** | GitHub REST API v3 (2,328 standardized curated issues) |
+| **Deep Learning & NLP** | **PyTorch**, Hugging Face **Transformers** (Fine-tuned `distilbert-base-uncased`, 66.9M params) |
+| **Semantic Vector Retrieval** | **Sentence Transformers** (`all-MiniLM-L6-v2` 384-d dense embedding space) |
+| **Data Source** | GitHub REST API v3 (2,328 standardized curated issues across 4 target ecosystems) |
 
 ---
 
@@ -59,9 +59,9 @@
 The project benchmarks issues across four distinct open-source software domains:
 
 1. **`microsoft/vscode`** (Developer Tools & IDE) — Rapid triage velocity (~7.7h median closure)
-2. **`pytorch/pytorch`** (Machine Learning Framework) — High-volume compute & autograd issues (~14.2h median)
-3. **`kubernetes/kubernetes`** (Cloud Native Orchestration) — Complex distributed infrastructure (~46.5h median)
-4. **`huggingface/transformers`** (Generative AI & NLP) — Rapidly evolving state-of-the-art models (~28.0h median)
+2. **`pytorch/pytorch`** (Machine Learning Framework) — High-volume compute & autograd issues (~62.4h median)
+3. **`kubernetes/kubernetes`** (Cloud Native Orchestration) — Complex distributed infrastructure (~141.2h median)
+4. **`huggingface/transformers`** (Generative AI & NLP) — Rapidly evolving state-of-the-art models (~38.8h median)
 
 ---
 
@@ -93,8 +93,8 @@ The project benchmarks issues across four distinct open-source software domains:
 You can run and test both the **FastAPI backend** and the **Next.js frontend** locally on your machine.
 
 ### Prerequisites
-- **Node.js** (v18.0 or higher) and **npm**
-- **Python** (3.10 to 3.14) with virtual environment support
+- **Python 3.10+** (Python 3.14 supported) with virtual environment
+- **Node.js 18+** and **npm**
 
 ---
 
@@ -102,7 +102,7 @@ You can run and test both the **FastAPI backend** and the **Next.js frontend** l
 
 1. Open a terminal in the project root:
    ```powershell
-   # Activate Python virtual environment
+   # Activate Python virtual environment (Windows PowerShell)
    .\.venv\Scripts\Activate.ps1
 
    # Start the FastAPI application with auto-reload
@@ -130,7 +130,7 @@ You can run and test both the **FastAPI backend** and the **Next.js frontend** l
 2. Open your browser and navigate to:
    👉 **`http://localhost:3000`**
 
-> **Note on Offline Resilience:** The frontend is engineered with graceful fallback datasets. If the backend server is stopped or restarted, all frontend views will seamlessly render verified empirical data without throwing broken UI errors.
+> **Note on Reverse Proxy:** The Next.js frontend is configured with automatic reverse-proxy rewrites (`/api/proxy/:path*` $\to$ `http://127.0.0.1:8000/api/v1/:path*`), eliminating CORS issues during development.
 
 ---
 
@@ -139,12 +139,13 @@ You can run and test both the **FastAPI backend** and the **Next.js frontend** l
 Once both servers are running, test each key feature:
 
 1. **Landing Page (`http://localhost:3000`):**
-   - Check the **Live API Status Indicator** in the navbar (green badge shows live ping; amber shows offline simulation).
+   - Check the **Live API Status Indicator** in the navbar (green badge shows live ping and latency; amber shows offline fallback).
    - View global issue volume stats and quick-launch links.
 
 2. **Repository Directory (`http://localhost:3000/repos`):**
-   - Use the live search bar to filter repositories by name.
-   - Click any repository card (e.g., `microsoft/vscode`) to navigate to its overview.
+   - View real-time database issue counts and median resolution metrics for all 4 target repositories.
+   - Filter repositories using the search bar.
+   - Click any repository card (e.g., `microsoft/vscode`) to navigate to its deep dive.
 
 3. **Repository Overview (`http://localhost:3000/repos/microsoft/vscode`):**
    - Inspect the **SLA & Volume Diagnostics** grid.
@@ -155,7 +156,7 @@ Once both servers are running, test each key feature:
    - Filter issues by state, category (`bug`, `feature`, `other`), or speed tier.
    - Search for keywords (e.g., `"terminal"`, `"memory"`, `"crash"`).
    - Click any issue row to open the **Detail Modal**.
-   - Click **"Analyze in AI Pipeline"** inside the modal to instantly transfer the issue into the AI Workspace!
+   - Click **"Analyze in AI Pipeline"** inside the modal to transfer the issue into the AI Workspace!
 
 5. **Cross-Repository Analytics (`http://localhost:3000/analytics`):**
    - Inspect the **Cross-Repository Benchmark Bar Chart** showing median resolution hours.
@@ -170,20 +171,56 @@ Once both servers are running, test each key feature:
 
 ### Step 4: Run Automated Verification Tests
 
-You can run the full test and build suites anytime to verify code health:
+You can run automated test suites and diagnostic audit tools anytime:
 
-#### Frontend Type-Check & Build:
-```powershell
-cd frontend
-npm run type-check   # Verifies strict TypeScript contracts (0 errors)
-npm run build        # Compiles Next.js production build and SSG pages (0 errors)
-```
-
-#### Backend API & Database Unit Tests:
+#### Option A: Full Backend Integration & API Test Suite
 ```powershell
 # From project root with .venv activated:
-python -m pytest tests -k "api or database" -v
-# Verified: 73 passed, 0 failed
+python -m pytest -k "test_api or test_integration" tests/ -v
+# Output: 145 passed, 0 failed in ~12 seconds
+```
+
+#### Option B: Standalone Diagnostic Verification Scripts (`scripts/`)
+We have created 9 dedicated verification tools that audit every pipeline from the command line:
+
+```powershell
+# 1. Verify frontend-to-backend connectivity and environment configuration
+python scripts/verify_connection.py
+
+# 2. Verify SQLite database schema, 2,328 issues, and analytics hydration
+python scripts/verify_database_pipeline.py
+
+# 3. Verify Classical ML baseline classifiers (Logistic Regression & Linear SVM)
+python scripts/verify_classifier_pipeline.py
+
+# 4. Verify Fine-tuned DistilBERT transformer sequence classifier
+python scripts/verify_transformer_pipeline.py
+
+# 5. Verify Sentence-Transformers dense embedding retrieval & similarity cache
+python scripts/verify_similarity_pipeline.py
+
+# 6. Verify Resolution analysis percentiles & Random Forest velocity predictor
+python scripts/verify_resolution_pipeline.py
+
+# 7. Verify End-to-end full system user journeys and multi-model consistency
+python scripts/verify_e2e_journey.py
+
+# 8. Verify Edge cases (404s, 422s, extreme text, XSS/sanitization, empty states)
+python scripts/verify_edge_cases.py
+
+# 9. Verify Performance SLAs, SQLite WAL pragmas, and concurrent throughput
+python scripts/verify_performance_cleanup.py
+```
+
+#### Option C: Frontend Type-Check & Production Build
+```powershell
+cd frontend
+
+# Strict TypeScript type check (0 errors)
+npm run type-check
+
+# Full Next.js production build and SSG prerendering (11/11 pages compiled)
+npm run build
 ```
 
 ---
@@ -194,11 +231,12 @@ python -m pytest tests -k "api or database" -v
 OpenSourceLens/
 ├── backend/                       # FastAPI REST Backend
 │   └── app/
-│       ├── main.py                # App entrypoint & CORS configuration
-│       ├── api/v1/                # REST route endpoints (repos, analytics, classify, related, resolution)
-│       ├── database/              # SQLAlchemy models, SQLite/PostgreSQL connectors, seeders
+│       ├── main.py                # App entrypoint, lifespan pre-warming & CORS
+│       ├── api/v1/                # REST endpoints (repos, analytics, classify, related, resolution, models)
+│       ├── core/                  # Configuration, error handlers, and domain exceptions
+│       ├── database/              # SQLAlchemy models, SQLite WAL session, seeders
 │       ├── schemas/               # Pydantic v2 validation contracts
-│       └── services/              # ML inference services (DistilBERT, TF-IDF, SentenceTransformers)
+│       └── services/              # ML inference services (DistilBERT, TF-IDF, SentenceTransformers, RF)
 ├── frontend/                      # Next.js 15 + React 19 Frontend
 │   ├── src/
 │   │   ├── app/                   # Next.js App Router (pages, loading skeletons, error boundaries, 404)
@@ -223,10 +261,11 @@ OpenSourceLens/
 │   ├── classification/            # Classical ML (LR, SVM) and DistilBERT training scripts
 │   ├── related_issues/            # Sentence Transformers index and cosine retrieval
 │   └── resolution_analysis/       # Resolution duration stats, survival curves, regression
-├── data/                          # Datasets (raw & processed)
+├── data/                          # Datasets (raw & processed) & opensource_lens.db (git-ignored)
 ├── models/                        # Saved model weights & tokenizers (git-ignored)
 ├── docs/                          # Architecture specs, methodology, master roadmap
-├── tests/                         # Backend and ML unit/integration test suites (645 tests)
+├── scripts/                       # 9 Diagnostic CLI verification scripts for Phase 11
+├── tests/                         # Backend and ML unit/integration test suites (145+ tests)
 ├── AGENTS.md                      # Agent rules, source of truth, and protocol conventions
 ├── README.md                      # Project documentation and quickstart guide
 └── requirements.txt               # Python package dependencies
