@@ -16,7 +16,6 @@ import {
   X,
 } from "lucide-react";
 import HealthIndicator from "../common/HealthIndicator";
-import RepoSelector from "../repository/RepoSelector";
 
 const navLinks = [
   { href: "/", label: "Overview", icon: Activity },
@@ -46,13 +45,6 @@ export default function Navbar() {
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, []);
 
-  // Extract repo if on /repos/[owner]/[name]
-  const pathParts = pathname.split("/").filter(Boolean);
-  const activeRepo =
-    pathParts.length >= 3 && pathParts[0] === "repos"
-      ? `${pathParts[1]}/${pathParts[2]}`
-      : undefined;
-
   return (
     <header className="sticky top-0 z-50 w-full border-b border-slate-800 bg-slate-950/85 backdrop-blur-md">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
@@ -68,7 +60,7 @@ export default function Navbar() {
                   OpenSource<span className="text-indigo-400">Lens</span>
                 </span>
                 <span className="hidden sm:inline-block ml-2 px-1.5 py-0.5 text-[10px] uppercase tracking-wider font-semibold bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 rounded">
-                  Analytics
+                  Intelligence
                 </span>
               </div>
             </Link>
@@ -99,10 +91,8 @@ export default function Navbar() {
             </nav>
           </div>
 
-          {/* Right actions: Repo Selector, Health indicator, API Docs, GitHub */}
+          {/* Right actions: Health indicator, API Docs, GitHub */}
           <div className="flex items-center gap-2.5">
-            <RepoSelector currentRepo={activeRepo} className="hidden sm:inline-block" />
-
             <HealthIndicator />
 
             <a
@@ -148,14 +138,6 @@ export default function Navbar() {
       {/* Mobile Navigation Drawer */}
       {mobileMenuOpen && (
         <div className="md:hidden border-t border-slate-800 bg-slate-950/95 backdrop-blur-xl px-4 py-4 space-y-3 animate-in slide-in-from-top-2 duration-200">
-          {/* Quick repo switcher in mobile drawer */}
-          <div className="pb-3 border-b border-slate-800/80">
-            <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-500 block mb-1.5">
-              Current Repository
-            </span>
-            <RepoSelector currentRepo={activeRepo} className="w-full" />
-          </div>
-
           {/* Navigation Links List */}
           <nav className="space-y-1">
             {navLinks.map((link) => {
@@ -168,40 +150,31 @@ export default function Navbar() {
                 <Link
                   key={link.href}
                   href={link.href}
-                  onClick={() => setMobileMenuOpen(false)}
-                  className={`flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-sm font-medium transition-colors min-h-[44px] ${
+                  className={`flex items-center gap-3 px-3 py-2.5 text-sm font-medium rounded-xl transition-colors min-h-[44px] ${
                     isActive
-                      ? "bg-indigo-950/40 text-indigo-400 border border-indigo-500/30"
+                      ? "bg-indigo-600/15 text-indigo-400 font-semibold"
                       : "text-slate-300 hover:text-white hover:bg-slate-900"
                   }`}
                 >
-                  <Icon className="w-4 h-4 text-indigo-400 shrink-0" />
+                  <Icon className="w-4 h-4" />
                   <span>{link.label}</span>
                 </Link>
               );
             })}
           </nav>
 
-          {/* External Links */}
-          <div className="pt-3 border-t border-slate-800/80 flex items-center justify-between gap-3 text-xs">
+          <div className="pt-3 border-t border-slate-800 flex items-center justify-between text-xs text-slate-400">
+            <span className="flex items-center gap-1.5">
+              <span>System</span>
+              <HealthIndicator />
+            </span>
             <a
               href="http://localhost:8000/docs"
               target="_blank"
               rel="noopener noreferrer"
-              className="flex-1 flex items-center justify-center gap-1.5 py-2.5 px-3 rounded-xl bg-slate-900 border border-slate-800 text-slate-400 hover:text-white transition-colors min-h-[44px]"
+              className="hover:text-indigo-400 transition-colors"
             >
-              <span>Swagger API</span>
-              <ExternalLink className="w-3.5 h-3.5" />
-            </a>
-
-            <a
-              href="https://github.com/Arnav-0206/OpenSourceLens"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="flex-1 flex items-center justify-center gap-1.5 py-2.5 px-3 rounded-xl bg-slate-900 border border-slate-800 text-slate-300 hover:text-white transition-colors min-h-[44px]"
-            >
-              <GitBranch className="w-3.5 h-3.5 text-indigo-400" />
-              <span>GitHub</span>
+              API Docs &rarr;
             </a>
           </div>
         </div>

@@ -36,85 +36,11 @@ interface DirectoryRepo {
   accent: string;
 }
 
-const initialRepos: DirectoryRepo[] = [
-  {
-    owner: "microsoft",
-    name: "vscode",
-    repo_name: "microsoft/vscode",
-    domain: "Developer Tools & IDE",
-    description: "Visual Studio Code is a code editor redefined and optimized for building and debugging modern web and cloud applications.",
-    stars_count: 165400,
-    forks_count: 32000,
-    total_issues: 582,
-    closed_issues: 242,
-    closure_rate: 0.416,
-    median_hours: 7.7,
-    rapid_pct: 0.698,
-    primary_language: "TypeScript",
-    color: "from-blue-500/15 via-indigo-500/5 to-slate-950",
-    border: "border-blue-500/30",
-    accent: "text-blue-400",
-  },
-  {
-    owner: "pytorch",
-    name: "pytorch",
-    repo_name: "pytorch/pytorch",
-    domain: "Machine Learning Framework",
-    description: "PyTorch is an open-source machine learning library primarily used for applications such as computer vision and natural language processing.",
-    stars_count: 85200,
-    forks_count: 22000,
-    total_issues: 582,
-    closed_issues: 310,
-    closure_rate: 0.533,
-    median_hours: 53.1,
-    rapid_pct: 0.394,
-    primary_language: "Python / C++",
-    color: "from-amber-500/15 via-orange-500/5 to-slate-950",
-    border: "border-amber-500/30",
-    accent: "text-amber-400",
-  },
-  {
-    owner: "kubernetes",
-    name: "kubernetes",
-    repo_name: "kubernetes/kubernetes",
-    domain: "Cloud Native Orchestration",
-    description: "Production-grade container orchestration system automating software deployment, scaling, and operational management.",
-    stars_count: 110300,
-    forks_count: 39000,
-    total_issues: 582,
-    closed_issues: 380,
-    closure_rate: 0.653,
-    median_hours: 141.2,
-    rapid_pct: 0.281,
-    primary_language: "Go",
-    color: "from-cyan-500/15 via-sky-500/5 to-slate-950",
-    border: "border-cyan-500/30",
-    accent: "text-cyan-400",
-  },
-  {
-    owner: "huggingface",
-    name: "transformers",
-    repo_name: "huggingface/transformers",
-    domain: "NLP & Foundation Models",
-    description: "Transformers provides thousands of pretrained models to perform tasks on texts such as classification, extraction, and generation.",
-    stars_count: 135800,
-    forks_count: 26000,
-    total_issues: 582,
-    closed_issues: 381,
-    closure_rate: 0.655,
-    median_hours: 48.2,
-    rapid_pct: 0.426,
-    primary_language: "Python",
-    color: "from-violet-500/15 via-purple-500/5 to-slate-950",
-    border: "border-violet-500/30",
-    accent: "text-violet-400",
-  },
-];
-
 type SortKey = "stars" | "median_hours" | "closure_rate" | "name";
 
 export default function RepositoriesPage() {
-  const [repos, setRepos] = useState<DirectoryRepo[]>(initialRepos);
+  const [repos, setRepos] = useState<DirectoryRepo[]>([]);
+  const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState("");
   const [sortBy, setSortBy] = useState<SortKey>("stars");
 
@@ -123,6 +49,7 @@ export default function RepositoriesPage() {
 
     async function fetchLiveRepos() {
       try {
+        setLoading(true);
         const [reposRes, compRes] = await Promise.allSettled([
           getRepositories(),
           getAnalyticsComparison(),
@@ -138,40 +65,40 @@ export default function RepositoriesPage() {
             ? compRes.value.repositories
             : [];
 
-        if (mounted && (liveList.length > 0 || compList.length > 0)) {
-          const updated = initialRepos.map((base) => {
-            const matchSummary = liveList.find(
-              (r) => r.repo_name.toLowerCase() === base.repo_name.toLowerCase()
-            );
+        if (mounted && liveList.length > 0) {
+          const updated: DirectoryRepo[] = liveList.map((r) => {
             const matchComp = compList.find(
-              (r) => r.repo_name.toLowerCase() === base.repo_name.toLowerCase()
+              (c) => c.repo_name.toLowerCase() === r.repo_name.toLowerCase()
             );
 
             return {
-              ...base,
-              stars_count:
-                matchSummary?.stars_count ??
-                matchComp?.stars_count ??
-                base.stars_count,
-              forks_count: matchSummary?.forks_count ?? base.forks_count,
-              description: matchSummary?.description || base.description,
-              primary_language:
-                matchSummary?.primary_language || base.primary_language,
-              total_issues: matchComp?.total_issues ?? base.total_issues,
-              closed_issues: matchComp?.closed_issues ?? base.closed_issues,
-              closure_rate: matchComp?.closure_rate ?? base.closure_rate,
-              median_hours:
-                matchComp?.median_resolution_hours ?? base.median_hours,
+              owner: r.owner,
+              name: r.name,
+              repo_name: r.repo_name,
+              domain: matchComp?.dominant_category ? `${matchComp.dominant_category} focus` : "Software Engineering",
+              description: r.description || "Public open-source repository.",
+              stars_count: r.stars_count,
+              forks_count: r.forks_count,
+              total_issues: matchComp?.total_issues ?? r.open_issues_count,
+              closed_issues: matchComp?.closed_issues ?? 0,
+              closure_rate: matchComp?.closure_rate ?? 0,
+              median_hours: matchComp?.median_resolution_hours ?? 0,
               rapid_pct:
                 matchComp?.rapid_closure_percentage !== undefined
                   ? matchComp.rapid_closure_percentage / 100
-                  : base.rapid_pct,
+                  : 0,
+              primary_language: r.primary_language || "General",
+              color: "from-indigo-500/15 via-slate-900 to-slate-950",
+              border: "border-slate-800",
+              accent: "text-indigo-400",
             };
           });
           setRepos(updated);
         }
       } catch {
-        // Retain fallback data gracefully if backend is offline
+        // Fallback gracefully on fetch errors
+      } finally {
+        if (mounted) setLoading(false);
       }
     }
 
@@ -215,15 +142,14 @@ export default function RepositoriesPage() {
       <div className="space-y-2">
         <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-indigo-500/10 border border-indigo-500/20 text-indigo-400 text-xs font-semibold">
           <Boxes className="w-3.5 h-3.5" />
-          <span>Repository Directory • Step 10.3</span>
+          <span>Repository Directory</span>
         </div>
         <h1 className="text-3xl sm:text-4xl font-extrabold tracking-tight text-white">
-          Monitored Flagship Repositories
+          Analyzed Repositories
         </h1>
         <p className="text-slate-400 text-sm sm:text-base max-w-3xl leading-relaxed">
-          Explore benchmark analytics across 4 high-profile open-source software domains.
-          Select a repository to drill down into resolution SLA percentiles, Kaplan-Meier
-          survival curves, and full-text issue analytics.
+          Explore analytics across ingested open-source repositories.
+          View resolution SLA percentiles, category breakdowns, and issue distributions.
         </p>
       </div>
 
@@ -253,126 +179,133 @@ export default function RepositoriesPage() {
         </div>
       </div>
 
+      {/* Loading Skeleton */}
+      {loading && repos.length === 0 && (
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          {[1, 2, 3, 4].map((i) => (
+            <div key={i} className="glass-panel rounded-3xl p-6 sm:p-8 border border-slate-800 animate-pulse space-y-6">
+              <div className="h-6 bg-slate-800 rounded w-1/3" />
+              <div className="h-4 bg-slate-800/60 rounded w-2/3" />
+              <div className="grid grid-cols-4 gap-3 h-16 bg-slate-900/50 rounded-2xl" />
+            </div>
+          ))}
+        </div>
+      )}
+
       {/* Repository Cards Grid */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {filteredAndSortedRepos.map((repo) => (
-          <div
-            key={repo.repo_name}
-            className={`glass-panel glass-panel-hover rounded-3xl p-6 sm:p-8 border ${repo.border} bg-gradient-to-br ${repo.color} flex flex-col justify-between space-y-6`}
-          >
-            {/* Header */}
-            <div>
-              <div className="flex items-start justify-between gap-3">
-                <div className="space-y-1">
-                  <span className="text-[10px] font-semibold tracking-wider uppercase text-slate-400">
-                    {repo.domain}
-                  </span>
-                  <h2 className="text-2xl font-extrabold text-white tracking-tight">
-                    <span className="text-slate-400">{repo.owner}/</span>
-                    <span className={repo.accent}>{repo.name}</span>
-                  </h2>
-                </div>
-
-                <div className="flex items-center gap-2">
-                  <span className="flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-slate-900/90 border border-slate-800 text-slate-200">
-                    <Star className="w-3.5 h-3.5 text-amber-400 fill-amber-400" />
-                    {formatNumber(repo.stars_count)}
-                  </span>
-                  <span className="px-2.5 py-1 text-[11px] font-medium bg-slate-900/60 border border-slate-800 rounded-lg text-slate-400">
-                    {repo.primary_language}
-                  </span>
-                </div>
-              </div>
-
-              <p className="text-xs sm:text-sm text-slate-300 mt-3 leading-relaxed">
-                {repo.description}
-              </p>
-            </div>
-
-            {/* Metrics Snapshot Grid */}
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 py-4 px-4 rounded-2xl bg-slate-950/70 border border-slate-800/80 text-center">
+      {!loading && (
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          {filteredAndSortedRepos.map((repo) => (
+            <div
+              key={repo.repo_name}
+              className={`glass-panel glass-panel-hover rounded-3xl p-6 sm:p-8 border ${repo.border} bg-gradient-to-br ${repo.color} flex flex-col justify-between space-y-6`}
+            >
+              {/* Header */}
               <div>
-                <div className="text-[10px] text-slate-400 uppercase tracking-wider">
-                  Analyzed Issues
+                <div className="flex items-start justify-between gap-3">
+                  <div className="space-y-1">
+                    <span className="text-[10px] font-semibold tracking-wider uppercase text-slate-400">
+                      {repo.domain}
+                    </span>
+                    <h2 className="text-2xl font-extrabold text-white tracking-tight">
+                      <span className="text-slate-400">{repo.owner}/</span>
+                      <span className={repo.accent}>{repo.name}</span>
+                    </h2>
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    <span className="flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-slate-900/90 border border-slate-800 text-slate-200">
+                      <Star className="w-3.5 h-3.5 text-amber-400 fill-amber-400" />
+                      {formatNumber(repo.stars_count)}
+                    </span>
+                    <span className="px-2.5 py-1 text-[11px] font-medium bg-slate-900/60 border border-slate-800 rounded-lg text-slate-400">
+                      {repo.primary_language}
+                    </span>
+                  </div>
                 </div>
-                <div className="text-base font-bold text-white mt-0.5">
-                  {repo.total_issues}
+
+                <p className="text-xs sm:text-sm text-slate-300 mt-3 leading-relaxed">
+                  {repo.description}
+                </p>
+              </div>
+
+              {/* Metrics Snapshot Grid */}
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 py-4 px-4 rounded-2xl bg-slate-950/70 border border-slate-800/80 text-center">
+                <div>
+                  <div className="text-[10px] text-slate-400 uppercase tracking-wider">
+                    Total Issues
+                  </div>
+                  <div className="text-base font-bold text-white mt-0.5">
+                    {repo.total_issues}
+                  </div>
+                </div>
+
+                <div>
+                  <div className="text-[10px] text-slate-400 uppercase tracking-wider">
+                    Resolved
+                  </div>
+                  <div className="text-base font-bold text-cyan-300 mt-0.5">
+                    {repo.closed_issues} ({formatPercent(repo.closure_rate)})
+                  </div>
+                </div>
+
+                <div>
+                  <div className="text-[10px] text-slate-400 uppercase tracking-wider">
+                    Median SLA
+                  </div>
+                  <div className="text-base font-bold text-emerald-400 mt-0.5 flex items-center justify-center gap-1">
+                    <Clock className="w-3.5 h-3.5" />
+                    <span>{formatHours(repo.median_hours)}</span>
+                  </div>
+                </div>
+
+                <div>
+                  <div className="text-[10px] text-slate-400 uppercase tracking-wider">
+                    &lt; 24h Resolved
+                  </div>
+                  <div className="text-base font-bold text-indigo-300 mt-0.5 flex items-center justify-center gap-1">
+                    <Flame className="w-3.5 h-3.5 text-indigo-400" />
+                    <span>{formatPercent(repo.rapid_pct)}</span>
+                  </div>
                 </div>
               </div>
 
-              <div>
-                <div className="text-[10px] text-slate-400 uppercase tracking-wider">
-                  Resolved
+              {/* Action Buttons */}
+              <div className="flex flex-wrap items-center justify-between gap-3 pt-2 border-t border-slate-800/80">
+                <div className="flex items-center gap-3">
+                  <a
+                    href={`https://github.com/${repo.repo_name}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1 text-[11px] font-medium text-slate-400 hover:text-slate-200 transition-colors"
+                  >
+                    <span>View on GitHub</span>
+                    <ExternalLink className="w-3 h-3 ml-0.5" />
+                  </a>
                 </div>
-                <div className="text-base font-bold text-cyan-300 mt-0.5">
-                  {repo.closed_issues} ({formatPercent(repo.closure_rate)})
-                </div>
-              </div>
 
-              <div>
-                <div className="text-[10px] text-slate-400 uppercase tracking-wider">
-                  Median SLA
-                </div>
-                <div className="text-base font-bold text-emerald-400 mt-0.5 flex items-center justify-center gap-1">
-                  <Clock className="w-3.5 h-3.5" />
-                  <span>{formatHours(repo.median_hours)}</span>
-                </div>
-              </div>
-
-              <div>
-                <div className="text-[10px] text-slate-400 uppercase tracking-wider">
-                  &lt; 24h Resolved
-                </div>
-                <div className="text-base font-bold text-indigo-300 mt-0.5 flex items-center justify-center gap-1">
-                  <Flame className="w-3.5 h-3.5 text-indigo-400" />
-                  <span>{formatPercent(repo.rapid_pct)}</span>
-                </div>
-              </div>
-            </div>
-
-            {/* Action Buttons */}
-            <div className="flex flex-wrap items-center justify-between gap-3 pt-2 border-t border-slate-800/80">
-              <div className="flex items-center gap-3">
                 <Link
-                  href={`/repos/${repo.owner}/${repo.name}`}
-                  className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-medium text-xs transition-colors shadow-sm"
+                  href="/analyzer"
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-indigo-600/20 hover:bg-indigo-600/30 text-indigo-300 text-xs font-medium border border-indigo-500/30 transition-colors"
                 >
                   <Terminal className="w-3.5 h-3.5" />
-                  <span>View Overview</span>
-                  <ArrowRight className="w-3 h-3 ml-0.5" />
-                </Link>
-
-                <Link
-                  href={`/repos/${repo.owner}/${repo.name}/issues`}
-                  className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-800 text-slate-300 hover:text-white font-medium text-xs transition-colors"
-                >
-                  <GitPullRequest className="w-3.5 h-3.5 text-slate-400" />
-                  <span>Browse Issues (582)</span>
+                  <span>AI Issue Analyzer</span>
+                  <ArrowRight className="w-3 h-3" />
                 </Link>
               </div>
-
-              <a
-                href={`https://github.com/${repo.repo_name}`}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="inline-flex items-center gap-1 text-[11px] font-medium text-slate-400 hover:text-slate-200 transition-colors"
-              >
-                <span>GitHub</span>
-                <ExternalLink className="w-3 h-3" />
-              </a>
             </div>
-          </div>
-        ))}
-      </div>
+          ))}
+        </div>
+      )}
 
-      {filteredAndSortedRepos.length === 0 && (
+      {!loading && filteredAndSortedRepos.length === 0 && (
         <div className="p-12 text-center rounded-3xl glass-panel border border-slate-800 space-y-3">
           <Boxes className="w-10 h-10 text-slate-500 mx-auto" />
           <h3 className="text-base font-semibold text-white">
             No matching repositories
           </h3>
           <p className="text-xs text-slate-400 max-w-sm mx-auto">
-            Try adjusting your search query or reset the filter to view all 4 supported repositories.
+            Try adjusting your search query or clear the filter.
           </p>
           <button
             type="button"
