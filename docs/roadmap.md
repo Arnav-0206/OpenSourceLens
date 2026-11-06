@@ -1,347 +1,128 @@
 # OpenSourceLens — Master Execution Roadmap
 
-This roadmap defines the complete project execution plan from definition through final evaluation.
+This roadmap defines the complete project execution plan, structured into two core evolutionary tracks:
+1. **Phases 0–11: Benchmark Lab Foundation (Completed)** — Exhaustive offline data collection, exploratory data analysis, classical ML baseline development, transformer fine-tuning, dense vector semantic retrieval, database architecture, and initial web UI integration across four diverse benchmark repositories (`microsoft/vscode`, `pytorch/pytorch`, `kubernetes/kubernetes`, `huggingface/transformers`).
+2. **Phases 11-R–16-R: Universal Repository Intelligence Platform (Realigned Execution Plan)** — Architectural extension to dynamically ingest, analyze, and generate multi-domain intelligence for **any eligible public GitHub repository** entered by a user.
 
 ---
 
-## Phase 0 — Project Definition & Planning ✅
+## 🏛️ Track A: Benchmark Lab Foundation (Completed)
 
-**Goal:** Establish exactly what we're building and how, before writing project code.
+### Phase 0 — Project Definition & Planning ✅
+- **0.1** Freeze the problem & Universal Vision (`docs/0.1-project-definition.md`)
+- **0.2** Define Core Features & Analytical Domains (`docs/0.2-project-features.md`)
+- **0.3** Multi-Entity Data Schema Definition (`docs/0.3-data-definition.md`)
+- **0.4** Benchmark Corpus Selection & Generalization Strategy (`docs/0.4-repository-selection.md`)
+- **0.5** Data Science & ML Problem Formalization (`docs/0.5-ml-problem-definition.md`)
+- **0.6** Dual-Track Methodology Specification (`docs/0.6-methodology.md`)
+- **0.7** System Architecture Design (`docs/0.7-architecture.md`)
+- **0.8** Project Proposal Specification (`docs/0.8-stage-1-proposal.md`)
 
-| Step | Title | Status |
-|---|---|---|
-| 0.1 | Freeze the problem | ✅ `docs/0.1-project-definition.md` |
-| 0.2 | Freeze the features | ✅ `docs/0.2-project-features.md` |
-| 0.3 | Define the data we need | ✅ `docs/0.3-data-definition.md` |
-| 0.4 | Decide candidate repositories | ✅ `docs/0.4-repository-selection.md` |
-| 0.5 | Define the ML problems | ✅ `docs/0.5-ml-problem-definition.md` |
-| 0.6 | Define the methodology | ✅ `docs/0.6-methodology.md` |
-| 0.7 | Design system architecture | ✅ `docs/0.7-architecture.md` |
-| 0.8 | Stage 1 material | ✅ `docs/0.8-stage-1-proposal.md` |
+### Phase 1 — Benchmark Data Source & Collection Pipeline ✅
+- **1.1–1.10** Built modular collectors (`repository_collector.py`, `issue_collector.py`, `comment_collector.py`, `event_collector.py`), pagination engine (`paginator.py`), resilient GitHub client with exponential backoff (`github_client.py`), and raw data storage (`data/raw/`).
 
-**Output:** A fully defined project with documentation, but no implementation yet.
+### Phase 2 — Data Cleaning & Dataset Construction ✅
+- **2.1–2.10** Built raw data loaders, markdown/code/URL text strippers, timestamp processors, canonical label normalizers (`bug`, `feature`, `other`), feature extractors, and processed dataset storage (`data/processed/`).
+
+### Phase 3 — Exploratory Data Analysis (EDA) ✅
+- **3.1–3.11** Performed distribution analysis, label balance inspection, time-series creation/closure analysis, cross-repository velocity comparisons, comment patterns, and Kaplan-Meier survival curves (`ml/eda/FINDINGS.md`).
+
+### Phase 4 — Classical Machine Learning Baseline ✅
+- **4.1–4.7** Established TF-IDF feature extraction (10,000 max features, 1-2 n-grams), trained Logistic Regression and Linear SVM baselines, achieving 75.6%–77.1% accuracy.
+
+### Phase 5 — NLP Enhancement ✅
+- **5.1–5.5** Implemented sublinear TF scaling, noise regex filtering, and combined title+body representations, establishing an enhanced classical pipeline.
+
+### Phase 6 — Deep Learning & Transformer Fine-Tuning ✅
+- **6.1–6.8** Fine-tuned `distilbert-base-uncased` (66.9M parameters) on curated issue sequences, achieving **81.3% test accuracy** and **0.79 macro-F1**, outperforming classical baselines across all minority classes. Saved model artifacts in `models/distilbert_finetuned/`.
+
+### Phase 7 — Related-Issue Semantic Retrieval ✅
+- **7.1–7.7** Implemented dense vector embeddings via Sentence Transformers (`all-MiniLM-L6-v2`), generated 384-dimensional unit-normalized embeddings, calibrated cosine similarity thresholds ($\ge 0.70$ related, $\ge 0.85$ duplicate), and built retrieval pipeline.
+
+### Phase 8 — Resolution Analysis & Velocity Prediction ✅
+- **8.1–8.7** Analyzed continuous turnaround distributions, implemented Random Forest velocity classification across SLA tiers, evaluated feature importance, and produced the formal feasibility report (`docs/resolution_prediction_feasibility_report.md`).
+
+### Phase 9 — Relational Database & Backend API ✅
+- **9.1–9.12** Designed dual-dialect schema (PostgreSQL + SQLite WAL), built SQLAlchemy 2.0 ORM models, created FastAPI REST endpoints, and verified with 73 unit tests.
+
+### Phase 10 — Frontend UI (Next.js 15) ✅
+- **10.1–10.12** Created Next.js 15 App Router interface with Tailwind CSS, Recharts visualizations, issue explorer with multi-facet filters, and interactive AI workspace.
+
+### Phase 11 — Full Integration & Verification ✅
+- **11.1–11.9** Connected frontend ↔ backend ↔ database ↔ ML models. Verified with 145 backend integration tests and zero-error Next.js production compilation.
 
 ---
 
-## Phase 1 — Data Source & Collection Pipeline ✅
+## 🚀 Track B: Realigned Universal Platform Evolution (Phases 11-R–16-R)
 
-**Goal:** Build the pipeline: GitHub repository → GitHub API → raw dataset.
+### Phase 11-R — Universal Ingestion Engine & Schema Migration 🔜
+**Goal:** Enable OpenSourceLens to ingest commits, contributors, pull requests, and issues dynamically for any valid public repository entered by a user.
 
-**Prerequisites:** Python basics, JSON, HTTP requests, REST API basics, GitHub API basics, API authentication, basic Pandas.
-
-| Step | Title | Description | Status |
+| Step | Title | Description | Target Deliverable |
 |---|---|---|---|
-| 1.1 | GitHub API exploration | Understand repository, issues, labels, comments, events, pagination, rate limit endpoints | ✅ Complete (`ml/data_collection/explore_github_api.py`) |
-| 1.2 | Build repository collector | Input: owner/repo → Output: repository metadata | ✅ Complete (`ml/data_collection/repository_collector.py`) |
-| 1.3 | Build issue collector | Collect issue ID, title, body, state, timestamps, author, labels | ✅ Complete (`ml/data_collection/issue_collector.py`) |
-| 1.4 | Build comment collector | Collect issue comments | ✅ Complete (`ml/data_collection/comment_collector.py`) |
-| 1.5 | Build event collector | Collect useful issue events | ✅ Complete (`ml/data_collection/event_collector.py`) |
-| 1.6 | Handle pagination | Retrieve thousands of records, not just the first page | ✅ Complete (`ml/data_collection/paginator.py`) |
-| 1.7 | Handle rate limits/errors | Authentication, retry handling, rate-limit handling, API errors | ✅ Complete (`ml/data_collection/github_client.py`) |
-| 1.8 | Save raw data | Create `data/raw/` structure for repositories, issues, comments, events | ✅ Complete (`ml/data_collection/storage.py`) |
-| 1.9 | Run collection on selected repositories | Collect initial dataset from candidate repos | ✅ Complete (`ml/data_collection/pipeline.py`) |
-| 1.10 | Data inventory | Generate report: repo stats, issue counts, labels, comments, time range, missing data | ✅ Complete (`ml/data_collection/inventory.py`) |
-
-**Output:** A reproducible GitHub → raw-data pipeline.
+| **11-R.1** | Repository URL Validator | Parse GitHub URLs, extract `{owner}/{repo}`, and verify public existence via API | `backend/app/services/validator.py` |
+| **11-R.2** | Multi-Entity Collection Pipeline | Implement lightweight collectors for commits, contributors, PRs, and releases | `ml/data_collection/dynamic_collector.py` |
+| **11-R.3** | Tiered Rate-Limit Budgeter | Implement quota allocation (Fast Snapshot vs Standard Diagnostic) to respect rate limits | `backend/app/services/budgeter.py` |
+| **11-R.4** | Relational Schema Migration | Add `commits`, `contributors`, and `pull_requests` tables via SQLAlchemy migration | `backend/app/database/models.py` |
+| **11-R.5** | Dynamic Ingestion API Endpoint | Expose `POST /api/repos/analyze` with async task tracking and progress reporting | `backend/app/api/ingestion_routes.py` |
 
 ---
 
-## Phase 2 — Data Cleaning & Dataset Construction ✅
+### Phase 12-R — Multi-Domain Intelligence Engines
+**Goal:** Implement the statistical, analytical, and NLP engines across the six core intelligence domains.
 
-**Goal:** Turn messy GitHub data into a proper dataset for analysis and modeling.
-
-**Prerequisites:** Pandas, data cleaning, missing values, duplicates, datetime manipulation, string processing.
-
-| Step | Title | Status |
-|---|---|---|
-| 2.1 | Load raw data | ✅ Complete (`ml/preprocessing/loader.py`) |
-| 2.2 | Inspect dataset | ✅ Complete (`ml/preprocessing/inspector.py`) |
-| 2.3 | Clean issue text | ✅ Complete (`ml/preprocessing/text_cleaner.py`) |
-| 2.4 | Clean timestamps | ✅ Complete (`ml/preprocessing/timestamp_cleaner.py`) |
-| 2.5 | Handle missing values | ✅ Complete (`ml/preprocessing/missing_handler.py`) |
-| 2.6 | Remove irrelevant data | ✅ Complete (`ml/preprocessing/filter.py`) |
-| 2.7 | Normalize labels | ✅ Complete (`ml/preprocessing/label_normalizer.py`) |
-| 2.8 | Construct issue dataset | ✅ Complete (`ml/preprocessing/dataset_builder.py`) |
-| 2.9 | Construct derived features | ✅ Complete (`ml/preprocessing/features.py`) |
-| 2.10 | Save processed dataset | ✅ Complete (`ml/preprocessing/storage_processed.py`) |
-
-**Output:** A clean, documented OpenSourceLens dataset.
+| Step | Title | Description | Target Deliverable |
+|---|---|---|---|
+| **12-R.1** | Development Activity Engine | Time-series commit/release aggregation, rolling trends, and anomaly detection | `backend/app/services/activity_service.py` |
+| **12-R.2** | Contributor Ecosystem Engine | Gini coefficient, Lorenz curve calculation, Shannon entropy, core vs peripheral | `backend/app/services/contributor_service.py` |
+| **12-R.3** | Pull Request Intelligence Engine | Review latency, time-to-merge distributions, and review bottleneck detection | `backend/app/services/pr_service.py` |
+| **12-R.4** | Dynamic Semantic Vector Caching | Vectorize newly ingested issues on-demand with `all-MiniLM-L6-v2` and cache arrays | `backend/app/services/embedding_service.py` |
+| **12-R.5** | Domain-Agnostic Resolution Advisory | Decouple resolution advisory from repo-specific one-hot dummies to universal signals | `backend/app/services/resolution_service.py` |
+| **12-R.6** | Cross-Domain Intelligence Synthesizer | Correlate multi-domain signals into automated, evidence-backed findings report | `backend/app/services/intelligence_service.py` |
 
 ---
 
-## Phase 3 — Exploratory Data Analysis ✅
+### Phase 13-R — Dynamic Frontend Workspace
+**Goal:** Deliver an interactive, general-purpose repository intelligence workspace in Next.js.
 
-**Goal:** Understand the data before building any model. This is the core Data Science phase.
-
-**Prerequisites:** Descriptive statistics, Pandas, Matplotlib/Seaborn, distributions, correlation.
-
-| Step | Title | Status |
-|---|---|---|
-| 3.1 | Dataset overview | ✅ Complete (`ml/eda/overview.py`) |
-| 3.2 | Issue state analysis | ✅ Complete (`ml/eda/state_analysis.py`) |
-| 3.3 | Label analysis | ✅ Complete (`ml/eda/label_analysis.py`) |
-| 3.4 | Issue volume over time | ✅ Complete (`ml/eda/temporal_analysis.py`) |
-| 3.5 | Repository comparison | ✅ Complete (`ml/eda/repo_comparison.py`) |
-| 3.6 | Issue text analysis | ✅ Complete (`ml/eda/text_analysis.py`) |
-| 3.7 | Comment analysis | ✅ Complete (`ml/eda/comment_analysis.py`) |
-| 3.8 | Resolution-time analysis | ✅ Complete (`ml/eda/resolution_analysis.py`) |
-| 3.9 | Correlation analysis | ✅ Complete (`ml/eda/correlation_analysis.py`) |
-| 3.10 | Generate final visualizations | ✅ Complete (`ml/eda/visualizations.py`) |
-| 3.11 | Write actual findings | ✅ Complete (`ml/eda/report.py`, `ml/eda/eda_findings.ipynb`, `ml/eda/FINDINGS.md`) |
-
-**Output:** An EDA notebook/report with actual findings.
+| Step | Title | Description | Target Deliverable |
+|---|---|---|---|
+| **13-R.1** | Universal Repository Search Bar | Homepage search bar with URL validation, ingestion progress modal, and error states | `frontend/src/components/RepositorySearchBar.tsx` |
+| **13-R.2** | Multi-Domain Tabbed Workspace | Redesign `/repos/[owner]/[name]` into 6 tabbed views (Overview, Activity, Contributors, PRs, Issues, Synthesis) | `frontend/src/app/repos/[owner]/[name]/page.tsx` |
+| **13-R.3** | Advanced Analytical Visualizations | Recharts components for Lorenz curve, activity trendlines, and velocity gauges | `frontend/src/components/charts/` |
+| **13-R.4** | Evidence-Backed Findings Card | Diagnostic summary card presenting automated intelligence observations | `frontend/src/components/FindingsReportCard.tsx` |
+| **13-R.5** | Benchmark Explorer Mode | Preserved comparison view for the four initial baseline repositories | `frontend/src/app/benchmarks/page.tsx` |
 
 ---
 
-## Phase 4 — Machine Learning Baseline ✅
+### Phase 14-R — Generalization Testing & Performance Validation
+**Goal:** Rigorously validate model inference and pipeline resilience on unseen public repositories.
 
-**Goal:** Build the first predictive model. No Transformers yet.
-
-**Prerequisites:** Supervised learning, classification, features/labels, train/test split, Logistic Regression, SVM, evaluation metrics, overfitting, data leakage.
-
-| Step | Title | Status |
-|---|---|---|
-| 4.1 | Define classification target | ✅ Complete (`ml/classification/target_definition.py`) |
-| 4.2 | Define training/test strategy | ✅ Complete (`ml/classification/split.py`) |
-| 4.3 | Build feature representation (TF-IDF) | ✅ Complete (`ml/classification/features.py`) |
-| 4.4 | Train baseline model (Logistic Regression) | ✅ Complete (`ml/classification/logistic_regression.py`) |
-| 4.5 | Train second baseline (SVM) | ✅ Complete (`ml/classification/svm.py`) |
-| 4.6 | Evaluate | ✅ Complete (`ml/classification/evaluator.py`) |
-| 4.7 | Error analysis | ✅ Complete (`ml/classification/error_analysis.py`) |
-
-**Output:** A working classical ML issue classifier.
+| Step | Title | Description | Target Deliverable |
+|---|---|---|---|
+| **14-R.1** | Cross-Repository Generalization Suite | Evaluate DistilBERT and semantic retrieval on novel external repositories | `tests/test_generalization.py` |
+| **14-R.2** | Rate-Limit Resilience Verification | Test API behavior under exhausted rate limits and backoff recovery | `tests/test_rate_limits.py` |
+| **14-R.3** | End-to-End Workflow Integration Test | End-to-end integration test: URL submission → Ingestion → Analytics → Rendering | `tests/test_e2e_workflow.py` |
 
 ---
 
-## Phase 5 — NLP Enhancement ✅
+### Phase 15-R — Deployment & Production Packaging
+**Goal:** Package and deploy the complete platform.
 
-**Goal:** Improve how we represent GitHub issue text.
-
-**Prerequisites:** NLP basics, tokenization, TF-IDF, text preprocessing, embeddings, basic neural-network concepts.
-
-| Step | Title | Status |
-|---|---|---|
-| 5.1 | Improve text preprocessing | ✅ Complete (`ml/nlp/enhanced_preprocessor.py`) |
-| 5.2 | Experiment with title + body | ✅ Complete (`ml/nlp/title_body_experiment.py`) |
-| 5.3 | Experiment with different text representations | ✅ Complete (`ml/nlp/representations.py`) |
-| 5.4 | Analyze vocabulary/features | ✅ Complete (`ml/nlp/vocab_analysis.py`) |
-| 5.5 | Establish final classical NLP pipeline | ✅ Complete (`ml/nlp/final_pipeline.py`) |
-
-**Output:** A strong classical NLP baseline.
+| Step | Title | Description | Target Deliverable |
+|---|---|---|---|
+| **15-R.1** | Docker Containerization | Multi-stage Dockerfiles for FastAPI backend and Next.js frontend | `Dockerfile.backend`, `Dockerfile.frontend` |
+| **15-R.2** | PostgreSQL Deployment Configuration | Production database configuration and connection pooling setup | `backend/app/database/connection.py` |
+| **15-R.3** | Model Artifact Serving Strategy | Optimization of DistilBERT and MiniLM caching for production hosting | `docker-compose.yml` |
+| **15-R.4** | Production Smoke Testing | Verification of production deployment on cloud environment | Diagnostic report |
 
 ---
 
-## Phase 6 — Deep Learning & Transformer Model ✅
+### Phase 16-R — Academic Research Paper & Final Defense
+**Goal:** Complete academic documentation, research paper, and presentation.
 
-**Goal:** Add a proper deep-learning/transformer component.
-
-**Prerequisites:** Neural networks, tensors, training, loss, backpropagation, PyTorch basics, attention, Transformers, BERT, tokenizers, fine-tuning.
-
-| Step | Title | Status |
-|---|---|---|
-| 6.1 | Choose transformer (DistilBERT/BERT) | ✅ Complete (`ml/deep_learning/model_selection.py`) |
-| 6.2 | Prepare transformer dataset | ✅ Complete (`ml/deep_learning/dataset_preparation.py`) |
-| 6.3 | Tokenization | ✅ Complete (`ml/deep_learning/tokenizer.py`) |
-| 6.4 | Fine-tune pretrained model | ✅ Complete (`ml/deep_learning/train.py`) |
-| 6.5 | Evaluate | ✅ Complete (`ml/deep_learning/evaluator.py`) |
-| 6.6 | Compare with classical ML | ✅ Complete (`ml/deep_learning/comparator.py`) |
-| 6.7 | Error analysis | ✅ Complete (`ml/deep_learning/error_analyzer.py`) |
-| 6.8 | Save trained model | ✅ Complete (`ml/deep_learning/pipeline.py`) |
-
-**Output:** A working transformer-based issue classifier and model comparison.
-
----
-
-## Phase 7 — Related Issue Detection ✅
-
-**Goal:** Given a new issue, find potentially related historical issues.
-
-**Prerequisites:** Embeddings, vector representations, Sentence Transformers, cosine similarity, similarity search.
-
-| Step | Title | Status |
-|---|---|---|
-| 7.1 | Generate embeddings for issues | ✅ Complete (`ml/related_issues/embedder.py`) |
-| 7.2 | Store embeddings | ✅ Complete (`ml/related_issues/store.py`) |
-| 7.3 | Build similarity calculation | ✅ Complete (`ml/related_issues/similarity.py`) |
-| 7.4 | Retrieve top-K similar issues | ✅ Complete (`ml/related_issues/retriever.py`) |
-| 7.5 | Set/validate similarity threshold | ✅ Complete (`ml/related_issues/threshold.py`) |
-| 7.6 | Evaluate retrieval quality | ✅ Complete (`ml/related_issues/evaluator.py`) |
-| 7.7 | Build related-issue output | ✅ Complete (`ml/related_issues/pipeline.py`) |
-
-**Output:** Working semantic related-issue detection.
-
----
-
-## Phase 8 — Resolution Analysis & Prediction ✅
-
-**Goal:** Understand and potentially predict issue resolution behavior.
-
-**Prerequisites:** Regression/classification, feature engineering, correlation, data leakage, time-based data, model evaluation.
-
-| Step | Title | Status |
-|---|---|---|
-| 8.1 | Define resolution time | ✅ Complete (`ml/resolution_analysis/definition.py`) |
-| 8.2 | Analyze resolution distribution | ✅ Complete (`ml/resolution_analysis/distribution.py`) |
-| 8.3 | Identify useful features | ✅ Complete (`ml/resolution_analysis/features.py`) |
-| 8.4 | Investigate resolution-time factors | ✅ Complete (`ml/resolution_analysis/factors.py`) |
-| 8.5 | Build baseline prediction model | ✅ Complete (`ml/resolution_analysis/baseline_models.py`) |
-| 8.6 | Evaluate | ✅ Complete (`ml/resolution_analysis/evaluation.py`) |
-| 8.7 | Decide whether prediction is reliable | ✅ Complete (`ml/resolution_analysis/decision.py`, `docs/resolution_prediction_feasibility_report.md`) |
-
-**Output:** Resolution analytics, and potentially a resolution prediction model. Phase 8 prediction steps are **optional**.
-
----
-
-## Phase 9 — Database & Backend
-
-**Goal:** Build the backend that exposes data and models.
-
-**Prerequisites:** Basic SQL, PostgreSQL, REST APIs, FastAPI, Pydantic, JSON, environment variables, basic backend architecture.
-
-| Step | Title | Status |
-|---|---|---|
-| 9.1 | Design database schema | Complete |
-| 9.2 | Create PostgreSQL database | Complete |
-| 9.3 | Load processed data | Complete |
-| 9.4 | Create FastAPI project | Complete |
-| 9.5 | Repository endpoints | Complete |
-| 9.6 | Analytics endpoints | Complete |
-| 9.7 | Classification endpoint | Complete |
-| 9.8 | Related-issue endpoint | Complete |
-| 9.9 | Resolution endpoint | Complete |
-| 9.10 | Integrate trained models | Complete |
-| 9.11 | Error handling | Complete |
-| 9.12 | API testing | Complete |
-
-**Output:** A working ML/data backend.
-
----
-
-## Phase 10 — Frontend / OpenSourceLens UI ✅
-
-**Goal:** Turn the backend into an actual usable application.
-
-**Prerequisites:** React, Next.js, TypeScript, Tailwind, API requests, basic component architecture.
-
-| Step | Title | Status |
-|---|---|---|
-| 10.1 | Design UI structure | Complete |
-| 10.2 | Landing page | Complete |
-| 10.3 | Repository input | Complete |
-| 10.4 | Repository overview | Complete |
-| 10.5 | Analytics dashboard | Complete |
-| 10.6 | Issue analytics | Complete |
-| 10.7 | AI issue analyzer | Complete |
-| 10.8 | Related issues interface | Complete |
-| 10.9 | Resolution analytics | Complete |
-| 10.10 | Charts | Complete |
-| 10.11 | Loading/error states | Complete |
-| 10.12 | Responsive UI | Complete |
-
-**Output:** The OpenSourceLens frontend.
-
----
-
-## Phase 11 — Full Integration ✅
-
-**Goal:** Connect frontend ↔ API ↔ DB ↔ models.
-
-| Step | Title | Status |
-|---|---|---|
-| 11.1 | Connect frontend/backend | Complete |
-| 11.2 | Connect database | Complete |
-| 11.3 | Connect classifier | Complete |
-| 11.4 | Connect transformer | Complete |
-| 11.5 | Connect similarity system | Complete |
-| 11.6 | Connect resolution analysis | Complete |
-| 11.7 | End-to-end testing | Complete |
-| 11.8 | Handle edge cases | Complete |
-| 11.9 | Performance cleanup | Complete |
-
-**Output:** A complete local OpenSourceLens application.
-
----
-
-## Phase 12 — Deployment
-
-**Goal:** Get the complete application online.
-
-**Prerequisites:** Environment variables, production builds, CORS, hosting basics, API/database/frontend deployment.
-
-| Step | Title | Status |
-|---|---|---|
-| 12.1 | Deploy database | Pending |
-| 12.2 | Deploy FastAPI backend | Pending |
-| 12.3 | Deploy frontend | Pending |
-| 12.4 | Configure environment variables | Pending |
-| 12.5 | Configure CORS | Pending |
-| 12.6 | Deploy model files/inference | Pending |
-| 12.7 | Test production | Pending |
-| 12.8 | Fix production issues | Pending |
-
-**Output:** A publicly accessible OpenSourceLens application.
-
----
-
-## Phase 13 — Evaluation & Final Results
-
-**Goal:** Produce the results for academic evaluation.
-
-| Step | Title | Status |
-|---|---|---|
-| 13.1 | Final dataset statistics | Pending |
-| 13.2 | Final EDA | Pending |
-| 13.3 | Classical ML results | Pending |
-| 13.4 | Transformer results | Pending |
-| 13.5 | Similarity results | Pending |
-| 13.6 | Resolution analysis | Pending |
-| 13.7 | Model comparison | Pending |
-| 13.8 | Error analysis | Pending |
-| 13.9 | Limitations | Pending |
-| 13.10 | Final conclusions | Pending |
-
-**Output:** Final experimental results.
-
----
-
-## Phase 14 — Documentation & Conference Paper
-
-**Goal:** Convert existing work into a conference paper.
-
-| Step | Title | Status |
-|---|---|---|
-| 14.1 | Finalize title | Pending |
-| 14.2 | Write abstract | Pending |
-| 14.3 | Introduction | Pending |
-| 14.4 | Related work | Pending |
-| 14.5 | Dataset | Pending |
-| 14.6 | Methodology | Pending |
-| 14.7 | Model architecture | Pending |
-| 14.8 | Experiments | Pending |
-| 14.9 | Results | Pending |
-| 14.10 | Discussion | Pending |
-| 14.11 | Limitations | Pending |
-| 14.12 | Conclusion | Pending |
-| 14.13 | References | Pending |
-| 14.14 | Formatting | Pending |
-
-**Output:** Conference-paper version of the project.
-
----
-
-## Phase 15 — Final Evaluation
-
-**Goal:** Final presentation and demo preparation.
-
-| Step | Title | Status |
-|---|---|---|
-| 15.1 | Stage 3 demo flow | Pending |
-| 15.2 | Final PPT | Pending |
-| 15.3 | Technical explanation | Pending |
-| 15.4 | ML/DL viva preparation | Pending |
-| 15.5 | Dataset questions | Pending |
-| 15.6 | Architecture questions | Pending |
-| 15.7 | Model comparison questions | Pending |
-| 15.8 | Limitations/future scope | Pending |
-| 15.9 | Live demo preparation | Pending |
-| 15.10 | Final submission | Pending |
+| Step | Title | Description | Target Deliverable |
+|---|---|---|---|
+| **16-R.1** | Final Empirical Findings | Comprehensive comparative metrics across benchmark and dynamic repositories | `docs/final_evaluation_report.md` |
+| **16-R.2** | Conference Research Paper | Full academic paper on repository intelligence and cross-repo NLP | `docs/conference_paper.pdf` |
+| **16-R.3** | Project Defense Presentation | Final presentation slides and live demonstration walkthrough | `docs/presentation_slides.pptx` |
