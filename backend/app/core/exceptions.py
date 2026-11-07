@@ -109,3 +109,74 @@ class DatabaseServiceError(OpenSourceLensException):
             status_code=503,
             error_code="DATABASE_ERROR",
         )
+
+
+class InvalidRepositoryURLException(OpenSourceLensException):
+    """Raised when a supplied GitHub URL or repository slug violates syntax, hostname, or naming rules."""
+
+    def __init__(self, message: str, raw_input: Optional[str] = None) -> None:
+        super().__init__(
+            message=message,
+            status_code=400,
+            error_code="INVALID_REPOSITORY_URL",
+            details={"raw_input": raw_input} if raw_input else {},
+        )
+
+
+class RepositoryIneligibleException(OpenSourceLensException):
+    """Raised when a repository is private, an empty stub, or otherwise ineligible for ingestion."""
+
+    def __init__(self, message: str, repo_name: Optional[str] = None, reason: Optional[str] = None) -> None:
+        super().__init__(
+            message=message,
+            status_code=422,
+            error_code="REPOSITORY_INELIGIBLE",
+            details={"repo_name": repo_name, "reason": reason} if repo_name or reason else {},
+        )
+
+
+class GitHubAPIError(OpenSourceLensException):
+    """Raised when GitHub API requests fail due to upstream server, transport, or protocol errors."""
+
+    def __init__(
+        self,
+        message: str = "GitHub API request failed.",
+        status_code: int = 502,
+        details: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        super().__init__(
+            message=message,
+            status_code=status_code,
+            error_code="GITHUB_API_ERROR",
+            details=details,
+        )
+
+
+class GitHubRateLimitExceededException(GitHubAPIError):
+    """Raised when GitHub API rate limits (primary or secondary) are breached."""
+
+    def __init__(
+        self,
+        message: str = "GitHub API rate limit exceeded.",
+        retry_after_seconds: Optional[int] = None,
+    ) -> None:
+        details = {"retry_after_seconds": retry_after_seconds} if retry_after_seconds is not None else {}
+        super().__init__(
+            message=message,
+            status_code=429,
+            details=details,
+        )
+        self.error_code = "GITHUB_RATE_LIMIT_EXCEEDED"
+        self.retry_after_seconds = retry_after_seconds
+
+
+class GitHubResourceNotFoundException(GitHubAPIError):
+    """Raised when a repository, issue, or entity does not exist on GitHub."""
+
+    def __init__(self, message: str = "Resource not found on GitHub.", repo_name: Optional[str] = None) -> None:
+        super().__init__(
+            message=message,
+            status_code=404,
+            details={"repo_name": repo_name} if repo_name else {},
+        )
+        self.error_code = "GITHUB_RESOURCE_NOT_FOUND"

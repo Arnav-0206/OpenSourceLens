@@ -23,6 +23,13 @@ from backend.app.schemas.health import (
     HealthResponse,
     RootResponse,
 )
+from backend.app.schemas.ingestion import (
+    ConfidenceLevel,
+    DomainConfidence,
+    ParsedRepository,
+    RepositoryConfidenceReport,
+    RepositoryEligibilityResult,
+)
 from backend.app.schemas.issue import (
     IssueDetail,
     IssueLabelItem,
@@ -67,6 +74,11 @@ __all__ = [
     "RepositoryTrendsResponse",
     "ClassificationRequest",
     "ClassificationResponse",
+    "ConfidenceLevel",
+    "DomainConfidence",
+    "ParsedRepository",
+    "RepositoryConfidenceReport",
+    "RepositoryEligibilityResult",
     "RelatedIssueMatch",
     "RelatedIssuesResponse",
     "RelatedSearchRequest",
