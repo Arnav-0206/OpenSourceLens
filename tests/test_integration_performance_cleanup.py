@@ -36,9 +36,38 @@ class TestPerformanceCleanupAndSLAs(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.client = TestClient(app)
-        # Prewarm models once so all benchmark tests evaluate warm latencies
+        # Prewarm models and core routes once so all benchmark tests evaluate warm latencies
         cls.client.post("/api/v1/models/prewarm")
         cls.client.get("/api/v1/related/5903612596?top_k=5")
+        cls.client.post("/api/v1/related", json={"title": "prewarm", "top_k": 3})
+        cls.client.get("/health")
+        cls.client.post(
+            "/api/v1/classify",
+            json={
+                "title": "prewarm",
+                "body": "prewarm",
+                "repo_name": "microsoft/vscode",
+                "model_type": "distilbert",
+            },
+        )
+        cls.client.post(
+            "/api/v1/classify",
+            json={
+                "title": "prewarm",
+                "body": "prewarm",
+                "repo_name": "microsoft/vscode",
+                "model_type": "logistic_regression",
+            },
+        )
+        cls.client.post(
+            "/api/v1/resolution/predict",
+            json={
+                "repo_name": "microsoft/vscode",
+                "title": "prewarm",
+                "body": "prewarm",
+                "canonical_label": "bug",
+            },
+        )
 
     def setUp(self):
         self.db: Session = SessionLocal()

@@ -168,46 +168,45 @@ class RelatedIssueService:
         # 2. Get candidate embeddings
         candidate_embeddings, emb_ids = self._get_embeddings_store()
 
-        # 3. Fetch candidate metadata from database to apply filters
-        stmt = select(Issue)
-        if request.repo_name:
-            stmt = stmt.where(Issue.repo_name == request.repo_name)
-        if request.state:
-            stmt = stmt.where(Issue.state == request.state.lower())
+        # 3. Filter candidate embeddings based on repository and state
+        if request.repo_name or request.state:
+            stmt = select(Issue.id)
+            if request.repo_name:
+                stmt = stmt.where(Issue.repo_name == request.repo_name)
+            if request.state:
+                stmt = stmt.where(Issue.state == request.state.lower())
 
-        candidate_issues = db.scalars(stmt).all()
-        if not candidate_issues:
-            latency_ms = round((time.perf_counter() - t0) * 1000.0, 2)
-            return RelatedIssuesResponse(
-                query_issue_id=None,
-                query_text=request.title,
-                model_version="all-MiniLM-L6-v2",
-                total_matches=0,
-                matches=[],
-                retrieval_time_ms=latency_ms,
-            )
+            valid_ids_set = set(db.scalars(stmt).all())
+            if not valid_ids_set:
+                latency_ms = round((time.perf_counter() - t0) * 1000.0, 2)
+                return RelatedIssuesResponse(
+                    query_issue_id=None,
+                    query_text=request.title,
+                    model_version="all-MiniLM-L6-v2",
+                    total_matches=0,
+                    matches=[],
+                    retrieval_time_ms=latency_ms,
+                )
 
-        issue_dict = {iss.id: iss for iss in candidate_issues}
-        valid_ids_set = set(issue_dict.keys())
+            candidate_indices = [
+                idx for idx, iid in enumerate(emb_ids) if iid in valid_ids_set
+            ]
+            if not candidate_indices:
+                latency_ms = round((time.perf_counter() - t0) * 1000.0, 2)
+                return RelatedIssuesResponse(
+                    query_issue_id=None,
+                    query_text=request.title,
+                    model_version="all-MiniLM-L6-v2",
+                    total_matches=0,
+                    matches=[],
+                    retrieval_time_ms=latency_ms,
+                )
 
-        # Map candidate IDs to embedding matrix row indices
-        candidate_indices = [
-            idx for idx, iid in enumerate(emb_ids) if iid in valid_ids_set
-        ]
-
-        if not candidate_indices:
-            latency_ms = round((time.perf_counter() - t0) * 1000.0, 2)
-            return RelatedIssuesResponse(
-                query_issue_id=None,
-                query_text=request.title,
-                model_version="all-MiniLM-L6-v2",
-                total_matches=0,
-                matches=[],
-                retrieval_time_ms=latency_ms,
-            )
-
-        sub_matrix = candidate_embeddings[candidate_indices]  # Shape: (M, 384)
-        sub_ids = emb_ids[candidate_indices]  # Shape: (M,)
+            sub_matrix = candidate_embeddings[candidate_indices]  # Shape: (M, 384)
+            sub_ids = emb_ids[candidate_indices]  # Shape: (M,)
+        else:
+            sub_matrix = candidate_embeddings
+            sub_ids = emb_ids
 
         # 4. Cosine similarity via dot product (both vectors are L2-normalized)
         sim_scores = np.dot(sub_matrix, query_vector)  # Shape: (M,)
@@ -216,10 +215,16 @@ class RelatedIssueService:
         top_k_indices = np.argpartition(sim_scores, -effective_k)[-effective_k:]
         sorted_top_k = top_k_indices[np.argsort(-sim_scores[top_k_indices])]
 
+        target_ids = [int(sub_ids[cand_idx]) for cand_idx in sorted_top_k]
+        top_issues = db.scalars(select(Issue).where(Issue.id.in_(target_ids))).all()
+        issue_dict = {iss.id: iss for iss in top_issues}
+
         matches: List[RelatedIssueMatch] = []
         for rank_0, cand_idx in enumerate(sorted_top_k):
             target_id = int(sub_ids[cand_idx])
-            target_iss = issue_dict[target_id]
+            target_iss = issue_dict.get(target_id)
+            if not target_iss:
+                continue
             score = float(sim_scores[cand_idx])
 
             matches.append(

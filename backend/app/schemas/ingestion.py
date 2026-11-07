@@ -95,3 +95,16 @@ class RepositoryEligibilityResult(BaseModel):
     badges: List[str] = Field(
         default_factory=list, description="Visual badge labels (e.g., 'Archived', 'Fork of ...')."
     )
+
+
+class PaginatedResult(BaseModel):
+    """Result envelope for multi-page GitHub REST API collection with truncation reporting."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    entity: str = Field(..., description="Entity category name (e.g., 'commits', 'pull_requests').")
+    items: List[Dict[str, Any]] = Field(default_factory=list, description="Harvested record payloads.")
+    total_requests: int = Field(0, description="Total HTTP requests consumed during pagination.")
+    is_partial: bool = Field(False, description="Whether data was truncated before remote exhaustion.")
+    partial_reason: Optional[str] = Field(None, description="Explanation if collection was truncated.")
+    resumes_at: Optional[Any] = Field(None, description="Scheduled resumption timestamp if rate limited.")

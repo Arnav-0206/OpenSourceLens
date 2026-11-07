@@ -159,8 +159,13 @@ class GitHubRateLimitExceededException(GitHubAPIError):
         self,
         message: str = "GitHub API rate limit exceeded.",
         retry_after_seconds: Optional[int] = None,
+        resumes_at: Optional[Any] = None,
     ) -> None:
-        details = {"retry_after_seconds": retry_after_seconds} if retry_after_seconds is not None else {}
+        details = {}
+        if retry_after_seconds is not None:
+            details["retry_after_seconds"] = retry_after_seconds
+        if resumes_at is not None:
+            details["resumes_at"] = resumes_at.isoformat() if hasattr(resumes_at, "isoformat") else str(resumes_at)
         super().__init__(
             message=message,
             status_code=429,
@@ -168,6 +173,7 @@ class GitHubRateLimitExceededException(GitHubAPIError):
         )
         self.error_code = "GITHUB_RATE_LIMIT_EXCEEDED"
         self.retry_after_seconds = retry_after_seconds
+        self.resumes_at = resumes_at
 
 
 class GitHubResourceNotFoundException(GitHubAPIError):
@@ -180,3 +186,50 @@ class GitHubResourceNotFoundException(GitHubAPIError):
             details={"repo_name": repo_name} if repo_name else {},
         )
         self.error_code = "GITHUB_RESOURCE_NOT_FOUND"
+
+
+class BudgetExceededException(OpenSourceLensException):
+    """Raised when the total request budget for a collection run is exhausted."""
+
+    def __init__(
+        self,
+        message: str = "Total GitHub API request budget exhausted for this collection run.",
+        budget_mode: Optional[str] = None,
+        total_used: Optional[int] = None,
+        max_allowed: Optional[int] = None,
+    ) -> None:
+        details = {
+            "budget_mode": budget_mode,
+            "total_used": total_used,
+            "max_allowed": max_allowed,
+        }
+        super().__init__(
+            message=message,
+            status_code=429,
+            error_code="BUDGET_EXCEEDED",
+            details={k: v for k, v in details.items() if v is not None},
+        )
+
+
+class EntityBudgetExceededException(OpenSourceLensException):
+    """Raised when a specific entity quota within a collection run is exhausted."""
+
+    def __init__(
+        self,
+        entity: str,
+        message: Optional[str] = None,
+        entity_used: Optional[int] = None,
+        entity_max: Optional[int] = None,
+    ) -> None:
+        msg = message or f"Request budget exhausted for entity '{entity}'."
+        details = {
+            "entity": entity,
+            "entity_used": entity_used,
+            "entity_max": entity_max,
+        }
+        super().__init__(
+            message=msg,
+            status_code=429,
+            error_code="ENTITY_BUDGET_EXCEEDED",
+            details={k: v for k, v in details.items() if v is not None},
+        )

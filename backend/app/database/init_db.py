@@ -59,11 +59,15 @@ def check_connection(target_engine: Optional[Engine] = None) -> Dict[str, Any]:
         }
 
 
-def get_table_status(target_engine: Optional[Engine] = None) -> Dict[str, Any]:
+def get_table_status(
+    target_engine: Optional[Engine] = None,
+    include_details: bool = True,
+) -> Dict[str, Any]:
     """Inspect existing tables, column counts, and index counts.
 
     Args:
         target_engine: Optional SQLAlchemy engine. Defaults to configured engine.
+        include_details: Whether to query columns and indexes for each table.
 
     Returns:
         Dict detailing existing tables and metadata.
@@ -74,13 +78,14 @@ def get_table_status(target_engine: Optional[Engine] = None) -> Dict[str, Any]:
     registered_tables = list(Base.metadata.tables.keys())
 
     table_details = {}
-    for tbl in existing_tables:
-        cols = inspector.get_columns(tbl)
-        indexes = inspector.get_indexes(tbl)
-        table_details[tbl] = {
-            "columns_count": len(cols),
-            "indexes_count": len(indexes),
-        }
+    if include_details:
+        for tbl in existing_tables:
+            cols = inspector.get_columns(tbl)
+            indexes = inspector.get_indexes(tbl)
+            table_details[tbl] = {
+                "columns_count": len(cols),
+                "indexes_count": len(indexes),
+            }
 
     return {
         "existing_tables": existing_tables,

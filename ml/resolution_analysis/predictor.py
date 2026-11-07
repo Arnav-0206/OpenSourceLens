@@ -59,6 +59,9 @@ class ResolutionPredictor:
 
         payload = joblib.load(clf_file)
         self.classifier_model = payload["model"]
+        # Use single thread for real-time single-sample inference to avoid joblib threadpool dispatch overhead
+        if hasattr(self.classifier_model, "n_jobs"):
+            self.classifier_model.n_jobs = 1
         self.classes_ = [str(c) for c in self.classifier_model.classes_]
         self.feature_names = payload["feature_names"]
 
@@ -214,8 +217,8 @@ class ResolutionPredictor:
             labels_count=labels_count,
         )
 
-        pred_tier = str(self.classifier_model.predict(X)[0])
         raw_probs = self.classifier_model.predict_proba(X)[0]
+        pred_tier = str(self.classes_[int(np.argmax(raw_probs))])
 
         # Explicitly map probabilities by model.classes_ to prevent ordering mismatches
         prob_dict = {

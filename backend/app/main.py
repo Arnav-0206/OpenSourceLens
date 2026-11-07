@@ -128,7 +128,7 @@ def read_root(db: Session = Depends(get_db)) -> RootResponse:
 def read_health(db: Session = Depends(get_db)) -> HealthResponse:
     """Evaluate live database connectivity and system operational status."""
     conn_info = check_connection(db.get_bind())
-    status_info = get_table_status(db.get_bind())
+    status_info = get_table_status(db.get_bind(), include_details=False)
 
     is_healthy = conn_info["status"] == "connected"
     db_health = DatabaseHealth(
