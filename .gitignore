@@ -29,8 +29,11 @@ out/
 # Raw and processed data (too large for version control)
 data/raw/
 data/processed/
+data/backups/
 *.parquet
 *.db
+*.db-shm
+*.db-wal
 *.sqlite3
 
 # ─── Model Artifacts ─────────────────────────

@@ -38,6 +38,7 @@ class TestPerformanceCleanupAndSLAs(unittest.TestCase):
         cls.client = TestClient(app)
         # Prewarm models once so all benchmark tests evaluate warm latencies
         cls.client.post("/api/v1/models/prewarm")
+        cls.client.get("/api/v1/related/5903612596?top_k=5")
 
     def setUp(self):
         self.db: Session = SessionLocal()

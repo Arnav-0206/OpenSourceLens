@@ -12,6 +12,7 @@ from typing import Any, Dict, List, Optional
 from sqlalchemy import (
     BigInteger,
     Boolean,
+    CheckConstraint,
     DateTime,
     Float,
     ForeignKey,
@@ -22,6 +23,7 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
     func,
+    text,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -64,12 +66,64 @@ class Repository(Base):
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
 
+    # Phase B: Additive columns for universal dynamic ingestion
+    is_active: Mapped[bool] = mapped_column(
+        Boolean, default=True, server_default="1", nullable=False
+    )
+    is_archived: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default="0", nullable=False
+    )
+    is_fork: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default="0", nullable=False
+    )
+    upstream_repo: Mapped[Optional[str]] = mapped_column(
+        String(120), nullable=True
+    )
+    last_synced_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
     # Relationships
     issues: Mapped[List[Issue]] = relationship(
         "Issue", back_populates="repository", cascade="all, delete-orphan"
     )
     analytics: Mapped[List[RepositoryAnalytics]] = relationship(
         "RepositoryAnalytics",
+        back_populates="repository",
+        cascade="all, delete-orphan",
+    )
+    collection_runs: Mapped[List[CollectionRun]] = relationship(
+        "CollectionRun",
+        back_populates="repository",
+        cascade="all, delete-orphan",
+    )
+    analysis_runs: Mapped[List[AnalysisRun]] = relationship(
+        "AnalysisRun",
+        back_populates="repository",
+        cascade="all, delete-orphan",
+    )
+    commits: Mapped[List[Commit]] = relationship(
+        "Commit",
+        back_populates="repository",
+        cascade="all, delete-orphan",
+    )
+    contributors: Mapped[List[Contributor]] = relationship(
+        "Contributor",
+        back_populates="repository",
+        cascade="all, delete-orphan",
+    )
+    pull_requests: Mapped[List[PullRequest]] = relationship(
+        "PullRequest",
+        back_populates="repository",
+        cascade="all, delete-orphan",
+    )
+    releases: Mapped[List[Release]] = relationship(
+        "Release",
+        back_populates="repository",
+        cascade="all, delete-orphan",
+    )
+    issue_comments: Mapped[List[IssueComment]] = relationship(
+        "IssueComment",
         back_populates="repository",
         cascade="all, delete-orphan",
     )
@@ -228,6 +282,10 @@ class Issue(Base):
         foreign_keys="[RelatedIssuesCache.target_issue_id]",
         back_populates="target_issue",
         cascade="all, delete-orphan",
+    )
+    issue_comments: Mapped[List[IssueComment]] = relationship(
+        "IssueComment",
+        back_populates="issue",
     )
 
 
@@ -419,3 +477,545 @@ class RelatedIssuesCache(Base):
         foreign_keys=[target_issue_id],
         back_populates="target_related",
     )
+
+
+# ---------------------------------------------------------------------------
+# Phase B: Universal Multi-Entity Models & Dynamic Ingestion Infrastructure
+# ---------------------------------------------------------------------------
+
+
+class CollectionRun(Base):
+    """Audit log and distributed job-lease state for repository data ingestion runs."""
+
+    __tablename__ = "collection_runs"
+
+    id: Mapped[int] = mapped_column(
+        PK_BIGINT, primary_key=True, autoincrement=True
+    )
+    repository_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey("repositories.id", ondelete="CASCADE"),
+        index=True,
+        nullable=False,
+    )
+    mode: Mapped[str] = mapped_column(
+        String(32), default="standard_diagnostic", nullable=False
+    )
+    status: Mapped[str] = mapped_column(
+        String(32), default="pending", index=True, nullable=False
+    )
+    worker_id: Mapped[Optional[str]] = mapped_column(String(80), nullable=True)
+    leased_until: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True, index=True
+    )
+    lease_version: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    retry_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    max_retries: Mapped[int] = mapped_column(Integer, default=2, nullable=False)
+    is_partial: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    coverage_summary: Mapped[Optional[Dict[str, Any]]] = mapped_column(
+        JSON, nullable=True
+    )
+    items_collected: Mapped[Optional[Dict[str, Any]]] = mapped_column(
+        JSON, nullable=True
+    )
+    rate_limit_consumed: Mapped[int] = mapped_column(
+        Integer, default=0, nullable=False
+    )
+    started_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    completed_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+    __table_args__ = (
+        Index("ix_collection_runs_repo_started", "repository_id", "started_at"),
+    )
+
+    # Relationships
+    repository: Mapped[Repository] = relationship(
+        "Repository", back_populates="collection_runs"
+    )
+    analysis_runs: Mapped[List[AnalysisRun]] = relationship(
+        "AnalysisRun", back_populates="collection_run"
+    )
+
+
+class AnalysisRun(Base):
+    """Audit log of multi-domain statistical, NLP, and analytical engine evaluations."""
+
+    __tablename__ = "analysis_runs"
+
+    id: Mapped[int] = mapped_column(
+        PK_BIGINT, primary_key=True, autoincrement=True
+    )
+    repository_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey("repositories.id", ondelete="CASCADE"),
+        index=True,
+        nullable=False,
+    )
+    collection_run_id: Mapped[Optional[int]] = mapped_column(
+        BigInteger,
+        ForeignKey("collection_runs.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    status: Mapped[str] = mapped_column(
+        String(32), default="pending", nullable=False
+    )
+    execution_time_ms: Mapped[float] = mapped_column(
+        Float, default=0.0, nullable=False
+    )
+    started_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    completed_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+    # Relationships
+    repository: Mapped[Repository] = relationship(
+        "Repository", back_populates="analysis_runs"
+    )
+    collection_run: Mapped[Optional[CollectionRun]] = relationship(
+        "CollectionRun", back_populates="analysis_runs"
+    )
+
+
+class Commit(Base):
+    """Represents an individual Git commit harvested from the repository."""
+
+    __tablename__ = "commits"
+
+    id: Mapped[int] = mapped_column(
+        PK_BIGINT, primary_key=True, autoincrement=True
+    )
+    repository_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey("repositories.id", ondelete="CASCADE"),
+        index=True,
+        nullable=False,
+    )
+    sha: Mapped[str] = mapped_column(String(40), nullable=False)
+    author_name: Mapped[Optional[str]] = mapped_column(String(120), nullable=True)
+    author_email: Mapped[Optional[str]] = mapped_column(String(120), nullable=True)
+    author_login: Mapped[Optional[str]] = mapped_column(String(80), nullable=True)
+    author_id: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
+    author_date: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    additions: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    deletions: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    total_changes: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+
+    __table_args__ = (
+        UniqueConstraint(
+            "repository_id", "sha", name="uq_commit_repo_sha"
+        ),
+        Index("ix_commits_repo_date", "repository_id", "author_date"),
+    )
+
+    # Relationships
+    repository: Mapped[Repository] = relationship(
+        "Repository", back_populates="commits"
+    )
+
+
+class Contributor(Base):
+    """Represents a contributor across commits, pull requests, reviews, or issues."""
+
+    __tablename__ = "contributors"
+
+    id: Mapped[int] = mapped_column(
+        PK_BIGINT, primary_key=True, autoincrement=True
+    )
+    repository_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey("repositories.id", ondelete="CASCADE"),
+        index=True,
+        nullable=False,
+    )
+    login: Mapped[Optional[str]] = mapped_column(String(80), nullable=True)
+    github_id: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
+    git_email: Mapped[Optional[str]] = mapped_column(String(120), nullable=True)
+    avatar_url: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    primary_role: Mapped[str] = mapped_column(
+        String(40), default="contributor", nullable=False
+    )
+    total_commits: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    total_prs_authored: Mapped[int] = mapped_column(
+        Integer, default=0, nullable=False
+    )
+    total_prs_reviewed: Mapped[int] = mapped_column(
+        Integer, default=0, nullable=False
+    )
+    total_issues_opened: Mapped[int] = mapped_column(
+        Integer, default=0, nullable=False
+    )
+    first_contribution_date: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    last_contribution_date: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    tenure_days: Mapped[float] = mapped_column(Float, default=0.0, nullable=False)
+    is_newcomer: Mapped[bool] = mapped_column(
+        Boolean, default=False, nullable=False
+    )
+    is_core: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    is_bot: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    is_unlinked: Mapped[bool] = mapped_column(
+        Boolean, default=False, nullable=False
+    )
+    identity_confidence: Mapped[float] = mapped_column(
+        Float, default=1.0, nullable=False
+    )
+
+    __table_args__ = (
+        Index(
+            "uq_contributors_repo_github_id",
+            "repository_id",
+            "github_id",
+            unique=True,
+            sqlite_where=text("github_id IS NOT NULL"),
+            postgresql_where=text("github_id IS NOT NULL"),
+        ),
+        Index(
+            "uq_contributors_repo_unlinked_email",
+            "repository_id",
+            "git_email",
+            unique=True,
+            sqlite_where=text("github_id IS NULL AND git_email IS NOT NULL"),
+            postgresql_where=text("github_id IS NULL AND git_email IS NOT NULL"),
+        ),
+        Index("ix_contributors_repo_commits", "repository_id", "total_commits"),
+    )
+
+    # Relationships
+    repository: Mapped[Repository] = relationship(
+        "Repository", back_populates="contributors"
+    )
+    activities: Mapped[List[ContributorActivity]] = relationship(
+        "ContributorActivity",
+        back_populates="contributor",
+        cascade="all, delete-orphan",
+    )
+
+
+class ContributorActivity(Base):
+    """Normalized timestamped activity log for newcomer retention and participation modeling."""
+
+    __tablename__ = "contributor_activities"
+
+    id: Mapped[int] = mapped_column(
+        PK_BIGINT, primary_key=True, autoincrement=True
+    )
+    contributor_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey("contributors.id", ondelete="CASCADE"),
+        index=True,
+        nullable=False,
+    )
+    repository_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey("repositories.id", ondelete="CASCADE"),
+        index=True,
+        nullable=False,
+    )
+    activity_type: Mapped[str] = mapped_column(
+        String(32), nullable=False
+    )  # commit, pr_opened, pr_merged, review_submitted, issue_opened, comment_created
+    activity_date: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    entity_id: Mapped[str] = mapped_column(
+        String(64), nullable=False
+    )  # commit sha, pr number, review id, issue number, comment id
+    details: Mapped[Optional[Dict[str, Any]]] = mapped_column(
+        JSON, nullable=True
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "repository_id",
+            "activity_type",
+            "entity_id",
+            name="uq_activity_natural_key",
+        ),
+        Index("ix_contrib_act_date", "contributor_id", "activity_date"),
+        Index(
+            "ix_repo_act_type_date",
+            "repository_id",
+            "activity_type",
+            "activity_date",
+        ),
+    )
+
+    # Relationships
+    contributor: Mapped[Contributor] = relationship(
+        "Contributor", back_populates="activities"
+    )
+
+
+class PullRequest(Base):
+    """Represents a GitHub pull request with lifecycle turnaround and review dynamics."""
+
+    __tablename__ = "pull_requests"
+
+    id: Mapped[int] = mapped_column(
+        PK_BIGINT, primary_key=True, autoincrement=True
+    )
+    repository_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey("repositories.id", ondelete="CASCADE"),
+        index=True,
+        nullable=False,
+    )
+    pr_number: Mapped[int] = mapped_column(Integer, nullable=False)
+    title: Mapped[str] = mapped_column(Text, nullable=False)
+    state: Mapped[str] = mapped_column(String(20), nullable=False)  # open, closed
+    author: Mapped[Optional[str]] = mapped_column(String(80), nullable=True)
+    author_id: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    closed_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    merged_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    time_to_merge_hours: Mapped[Optional[float]] = mapped_column(
+        Float, nullable=True
+    )
+    time_to_first_review_hours: Mapped[Optional[float]] = mapped_column(
+        Float, nullable=True
+    )
+    comments_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    review_comments_count: Mapped[int] = mapped_column(
+        Integer, default=0, nullable=False
+    )
+    additions: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    deletions: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    changed_files: Mapped[Optional[int]] = mapped_column(
+        Integer, nullable=True
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "repository_id", "pr_number", name="uq_pr_repo_number"
+        ),
+        Index(
+            "ix_pr_repo_state_merged",
+            "repository_id",
+            "state",
+            "merged_at",
+        ),
+    )
+
+    # Relationships
+    repository: Mapped[Repository] = relationship(
+        "Repository", back_populates="pull_requests"
+    )
+    reviews: Mapped[List[PullRequestReview]] = relationship(
+        "PullRequestReview",
+        back_populates="pull_request",
+        cascade="all, delete-orphan",
+    )
+    review_comments: Mapped[List[PullRequestReviewComment]] = relationship(
+        "PullRequestReviewComment",
+        back_populates="pull_request",
+        cascade="all, delete-orphan",
+    )
+    issue_comments: Mapped[List[IssueComment]] = relationship(
+        "IssueComment", back_populates="pull_request"
+    )
+
+
+class PullRequestReview(Base):
+    """Represents a formal code review decision envelope submitted on a pull request."""
+
+    __tablename__ = "pull_request_reviews"
+
+    id: Mapped[int] = mapped_column(
+        PK_BIGINT, primary_key=True, autoincrement=True
+    )
+    pull_request_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey("pull_requests.id", ondelete="CASCADE"),
+        index=True,
+        nullable=False,
+    )
+    review_id: Mapped[int] = mapped_column(
+        BigInteger, unique=True, index=True, nullable=False
+    )
+    author: Mapped[Optional[str]] = mapped_column(String(80), nullable=True)
+    author_id: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
+    state: Mapped[str] = mapped_column(
+        String(32), nullable=False
+    )  # APPROVED, CHANGES_REQUESTED, COMMENTED, DISMISSED
+    submitted_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    body: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+    __table_args__ = (
+        Index("ix_pr_reviews_pr_submitted", "pull_request_id", "submitted_at"),
+    )
+
+    # Relationships
+    pull_request: Mapped[PullRequest] = relationship(
+        "PullRequest", back_populates="reviews"
+    )
+    review_comments: Mapped[List[PullRequestReviewComment]] = relationship(
+        "PullRequestReviewComment", back_populates="review"
+    )
+
+
+class PullRequestReviewComment(Base):
+    """Represents an inline diff comment tied to specific code lines in a pull request."""
+
+    __tablename__ = "pull_request_review_comments"
+
+    id: Mapped[int] = mapped_column(
+        PK_BIGINT, primary_key=True, autoincrement=True
+    )
+    pull_request_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey("pull_requests.id", ondelete="CASCADE"),
+        index=True,
+        nullable=False,
+    )
+    review_id: Mapped[Optional[int]] = mapped_column(
+        BigInteger,
+        ForeignKey("pull_request_reviews.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    comment_id: Mapped[int] = mapped_column(
+        BigInteger, unique=True, index=True, nullable=False
+    )
+    author: Mapped[Optional[str]] = mapped_column(String(80), nullable=True)
+    author_id: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
+    path: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    line: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    commit_id: Mapped[Optional[str]] = mapped_column(String(40), nullable=True)
+    body: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    updated_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+    # Relationships
+    pull_request: Mapped[PullRequest] = relationship(
+        "PullRequest", back_populates="review_comments"
+    )
+    review: Mapped[Optional[PullRequestReview]] = relationship(
+        "PullRequestReview", back_populates="review_comments"
+    )
+
+
+class Release(Base):
+    """Represents a software release tag and milestone publication cadence."""
+
+    __tablename__ = "releases"
+
+    id: Mapped[int] = mapped_column(
+        PK_BIGINT, primary_key=True, autoincrement=True
+    )
+    repository_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey("repositories.id", ondelete="CASCADE"),
+        index=True,
+        nullable=False,
+    )
+    release_id: Mapped[int] = mapped_column(
+        BigInteger, unique=True, index=True, nullable=False
+    )
+    tag_name: Mapped[str] = mapped_column(String(100), nullable=False)
+    name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    published_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    is_prerelease: Mapped[bool] = mapped_column(
+        Boolean, default=False, nullable=False
+    )
+    body: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+    __table_args__ = (
+        Index("ix_releases_repo_published", "repository_id", "published_at"),
+    )
+
+    # Relationships
+    repository: Mapped[Repository] = relationship(
+        "Repository", back_populates="releases"
+    )
+
+
+class IssueComment(Base):
+    """Represents general timeline discussion comments on issues and pull requests."""
+
+    __tablename__ = "issue_comments"
+
+    id: Mapped[int] = mapped_column(
+        PK_BIGINT, primary_key=True, autoincrement=True
+    )
+    repository_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey("repositories.id", ondelete="CASCADE"),
+        index=True,
+        nullable=False,
+    )
+    comment_id: Mapped[int] = mapped_column(
+        BigInteger, unique=True, index=True, nullable=False
+    )
+    issue_number: Mapped[int] = mapped_column(Integer, nullable=False)
+    issue_id: Mapped[Optional[int]] = mapped_column(
+        BigInteger,
+        ForeignKey("issues.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    pull_request_id: Mapped[Optional[int]] = mapped_column(
+        BigInteger,
+        ForeignKey("pull_requests.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    author: Mapped[Optional[str]] = mapped_column(String(80), nullable=True)
+    author_id: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
+    author_association: Mapped[Optional[str]] = mapped_column(
+        String(40), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    updated_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    body: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+    __table_args__ = (
+        CheckConstraint(
+            "NOT (issue_id IS NOT NULL AND pull_request_id IS NOT NULL)",
+            name="chk_issue_comment_parent",
+        ),
+        Index("ix_issue_comments_repo_num", "repository_id", "issue_number"),
+        Index("ix_issue_comments_created", "created_at"),
+    )
+
+    # Relationships
+    repository: Mapped[Repository] = relationship(
+        "Repository", back_populates="issue_comments"
+    )
+    issue: Mapped[Optional[Issue]] = relationship(
+        "Issue", back_populates="issue_comments"
+    )
+    pull_request: Mapped[Optional[PullRequest]] = relationship(
+        "PullRequest", back_populates="issue_comments"
+    )
+
