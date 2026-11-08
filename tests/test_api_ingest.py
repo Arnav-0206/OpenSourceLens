@@ -219,6 +219,81 @@ class TestIngestionSubmitEndpoint:
         assert resp.status_code == 400
         assert "Invalid collection mode" in resp.json()["detail"]
 
+    def test_submit_duplicate_pending_returns_200_and_existing_id(
+        self, client, test_db_session, sample_github_metadata
+    ):
+        """Verify submitting an active pending repository returns 200 OK and existing job ID."""
+        with patch(
+            "backend.app.services.repository_eligibility.RepositoryEligibilityChecker.fetch_github_metadata",
+            new_callable=AsyncMock,
+            return_value=sample_github_metadata,
+        ):
+            # 1. Initial submission -> 201 Created
+            resp1 = client.post("/api/ingest/submit", json={"repo": "pallets/click", "mode": "standard_diagnostic"})
+            assert resp1.status_code == 201
+            job_id1 = resp1.json()["job_id"]
+
+            # 2. Duplicate submission while still pending -> 200 OK with identical job_id
+            resp2 = client.post("/api/ingest/submit", json={"repo": "pallets/click", "mode": "standard_diagnostic"})
+            assert resp2.status_code == 200
+            data2 = resp2.json()
+            assert data2["job_id"] == job_id1
+            assert data2["status"] == "pending"
+            assert "already" in data2["message"].lower()
+
+    def test_submit_duplicate_in_progress_returns_200_and_existing_id(
+        self, client, test_db_session, sample_github_metadata
+    ):
+        """Verify submitting a repository whose job is in_progress returns 200 OK and existing job ID."""
+        with patch(
+            "backend.app.services.repository_eligibility.RepositoryEligibilityChecker.fetch_github_metadata",
+            new_callable=AsyncMock,
+            return_value=sample_github_metadata,
+        ):
+            resp1 = client.post("/api/ingest/submit", json={"repo": "pallets/click", "mode": "standard_diagnostic"})
+            job_id1 = resp1.json()["job_id"]
+
+            # Transition job to in_progress with active lease
+            job = test_db_session.get(CollectionRun, job_id1)
+            job.status = "in_progress"
+            job.leased_until = datetime.now(timezone.utc) + timedelta(minutes=10)
+            test_db_session.commit()
+
+            # Submit again -> 200 OK, same job_id, status in_progress
+            resp2 = client.post("/api/ingest/submit", json={"repo": "pallets/click", "mode": "standard_diagnostic"})
+            assert resp2.status_code == 200
+            data2 = resp2.json()
+            assert data2["job_id"] == job_id1
+            assert data2["status"] == "in_progress"
+            assert "already" in data2["message"].lower()
+
+    def test_submit_refresh_after_completed_creates_new_job_returns_201(
+        self, client, test_db_session, sample_github_metadata
+    ):
+        """Verify submitting a repository whose previous job completed enqueues a new refresh job (201 Created)."""
+        with patch(
+            "backend.app.services.repository_eligibility.RepositoryEligibilityChecker.fetch_github_metadata",
+            new_callable=AsyncMock,
+            return_value=sample_github_metadata,
+        ):
+            resp1 = client.post("/api/ingest/submit", json={"repo": "pallets/click", "mode": "standard_diagnostic"})
+            job_id1 = resp1.json()["job_id"]
+
+            # Complete prior job
+            job = test_db_session.get(CollectionRun, job_id1)
+            job.status = "completed"
+            job.completed_at = datetime.now(timezone.utc)
+            test_db_session.commit()
+
+            # Submit repository again -> 201 Created with a new job ID
+            resp2 = client.post("/api/ingest/submit", json={"repo": "pallets/click", "mode": "standard_diagnostic"})
+            assert resp2.status_code == 201
+            data2 = resp2.json()
+            assert data2["job_id"] != job_id1
+            assert data2["status"] == "pending"
+            assert "submitted successfully" in data2["message"].lower()
+
+
 
 class TestIngestionStatusEndpoint:
     """Tests for GET /api/ingest/status/{job_id}."""

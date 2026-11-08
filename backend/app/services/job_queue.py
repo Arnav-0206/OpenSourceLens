@@ -15,7 +15,8 @@ import socket
 from typing import Any, Dict, Optional, Tuple, Union
 import uuid
 
-from sqlalchemy import and_, or_, select, update
+from sqlalchemy import and_, or_, select, update, text, func
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from backend.app.database.models import CollectionRun, Repository
@@ -53,8 +54,11 @@ class DurableJobQueue:
         mode: str = "standard_diagnostic",
         max_retries: int = 2,
         db: Session = None,
-    ) -> CollectionRun:
-        """Enqueue a new persistent ingestion job into the collection_runs table.
+    ) -> Tuple[CollectionRun, bool]:
+        """Enqueue a new persistent ingestion job or return an existing in-flight job.
+
+        Applies application-level deduplication combined with a database-level partial
+        unique index (uq_collection_runs_active_repo) to prevent race-condition duplicates.
 
         Args:
             repo_id: Foreign key ID of the target Repository.
@@ -63,8 +67,29 @@ class DurableJobQueue:
             db: SQLAlchemy session.
 
         Returns:
-            CollectionRun: The persisted job entity in 'pending' status.
+            Tuple[CollectionRun, bool]: (job, is_new) where is_new is True if a new job
+            was created, or False if an existing active job (pending or in_progress) was returned.
         """
+        # Step 1: Check for existing active job (pending or in_progress)
+        existing_active = db.scalar(
+            select(CollectionRun)
+            .where(
+                CollectionRun.repository_id == repo_id,
+                CollectionRun.status.in_(["pending", "in_progress"]),
+            )
+            .order_by(CollectionRun.started_at.desc())
+            .limit(1)
+        )
+        if existing_active:
+            logger.info(
+                "Active job ID=%d already exists for repository_id=%d (status=%s)",
+                existing_active.id,
+                repo_id,
+                existing_active.status,
+            )
+            return existing_active, False
+
+        # Step 2: Insert new job; partial unique index protects against simultaneous insert race
         now = datetime.now(timezone.utc)
         job = CollectionRun(
             repository_id=repo_id,
@@ -76,16 +101,37 @@ class DurableJobQueue:
             is_partial=False,
             started_at=now,
         )
-        db.add(job)
-        db.commit()
-        db.refresh(job)
-        logger.info(
-            "Submitted ingestion job ID=%d for repository_id=%d (mode=%s)",
-            job.id,
-            repo_id,
-            mode,
-        )
-        return job
+        try:
+            db.add(job)
+            db.commit()
+            db.refresh(job)
+            logger.info(
+                "Submitted new ingestion job ID=%d for repository_id=%d (mode=%s)",
+                job.id,
+                repo_id,
+                mode,
+            )
+            return job, True
+        except IntegrityError:
+            # Concurrent submission race caught by database-level unique index
+            db.rollback()
+            existing_active = db.scalar(
+                select(CollectionRun)
+                .where(
+                    CollectionRun.repository_id == repo_id,
+                    CollectionRun.status.in_(["pending", "in_progress"]),
+                )
+                .order_by(CollectionRun.started_at.desc())
+                .limit(1)
+            )
+            if existing_active:
+                logger.info(
+                    "Race conflict resolved: returning active job ID=%d for repository_id=%d",
+                    existing_active.id,
+                    repo_id,
+                )
+                return existing_active, False
+            raise
 
     def claim_next_job(
         self,
@@ -155,75 +201,102 @@ class DurableJobQueue:
             return job
 
         else:
-            # SQLite WAL single-writer mode:
-            # Step 1: Look for pending job
-            stmt_pending = (
-                select(CollectionRun)
-                .where(CollectionRun.status == "pending")
-                .order_by(CollectionRun.started_at.asc())
-                .limit(1)
-            )
-            job = db.scalar(stmt_pending)
+            # SQLite WAL single-writer mode with atomic BEGIN IMMEDIATE
+            try:
+                db.execute(text("BEGIN IMMEDIATE"))
+            except Exception as e:
+                # If database write lock is temporarily held by another transaction, return None
+                logger.debug("SQLite database busy during claim: %s", e)
+                return None
 
-            is_recovery = False
-            if not job:
-                # Step 2: Check for expired in-progress jobs eligible for retry
-                stmt_expired = (
+            try:
+                # Enforce SQLite single-worker restriction:
+                # Verify no other job is currently active ('in_progress' with non-expired lease)
+                active_job = db.scalar(
                     select(CollectionRun)
                     .where(
                         CollectionRun.status == "in_progress",
-                        CollectionRun.leased_until < now,
-                        CollectionRun.retry_count < CollectionRun.max_retries,
+                        CollectionRun.leased_until > now,
                     )
+                    .limit(1)
+                )
+                if active_job:
+                    # Another worker process is currently active; release lock and exit
+                    db.commit()
+                    return None
+
+                # Step 1: Look for pending job
+                stmt_pending = (
+                    select(CollectionRun)
+                    .where(CollectionRun.status == "pending")
                     .order_by(CollectionRun.started_at.asc())
                     .limit(1)
                 )
-                job = db.scalar(stmt_expired)
+                job = db.scalar(stmt_pending)
+
+                is_recovery = False
                 if not job:
+                    # Step 2: Check for expired in-progress jobs eligible for retry
+                    stmt_expired = (
+                        select(CollectionRun)
+                        .where(
+                            CollectionRun.status == "in_progress",
+                            CollectionRun.leased_until < now,
+                            CollectionRun.retry_count < CollectionRun.max_retries,
+                        )
+                        .order_by(CollectionRun.started_at.asc())
+                        .limit(1)
+                    )
+                    job = db.scalar(stmt_expired)
+                    if not job:
+                        db.commit()
+                        return None
+                    is_recovery = True
+
+                expected_version = job.lease_version
+                new_retry_count = job.retry_count + (1 if is_recovery else 0)
+
+                # Optimistic concurrency check: update only if lease_version has not changed
+                update_stmt = (
+                    update(CollectionRun)
+                    .where(
+                        CollectionRun.id == job.id,
+                        CollectionRun.lease_version == expected_version,
+                    )
+                    .values(
+                        status="in_progress",
+                        worker_id=worker_id,
+                        leased_until=expiry,
+                        lease_version=expected_version + 1,
+                        retry_count=new_retry_count,
+                        started_at=now,
+                    )
+                )
+                res = db.execute(update_stmt)
+                db.commit()
+
+                if res.rowcount == 0:
+                    # Race condition lost to another worker
+                    logger.debug(
+                        "Worker %s lost race to claim job ID=%d (version mismatch)",
+                        worker_id,
+                        job.id,
+                    )
                     return None
-                is_recovery = True
 
-            expected_version = job.lease_version
-            new_retry_count = job.retry_count + (1 if is_recovery else 0)
-
-            # Optimistic concurrency check: update only if lease_version has not changed
-            update_stmt = (
-                update(CollectionRun)
-                .where(
-                    CollectionRun.id == job.id,
-                    CollectionRun.lease_version == expected_version,
-                )
-                .values(
-                    status="in_progress",
-                    worker_id=worker_id,
-                    leased_until=expiry,
-                    lease_version=expected_version + 1,
-                    retry_count=new_retry_count,
-                    started_at=now,
-                )
-            )
-            res = db.execute(update_stmt)
-            db.commit()
-
-            if res.rowcount == 0:
-                # Race condition lost to another worker
-                logger.debug(
-                    "Worker %s lost race to claim job ID=%d (version mismatch)",
+                db.refresh(job)
+                logger.info(
+                    "Worker %s claimed job ID=%d (mode=%s, lease_version=%d, recovery=%s)",
                     worker_id,
                     job.id,
+                    job.mode,
+                    job.lease_version,
+                    is_recovery,
                 )
-                return None
-
-            db.refresh(job)
-            logger.info(
-                "Worker %s claimed job ID=%d (mode=%s, lease_version=%d, recovery=%s)",
-                worker_id,
-                job.id,
-                job.mode,
-                job.lease_version,
-                is_recovery,
-            )
-            return job
+                return job
+            except Exception:
+                db.rollback()
+                raise
 
     def renew_lease(
         self,

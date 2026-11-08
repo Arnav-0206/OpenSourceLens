@@ -10,7 +10,7 @@ from datetime import datetime, timezone
 import logging
 from typing import Any, Dict, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Response, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -117,12 +117,12 @@ async def preview_repository(
 @router.post(
     "/submit",
     response_model=IngestionSubmitResponse,
-    status_code=status.HTTP_201_CREATED,
     summary="Submit Repository for Ingestion",
     tags=["ingestion"],
 )
 async def submit_ingestion_job(
     payload: IngestionSubmitRequest,
+    response: Response,
     db: Session = Depends(get_db),
 ) -> IngestionSubmitResponse:
     """Validate repository and enqueue a durable background collection job."""
@@ -189,7 +189,14 @@ async def submit_ingestion_job(
         db.refresh(repo)
 
     # 4. Enqueue durable job into collection_runs
-    job = job_queue.submit_job(repo_id=repo.id, mode=payload.mode, db=db)
+    job, is_new = job_queue.submit_job(repo_id=repo.id, mode=payload.mode, db=db)
+
+    if is_new:
+        response.status_code = status.HTTP_201_CREATED
+        message = "Ingestion job submitted successfully."
+    else:
+        response.status_code = status.HTTP_200_OK
+        message = f"An active ingestion job (ID={job.id}) is already {job.status} for '{repo.repo_name}'."
 
     return IngestionSubmitResponse(
         job_id=job.id,
@@ -197,7 +204,7 @@ async def submit_ingestion_job(
         mode=job.mode,
         status=job.status,
         created_at=job.started_at,
-        message="Ingestion job submitted successfully.",
+        message=message,
     )
 
 

@@ -531,6 +531,13 @@ class CollectionRun(Base):
 
     __table_args__ = (
         Index("ix_collection_runs_repo_started", "repository_id", "started_at"),
+        Index(
+            "uq_collection_runs_active_repo",
+            "repository_id",
+            unique=True,
+            sqlite_where=text("status IN ('pending', 'in_progress')"),
+            postgresql_where=text("status IN ('pending', 'in_progress')"),
+        ),
     )
 
     # Relationships

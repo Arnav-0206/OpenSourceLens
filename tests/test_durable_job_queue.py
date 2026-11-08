@@ -77,8 +77,9 @@ class TestDurableJobQueueClaimingAndFencing:
     def test_submit_job_persists_in_pending_state(self, in_memory_db, sample_repo):
         """Verify submitting a job persists it with pending status and initial zero counters."""
         queue = DurableJobQueue()
-        job = queue.submit_job(repo_id=sample_repo.id, mode="standard_diagnostic", db=in_memory_db)
+        job, is_new = queue.submit_job(repo_id=sample_repo.id, mode="standard_diagnostic", db=in_memory_db)
 
+        assert is_new is True
         assert job.id is not None
         assert job.repository_id == sample_repo.id
         assert job.mode == "standard_diagnostic"
@@ -91,7 +92,7 @@ class TestDurableJobQueueClaimingAndFencing:
     def test_two_workers_attempting_to_claim_same_job_only_one_succeeds(self, in_memory_db, sample_repo):
         """Verify that when two workers compete for a pending job, only one claims it and the other gets None."""
         queue = DurableJobQueue()
-        job = queue.submit_job(repo_id=sample_repo.id, mode="fast_snapshot", db=in_memory_db)
+        job, _ = queue.submit_job(repo_id=sample_repo.id, mode="fast_snapshot", db=in_memory_db)
 
         worker1 = "worker-alpha:1001:abcd"
         worker2 = "worker-beta:1002:ef01"
@@ -107,10 +108,112 @@ class TestDurableJobQueueClaimingAndFencing:
         claimed_2 = queue.claim_next_job(worker_id=worker2, lease_duration_seconds=300, db=in_memory_db)
         assert claimed_2 is None
 
+    def test_two_sqlite_workers_competing_for_different_pending_jobs(self, in_memory_db, sample_repo):
+        """Verify that in SQLite, only one worker can have an active job at any time."""
+        repo2 = Repository(id=8888, repo_name="org/other-repo", owner="org", name="other-repo", stars_count=100)
+        in_memory_db.add(repo2)
+        in_memory_db.commit()
+
+        queue = DurableJobQueue()
+        job1, _ = queue.submit_job(repo_id=sample_repo.id, mode="standard_diagnostic", db=in_memory_db)
+        job2, _ = queue.submit_job(repo_id=repo2.id, mode="standard_diagnostic", db=in_memory_db)
+
+        worker1 = "worker-1:1001:one"
+        worker2 = "worker-2:1002:two"
+
+        # Worker 1 claims Job 1
+        claimed_1 = queue.claim_next_job(worker_id=worker1, lease_duration_seconds=600, db=in_memory_db)
+        assert claimed_1 is not None
+        assert claimed_1.id == job1.id
+        assert claimed_1.status == "in_progress"
+
+        # Worker 2 attempts to claim Job 2 while Job 1 is still active
+        claimed_2 = queue.claim_next_job(worker_id=worker2, lease_duration_seconds=600, db=in_memory_db)
+        # SQLite single-worker restriction MUST block Worker 2 from claiming Job 2
+        assert claimed_2 is None
+
+        # Worker 1 completes Job 1
+        summary = IngestionSummary(
+            repo_name=sample_repo.repo_name,
+            mode="standard_diagnostic",
+            is_partial=False,
+            total_requests_consumed=10,
+            items_collected={"commits": 50},
+            entity_status={"commits": "completed"},
+            execution_time_seconds=1.0,
+            errors=[],
+        )
+        queue.complete_job(job_id=job1.id, worker_id=worker1, lease_version=claimed_1.lease_version, summary=summary, db=in_memory_db)
+
+        # Now that Job 1 is completed, Worker 2 can successfully claim Job 2
+        claimed_2_after = queue.claim_next_job(worker_id=worker2, lease_duration_seconds=600, db=in_memory_db)
+        assert claimed_2_after is not None
+        assert claimed_2_after.id == job2.id
+        assert claimed_2_after.status == "in_progress"
+
+    def test_duplicate_pending_and_in_progress_submission_deduplication(self, in_memory_db, sample_repo):
+        """Verify duplicate submissions of the same repository return the existing active job."""
+        queue = DurableJobQueue()
+
+        # 1. First submission -> new job
+        job1, is_new1 = queue.submit_job(repo_id=sample_repo.id, mode="standard_diagnostic", db=in_memory_db)
+        assert is_new1 is True
+
+        # 2. Second submission while job1 is pending -> returns job1
+        job2, is_new2 = queue.submit_job(repo_id=sample_repo.id, mode="standard_diagnostic", db=in_memory_db)
+        assert is_new2 is False
+        assert job2.id == job1.id
+        assert job2.status == "pending"
+
+        # 3. Worker claims job1 -> in_progress
+        claimed = queue.claim_next_job(worker_id="worker-dedup:1", lease_duration_seconds=600, db=in_memory_db)
+        assert claimed.id == job1.id
+
+        # 4. Third submission while job1 is in_progress -> returns job1
+        job3, is_new3 = queue.submit_job(repo_id=sample_repo.id, mode="standard_diagnostic", db=in_memory_db)
+        assert is_new3 is False
+        assert job3.id == job1.id
+        assert job3.status == "in_progress"
+
+        # 5. Worker completes job1
+        summary = IngestionSummary(
+            repo_name=sample_repo.repo_name,
+            mode="standard_diagnostic",
+            is_partial=False,
+            total_requests_consumed=5,
+            items_collected={"commits": 20},
+            entity_status={"commits": "completed"},
+            execution_time_seconds=1.0,
+            errors=[],
+        )
+        queue.complete_job(job_id=job1.id, worker_id="worker-dedup:1", lease_version=claimed.lease_version, summary=summary, db=in_memory_db)
+
+        # 6. Fourth submission after completion -> new job created for refresh
+        job4, is_new4 = queue.submit_job(repo_id=sample_repo.id, mode="standard_diagnostic", db=in_memory_db)
+        assert is_new4 is True
+        assert job4.id != job1.id
+        assert job4.status == "pending"
+
+    def test_partial_unique_index_database_safeguard(self, in_memory_db, sample_repo):
+        """Verify the database partial unique index strictly prevents two active jobs for the same repo."""
+        from sqlalchemy.exc import IntegrityError
+
+        # Direct insertion bypassing application check
+        job1 = CollectionRun(repository_id=sample_repo.id, mode="standard_diagnostic", status="pending")
+        in_memory_db.add(job1)
+        in_memory_db.commit()
+
+        # Second direct insertion of active status must raise IntegrityError
+        job2 = CollectionRun(repository_id=sample_repo.id, mode="standard_diagnostic", status="in_progress")
+        in_memory_db.add(job2)
+        with pytest.raises(IntegrityError):
+            in_memory_db.commit()
+        in_memory_db.rollback()
+
     def test_lease_expiration_and_job_recovery_by_second_worker(self, in_memory_db, sample_repo):
         """Verify that an expired in-progress job is claimed and recovered by a successor worker."""
         queue = DurableJobQueue()
-        job = queue.submit_job(repo_id=sample_repo.id, mode="standard_diagnostic", db=in_memory_db)
+        job, _ = queue.submit_job(repo_id=sample_repo.id, mode="standard_diagnostic", db=in_memory_db)
 
         worker1 = "worker-primary:100:1111"
         worker2 = "worker-successor:200:2222"
@@ -137,7 +240,7 @@ class TestDurableJobQueueClaimingAndFencing:
     def test_heartbeat_and_lease_renewal(self, in_memory_db, sample_repo):
         """Verify that heartbeat renewal successfully extends the lease expiration."""
         queue = DurableJobQueue()
-        job = queue.submit_job(repo_id=sample_repo.id, mode="standard_diagnostic", db=in_memory_db)
+        job, _ = queue.submit_job(repo_id=sample_repo.id, mode="standard_diagnostic", db=in_memory_db)
         worker_id = "worker-heartbeat:300:3333"
 
         claimed = queue.claim_next_job(worker_id=worker_id, lease_duration_seconds=30, db=in_memory_db)
@@ -160,7 +263,7 @@ class TestDurableJobQueueClaimingAndFencing:
     def test_stale_worker_rejected_by_lease_version_fencing_on_complete(self, in_memory_db, sample_repo):
         """Verify that a worker whose lease was superseded cannot write results and raises JobLeaseLostException."""
         queue = DurableJobQueue()
-        job = queue.submit_job(repo_id=sample_repo.id, mode="standard_diagnostic", db=in_memory_db)
+        job, _ = queue.submit_job(repo_id=sample_repo.id, mode="standard_diagnostic", db=in_memory_db)
 
         worker1 = "worker-stale:401:aaaa"
         worker2 = "worker-active:402:bbbb"
@@ -211,7 +314,7 @@ class TestDurableJobQueueClaimingAndFencing:
     def test_stale_worker_rejected_by_lease_version_fencing_on_fail(self, in_memory_db, sample_repo):
         """Verify that a stale worker cannot mark a recovered job as failed."""
         queue = DurableJobQueue()
-        job = queue.submit_job(repo_id=sample_repo.id, mode="standard_diagnostic", db=in_memory_db)
+        job, _ = queue.submit_job(repo_id=sample_repo.id, mode="standard_diagnostic", db=in_memory_db)
 
         worker1 = "worker-stale-fail:501:cccc"
         claimed_1 = queue.claim_next_job(worker_id=worker1, lease_duration_seconds=10, db=in_memory_db)
@@ -234,7 +337,7 @@ class TestDurableJobQueueClaimingAndFencing:
     def test_recover_expired_jobs_exceeding_max_retries(self, in_memory_db, sample_repo):
         """Verify that abandoned jobs whose retry count has reached max_retries are marked as permanently failed."""
         queue = DurableJobQueue()
-        job = queue.submit_job(repo_id=sample_repo.id, mode="standard_diagnostic", max_retries=2, db=in_memory_db)
+        job, _ = queue.submit_job(repo_id=sample_repo.id, mode="standard_diagnostic", max_retries=2, db=in_memory_db)
 
         # Set job to expired and retries exhausted
         job.status = "in_progress"
@@ -300,7 +403,7 @@ class TestIngestionWorkerExecution:
         """Verify worker successfully claims, executes mock collection, and finalizes job."""
         async def _run():
             queue = DurableJobQueue()
-            job = queue.submit_job(repo_id=sample_repo.id, mode="standard_diagnostic", db=in_memory_db)
+            job, _ = queue.submit_job(repo_id=sample_repo.id, mode="standard_diagnostic", db=in_memory_db)
 
             worker = IngestionWorker(worker_id="test-worker:1", job_queue=queue, heartbeat_interval_seconds=0.1)
 
@@ -339,7 +442,7 @@ class TestIngestionWorkerExecution:
         """Verify worker finalizes job with status 'rate_limited' when resumes_at is returned."""
         async def _run():
             queue = DurableJobQueue()
-            job = queue.submit_job(repo_id=sample_repo.id, mode="fast_snapshot", db=in_memory_db)
+            job, _ = queue.submit_job(repo_id=sample_repo.id, mode="fast_snapshot", db=in_memory_db)
 
             worker = IngestionWorker(worker_id="test-worker:2", job_queue=queue, heartbeat_interval_seconds=0.1)
 
@@ -378,7 +481,7 @@ class TestIngestionWorkerExecution:
         """Verify worker marks job as 'failed' with error_message when collector raises exception."""
         async def _run():
             queue = DurableJobQueue()
-            job = queue.submit_job(repo_id=sample_repo.id, mode="standard_diagnostic", db=in_memory_db)
+            job, _ = queue.submit_job(repo_id=sample_repo.id, mode="standard_diagnostic", db=in_memory_db)
 
             worker = IngestionWorker(worker_id="test-worker:3", job_queue=queue, heartbeat_interval_seconds=0.1)
 
@@ -403,7 +506,7 @@ class TestIngestionWorkerExecution:
         """Verify worker whose lease was superseded during collection pass aborts with JobLeaseLostException."""
         async def _run():
             queue = DurableJobQueue()
-            job = queue.submit_job(repo_id=sample_repo.id, mode="standard_diagnostic", db=in_memory_db)
+            job, _ = queue.submit_job(repo_id=sample_repo.id, mode="standard_diagnostic", db=in_memory_db)
 
             worker = IngestionWorker(worker_id="test-worker:fenced", job_queue=queue, heartbeat_interval_seconds=0.05)
 
