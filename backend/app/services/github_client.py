@@ -18,6 +18,7 @@ import asyncio
 from datetime import datetime, timezone, timedelta
 from email.utils import parsedate_to_datetime
 import logging
+import os
 import random
 import re
 import time
@@ -62,6 +63,8 @@ class AsyncGitHubClient:
             max_retries: Maximum automatic retries for transient errors or brief rate limits.
             client: Optional externally-managed httpx.AsyncClient.
         """
+        if github_token is None:
+            github_token = os.getenv("GITHUB_TOKEN")
         self.github_token = github_token
         self.base_url = base_url.rstrip("/")
         self.max_concurrency = max_concurrency

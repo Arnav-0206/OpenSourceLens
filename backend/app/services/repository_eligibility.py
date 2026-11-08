@@ -7,6 +7,7 @@ per-domain analytical confidence assessment.
 from __future__ import annotations
 
 import logging
+import os
 from typing import Any, Dict, List, Optional
 import httpx
 
@@ -33,6 +34,8 @@ class RepositoryEligibilityChecker:
 
     def __init__(self, github_token: Optional[str] = None) -> None:
         """Initialize with optional GitHub API token for authenticated pre-flight requests."""
+        if github_token is None:
+            github_token = os.getenv("GITHUB_TOKEN")
         self.github_token = github_token
 
     def _get_headers(self) -> Dict[str, str]:
