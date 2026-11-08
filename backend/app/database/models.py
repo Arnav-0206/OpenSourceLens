@@ -920,7 +920,7 @@ class PullRequestReviewComment(Base):
 
 
 class Release(Base):
-    """Represents a software release tag and milestone publication cadence."""
+    """Represents a software release tag and version publication cadence."""
 
     __tablename__ = "releases"
 

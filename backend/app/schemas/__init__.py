@@ -26,6 +26,7 @@ from backend.app.schemas.health import (
 from backend.app.schemas.ingestion import (
     ConfidenceLevel,
     DomainConfidence,
+    IngestionSummary,
     PaginatedResult,
     ParsedRepository,
     RepositoryConfidenceReport,
@@ -77,6 +78,7 @@ __all__ = [
     "ClassificationResponse",
     "ConfidenceLevel",
     "DomainConfidence",
+    "IngestionSummary",
     "PaginatedResult",
     "ParsedRepository",
     "RepositoryConfidenceReport",

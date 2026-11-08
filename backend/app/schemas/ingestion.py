@@ -108,3 +108,23 @@ class PaginatedResult(BaseModel):
     is_partial: bool = Field(False, description="Whether data was truncated before remote exhaustion.")
     partial_reason: Optional[str] = Field(None, description="Explanation if collection was truncated.")
     resumes_at: Optional[Any] = Field(None, description="Scheduled resumption timestamp if rate limited.")
+
+
+class IngestionSummary(BaseModel):
+    """Execution summary of a repository data collection run."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    repo_name: str = Field(..., description="Target repository slug (owner/repo).")
+    mode: str = Field(..., description="Collection mode ('fast_snapshot' or 'standard_diagnostic').")
+    is_partial: bool = Field(False, description="Whether collection was truncated before completion.")
+    partial_reason: Optional[str] = Field(None, description="Explanation if truncated.")
+    resumes_at: Optional[Any] = Field(None, description="Scheduled resumption timestamp if rate limited.")
+    total_requests_consumed: int = Field(0, description="Total HTTP requests consumed.")
+    items_collected: Dict[str, int] = Field(default_factory=dict, description="Counts of harvested entities.")
+    entity_status: Dict[str, str] = Field(
+        default_factory=dict,
+        description="Execution status per entity stream ('completed', 'truncated', 'skipped', 'failed').",
+    )
+    execution_time_seconds: float = Field(0.0, description="Total execution duration in seconds.")
+    errors: List[str] = Field(default_factory=list, description="Non-fatal warnings or error messages.")
