@@ -132,6 +132,7 @@ class RepositoryEligibilityChecker:
         is_archived = bool(metadata.get("archived", False))
         is_fork = bool(metadata.get("fork", False))
         is_template = bool(metadata.get("is_template", False))
+        github_id = metadata.get("id")
         size_kb = metadata.get("size", 0)
         open_issues = metadata.get("open_issues_count", 0)
         stars = metadata.get("stargazers_count", metadata.get("stars_count", 0))
@@ -158,6 +159,7 @@ class RepositoryEligibilityChecker:
                 owner=parsed_repo.owner,
                 name=parsed_repo.repo,
                 canonical_url=parsed_repo.canonical_url,
+                github_id=github_id,
                 rejection_reason=(
                     "OpenSourceLens only analyzes public open-source software. "
                     "Private repositories are not eligible for ingestion."
@@ -190,6 +192,7 @@ class RepositoryEligibilityChecker:
                 owner=parsed_repo.owner,
                 name=parsed_repo.repo,
                 canonical_url=parsed_repo.canonical_url,
+                github_id=github_id,
                 rejection_reason="Repository is an empty stub with no commits or code (Requires ≥ 1 commit).",
                 is_private=False,
                 is_archived=is_archived,
@@ -222,6 +225,7 @@ class RepositoryEligibilityChecker:
             owner=parsed_repo.owner,
             name=parsed_repo.repo,
             canonical_url=parsed_repo.canonical_url,
+            github_id=github_id,
             rejection_reason=None,
             is_private=False,
             is_archived=is_archived,

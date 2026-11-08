@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from enum import Enum
+from datetime import datetime
 from typing import Any, Dict, List, Optional
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -71,6 +72,7 @@ class RepositoryEligibilityResult(BaseModel):
     owner: str = Field(..., description="Repository owner username.")
     name: str = Field(..., description="Repository short name.")
     canonical_url: str = Field(..., description="Canonical GitHub URL.")
+    github_id: Optional[int] = Field(None, description="GitHub repository numerical ID.")
     rejection_reason: Optional[str] = Field(None, description="Detailed reason if rejected.")
     
     # Metadata flags
@@ -128,3 +130,89 @@ class IngestionSummary(BaseModel):
     )
     execution_time_seconds: float = Field(0.0, description="Total execution duration in seconds.")
     errors: List[str] = Field(default_factory=list, description="Non-fatal warnings or error messages.")
+
+
+class IngestionPreviewRequest(BaseModel):
+    """Request payload for pre-flight repository ingestion evaluation and budgeting."""
+
+    repo: str = Field(..., description="Repository URL or owner/repo slug to evaluate.", examples=["pallets/click"])
+
+
+class IngestionPreviewResponse(BaseModel):
+    """Response payload for pre-flight repository ingestion evaluation and budgeting."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    repo_name: str = Field(..., description="Canonical owner/repo slug.")
+    owner: str = Field(..., description="Repository owner login.")
+    name: str = Field(..., description="Repository short name.")
+    canonical_url: str = Field(..., description="Canonical GitHub HTTPS URL.")
+    is_eligible: bool = Field(..., description="Whether repository meets ingestion criteria.")
+    rejection_reason: Optional[str] = Field(None, description="Detailed explanation if rejected.")
+    metadata: Dict[str, Any] = Field(default_factory=dict, description="Surface repository metadata indicators.")
+    estimated_budgets: Dict[str, Dict[str, Any]] = Field(
+        default_factory=dict,
+        description="Allocations and hard ceilings for fast_snapshot and standard_diagnostic modes.",
+    )
+    confidence_preview: Optional[RepositoryConfidenceReport] = Field(
+        None, description="Analytical statistical sample confidence breakdown."
+    )
+    badges: List[str] = Field(default_factory=list, description="Descriptive indicators (e.g. 'Archived', 'Fork').")
+
+
+class IngestionSubmitRequest(BaseModel):
+    """Request payload for enqueuing a durable repository ingestion job."""
+
+    repo: str = Field(..., description="Repository URL or owner/repo slug to ingest.", examples=["pallets/click"])
+    mode: str = Field(
+        "standard_diagnostic",
+        description="Data harvesting depth: 'fast_snapshot' (<=10 requests) or 'standard_diagnostic' (<=50 requests).",
+    )
+    priority: int = Field(0, description="Queue priority level (higher values process earlier).")
+
+
+class IngestionSubmitResponse(BaseModel):
+    """Response payload returned when a durable ingestion job is created."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    job_id: int = Field(..., description="Unique persistent identifier for the collection job.")
+    repo_name: str = Field(..., description="Target repository slug.")
+    mode: str = Field(..., description="Configured collection mode.")
+    status: str = Field(..., description="Initial job status (typically 'pending').")
+    created_at: datetime = Field(..., description="Timestamp when job was registered in the queue.")
+    message: str = Field(..., description="Human-readable submission status confirmation.")
+
+
+class IngestionStatusResponse(BaseModel):
+    """Comprehensive progress and execution telemetry for an ingestion job."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    job_id: int = Field(..., description="Unique persistent identifier for the collection job.")
+    repo_name: str = Field(..., description="Target repository slug.")
+    mode: str = Field(..., description="Configured collection mode.")
+    status: str = Field(
+        ...,
+        description="Current job lifecycle status: 'pending', 'in_progress', 'completed', 'completed_partial', 'rate_limited', or 'failed'.",
+    )
+    worker_id: Optional[str] = Field(None, description="Identifier of the worker currently leasing the job.")
+    leased_until: Optional[datetime] = Field(None, description="Lease expiration timestamp.")
+    lease_version: int = Field(0, description="Fencing token incremented on each lease assignment.")
+    retry_count: int = Field(0, description="Number of times this job has been retried after lease expiration.")
+    max_retries: int = Field(2, description="Maximum retry threshold before failing abandoned jobs.")
+    is_partial: bool = Field(False, description="Whether harvested dataset is partial/truncated.")
+    partial_reason: Optional[str] = Field(None, description="Reason for truncation if partial.")
+    resumes_at: Optional[datetime] = Field(None, description="Scheduled resumption timestamp if rate limited.")
+    rate_limit_consumed: int = Field(0, description="Total API requests consumed by this collection run.")
+    items_collected: Dict[str, int] = Field(default_factory=dict, description="Counts of harvested entities.")
+    entity_status: Dict[str, str] = Field(
+        default_factory=dict,
+        description="Execution status per entity stream ('completed', 'truncated', 'skipped', 'failed').",
+    )
+    coverage_summary: Optional[Dict[str, Any]] = Field(None, description="Detailed coverage report.")
+    error_message: Optional[str] = Field(None, description="Failure description if job failed.")
+    started_at: datetime = Field(..., description="Timestamp when job was registered or started.")
+    completed_at: Optional[datetime] = Field(None, description="Timestamp when job concluded.")
+    duration_seconds: Optional[float] = Field(None, description="Total run duration in seconds.")
+

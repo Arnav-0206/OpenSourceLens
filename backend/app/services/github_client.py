@@ -474,3 +474,15 @@ class AsyncGitHubClient:
             partial_reason=partial_reason,
             resumes_at=self.resumes_at,
         )
+
+    async def close(self) -> None:
+        """Close the underlying HTTP client session if created."""
+        if self._external_client and not self._external_client.is_closed:
+            await self._external_client.aclose()
+
+    async def __aenter__(self) -> AsyncGitHubClient:
+        return self
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb) -> None:
+        await self.close()
+

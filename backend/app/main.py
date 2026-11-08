@@ -18,6 +18,7 @@ from sqlalchemy.orm import Session
 import uvicorn
 
 from backend.app.api.v1.api import api_router
+from backend.app.api.v1.endpoints.ingest import router as ingest_router
 from backend.app.core.config import settings
 from backend.app.core.error_handlers import register_error_handlers
 from backend.app.database.init_db import check_connection, get_table_status
@@ -83,6 +84,9 @@ def create_application() -> FastAPI:
 
     # Mount API v1 Router
     app.include_router(api_router, prefix=settings.API_V1_STR)
+
+    # Mount Ingestion Router directly at /api/ingest
+    app.include_router(ingest_router, prefix="/api/ingest", tags=["ingestion"])
 
     # Register centralized exception handlers
     register_error_handlers(app)
