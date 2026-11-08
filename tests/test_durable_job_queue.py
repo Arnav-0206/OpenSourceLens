@@ -13,9 +13,10 @@ Tests verify:
 
 import asyncio
 from datetime import datetime, timedelta, timezone
+import multiprocessing
 from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
-from sqlalchemy import create_engine, select
+from sqlalchemy import create_engine, select, text
 from sqlalchemy.orm import sessionmaker
 
 from backend.app.database.base import Base
@@ -23,6 +24,38 @@ from backend.app.database.models import CollectionRun, Repository
 from backend.app.schemas.ingestion import IngestionSummary
 from backend.app.services.job_queue import DurableJobQueue, JobLeaseLostException
 from backend.app.services.ingestion_worker import IngestionWorker
+
+
+def _multiprocess_worker_claim_task(
+    db_path: str,
+    worker_id: str,
+    lease_duration_seconds: int,
+    barrier: multiprocessing.Barrier,
+    result_queue: multiprocessing.Queue,
+):
+    """Top-level task function executed in a separate operating system process."""
+    try:
+        from sqlalchemy import create_engine
+        from sqlalchemy.orm import sessionmaker
+        from backend.app.services.job_queue import DurableJobQueue
+
+        engine = create_engine(f"sqlite:///{db_path}", connect_args={"timeout": 15})
+        SessionLocal = sessionmaker(bind=engine)
+        session = SessionLocal()
+        queue = DurableJobQueue()
+        # Synchronize process start to maximize race conditions
+        barrier.wait(timeout=10)
+        claimed = queue.claim_next_job(
+            worker_id=worker_id,
+            lease_duration_seconds=lease_duration_seconds,
+            db=session,
+        )
+        claimed_id = claimed.id if claimed else None
+        result_queue.put({"worker_id": worker_id, "claimed_id": claimed_id, "error": None})
+        session.close()
+        engine.dispose()
+    except Exception as e:
+        result_queue.put({"worker_id": worker_id, "claimed_id": None, "error": str(e)})
 
 
 def ensure_utc(dt: datetime) -> datetime:
@@ -150,6 +183,56 @@ class TestDurableJobQueueClaimingAndFencing:
         assert claimed_2_after is not None
         assert claimed_2_after.id == job2.id
         assert claimed_2_after.status == "in_progress"
+
+    def test_two_sqlite_workers_separate_processes_single_worker_enforcement(self, tmp_path):
+        """Verify across separate OS processes that SQLite BEGIN IMMEDIATE single-worker restriction is enforced."""
+        db_path = str(tmp_path / "sqlite_proc_test.db")
+        engine = create_engine(f"sqlite:///{db_path}", connect_args={"timeout": 15})
+        with engine.connect() as conn:
+            conn.execute(text("PRAGMA journal_mode=WAL;"))
+            conn.commit()
+        Base.metadata.create_all(bind=engine)
+
+        SessionLocal = sessionmaker(bind=engine)
+        db = SessionLocal()
+        r1 = Repository(id=101, repo_name="org/proc1", owner="org", name="proc1")
+        r2 = Repository(id=102, repo_name="org/proc2", owner="org", name="proc2")
+        db.add_all([r1, r2])
+        db.commit()
+
+        queue = DurableJobQueue()
+        queue.submit_job(repo_id=101, mode="fast_snapshot", db=db)
+        queue.submit_job(repo_id=102, mode="standard_diagnostic", db=db)
+        db.close()
+        engine.dispose()
+
+        q = multiprocessing.Queue()
+        barrier = multiprocessing.Barrier(2)
+
+        p1 = multiprocessing.Process(
+            target=_multiprocess_worker_claim_task,
+            args=(db_path, "os-proc-worker-1", 60, barrier, q),
+        )
+        p2 = multiprocessing.Process(
+            target=_multiprocess_worker_claim_task,
+            args=(db_path, "os-proc-worker-2", 60, barrier, q),
+        )
+
+        p1.start()
+        p2.start()
+
+        res1 = q.get(timeout=10)
+        res2 = q.get(timeout=10)
+        p1.join(timeout=5)
+        p2.join(timeout=5)
+
+        assert res1["error"] is None
+        assert res2["error"] is None
+
+        claimed = [res1["claimed_id"], res2["claimed_id"]]
+        # Exactly one process must claim a job; the other must receive None
+        assert sum(1 for cid in claimed if cid is not None) == 1
+        assert None in claimed
 
     def test_duplicate_pending_and_in_progress_submission_deduplication(self, in_memory_db, sample_repo):
         """Verify duplicate submissions of the same repository return the existing active job."""

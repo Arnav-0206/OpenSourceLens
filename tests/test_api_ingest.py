@@ -293,6 +293,77 @@ class TestIngestionSubmitEndpoint:
             assert data2["status"] == "pending"
             assert "submitted successfully" in data2["message"].lower()
 
+    def test_concurrent_duplicate_submissions_race_resolution(
+        self, tmp_path, sample_github_metadata
+    ):
+        """Verify two concurrent API submissions for the same repo resolve without 500 error, creating 1 active job."""
+        from concurrent.futures import ThreadPoolExecutor
+        from sqlalchemy import text
+        from fastapi.testclient import TestClient
+
+        # Dedicated file-based SQLite database in WAL mode to permit concurrent connections
+        db_path = str(tmp_path / "concurrent_api_test.db")
+        engine = create_engine(f"sqlite:///{db_path}", connect_args={"timeout": 15})
+        with engine.connect() as conn:
+            conn.execute(text("PRAGMA journal_mode=WAL;"))
+            conn.commit()
+        Base.metadata.create_all(bind=engine)
+        SessionClass = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+
+        def _override_get_db():
+            db = SessionClass()
+            try:
+                yield db
+            finally:
+                db.close()
+
+        app.dependency_overrides[get_db] = _override_get_db
+        test_client = TestClient(app)
+
+        try:
+            with patch(
+                "backend.app.services.repository_eligibility.RepositoryEligibilityChecker.fetch_github_metadata",
+                new_callable=AsyncMock,
+                return_value=sample_github_metadata,
+            ):
+                with ThreadPoolExecutor(max_workers=2) as executor:
+                    f1 = executor.submit(
+                        test_client.post,
+                        "/api/ingest/submit",
+                        json={"repo": "pallets/click", "mode": "standard_diagnostic"},
+                    )
+                    f2 = executor.submit(
+                        test_client.post,
+                        "/api/ingest/submit",
+                        json={"repo": "pallets/click", "mode": "standard_diagnostic"},
+                    )
+                    resp1 = f1.result()
+                    resp2 = f2.result()
+
+            # One request must receive 201 Created and the other must receive 200 OK
+            status_codes = {resp1.status_code, resp2.status_code}
+            assert status_codes == {200, 201}, f"Unexpected status codes: {resp1.status_code}, {resp2.status_code}"
+
+            data1 = resp1.json()
+            data2 = resp2.json()
+
+            # Both requests must return the identical job ID
+            assert data1["job_id"] == data2["job_id"]
+            assert data1["repo_name"] == "pallets/click"
+            assert data2["repo_name"] == "pallets/click"
+
+            # Database must have exactly one CollectionRun record
+            verify_db = SessionClass()
+            runs = verify_db.query(CollectionRun).all()
+            assert len(runs) == 1
+            assert runs[0].id == data1["job_id"]
+            assert runs[0].status == "pending"
+            verify_db.close()
+
+        finally:
+            app.dependency_overrides.clear()
+            engine.dispose()
+
 
 
 class TestIngestionStatusEndpoint:

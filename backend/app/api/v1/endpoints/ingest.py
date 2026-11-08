@@ -12,6 +12,7 @@ from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Response, status
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from backend.app.core.exceptions import (
@@ -184,9 +185,13 @@ async def submit_ingestion_job(
             upstream_repo=result.upstream_repo,
             is_active=True,
         )
-        db.add(repo)
-        db.commit()
-        db.refresh(repo)
+        try:
+            db.add(repo)
+            db.commit()
+            db.refresh(repo)
+        except IntegrityError:
+            db.rollback()
+            repo = db.scalar(select(Repository).where(Repository.repo_name == result.repo_name))
 
     # 4. Enqueue durable job into collection_runs
     job, is_new = job_queue.submit_job(repo_id=repo.id, mode=payload.mode, db=db)
