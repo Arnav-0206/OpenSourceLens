@@ -233,3 +233,25 @@ class EntityBudgetExceededException(OpenSourceLensException):
             error_code="ENTITY_BUDGET_EXCEEDED",
             details={k: v for k, v in details.items() if v is not None},
         )
+
+
+class GhostWorkerRejectedException(OpenSourceLensException):
+    """Raised when an analytical worker attempts to write, renew, or finalize a job whose lease expired or was revoked."""
+
+    def __init__(self, message: str = "Worker lease expired or worker identity mismatch.") -> None:
+        super().__init__(
+            message=message,
+            status_code=409,
+            error_code="GHOST_WORKER_REJECTED",
+        )
+
+
+class AttemptImmutableException(OpenSourceLensException):
+    """Raised when an attempt is made to mutate or finalize an analysis attempt that is already in a terminal state."""
+
+    def __init__(self, message: str = "Analysis run attempt is already terminal and cannot be modified.") -> None:
+        super().__init__(
+            message=message,
+            status_code=409,
+            error_code="ATTEMPT_IMMUTABLE",
+        )
