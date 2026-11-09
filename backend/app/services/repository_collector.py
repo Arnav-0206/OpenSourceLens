@@ -63,6 +63,26 @@ def parse_datetime(dt_str: Optional[str]) -> Optional[datetime]:
         return None
 
 
+def _datetimes_equal(d1: Optional[datetime], d2: Optional[datetime]) -> bool:
+    """Compare two datetimes for equality, normalizing timezone and precision across dialects."""
+    if d1 is None and d2 is None:
+        return True
+    if d1 is None or d2 is None:
+        return False
+    n1 = d1.astimezone(timezone.utc).replace(tzinfo=None) if d1.tzinfo is not None else d1
+    n2 = d2.astimezone(timezone.utc).replace(tzinfo=None) if d2.tzinfo is not None else d2
+    return abs((n1 - n2).total_seconds()) < 1e-3
+
+
+def _floats_equal(f1: Optional[float], f2: Optional[float]) -> bool:
+    """Compare two optional floats for equality within floating-point tolerance."""
+    if f1 is None and f2 is None:
+        return True
+    if f1 is None or f2 is None:
+        return False
+    return abs(f1 - f2) < 1e-4
+
+
 def extract_canonical_category(labels: List[Dict[str, Any]]) -> Tuple[str, int]:
     """Detect canonical category and numeric ID from issue label list.
 
@@ -158,6 +178,8 @@ class RepositoryCollector:
         is_partial = False
         partial_reason: Optional[str] = None
         resumes_at: Optional[datetime] = None
+        mutated_records: Set[Tuple[str, Any]] = set()
+        repo: Optional[Repository] = None
 
         if db is None:
             raise ValueError("Active SQLAlchemy database session (db) is required for collection.")
@@ -168,6 +190,7 @@ class RepositoryCollector:
                 repo_name=clean_repo,
                 budgeter=active_budgeter,
                 db=db,
+                mutated_records=mutated_records,
             )
             items_collected["repository"] = 1
             entity_status["repository"] = "completed"
@@ -180,6 +203,7 @@ class RepositoryCollector:
                 db=db,
                 since=last_synced,
                 mode=mode,
+                mutated_records=mutated_records,
             )
             items_collected["commits"] = c_count
             entity_status["commits"] = "truncated" if c_part else "completed"
@@ -192,6 +216,7 @@ class RepositoryCollector:
                 repo=repo,
                 budgeter=active_budgeter,
                 db=db,
+                mutated_records=mutated_records,
             )
             items_collected["contributors"] = contrib_count
             entity_status["contributors"] = "truncated" if contrib_part else "completed"
@@ -205,6 +230,7 @@ class RepositoryCollector:
                 budgeter=active_budgeter,
                 db=db,
                 last_synced_at=last_synced,
+                mutated_records=mutated_records,
             )
             items_collected["pull_requests"] = pr_count
             entity_status["pull_requests"] = "truncated" if pr_part else "completed"
@@ -219,6 +245,7 @@ class RepositoryCollector:
                 budgeter=active_budgeter,
                 db=db,
                 mode=mode,
+                mutated_records=mutated_records,
             )
             items_collected["pr_reviews"] = review_count
             entity_status["pr_reviews"] = "truncated" if r_part else "completed"
@@ -232,6 +259,7 @@ class RepositoryCollector:
                     repo=repo,
                     budgeter=active_budgeter,
                     db=db,
+                    mutated_records=mutated_records,
                 )
                 items_collected["pr_inline_comments"] = inline_count
                 entity_status["pr_inline_comments"] = "truncated" if in_part else "completed"
@@ -247,6 +275,7 @@ class RepositoryCollector:
                 budgeter=active_budgeter,
                 db=db,
                 since=last_synced,
+                mutated_records=mutated_records,
             )
             items_collected["issues"] = issue_count
             entity_status["issues"] = "truncated" if iss_part else "completed"
@@ -260,6 +289,7 @@ class RepositoryCollector:
                 budgeter=active_budgeter,
                 db=db,
                 since=last_synced,
+                mutated_records=mutated_records,
             )
             items_collected["issue_comments"] = comm_count
             entity_status["issue_comments"] = "truncated" if comm_part else "completed"
@@ -272,6 +302,7 @@ class RepositoryCollector:
                 repo=repo,
                 budgeter=active_budgeter,
                 db=db,
+                mutated_records=mutated_records,
             )
             items_collected["releases"] = rel_count
             entity_status["releases"] = "truncated" if rel_part else "completed"
@@ -280,7 +311,11 @@ class RepositoryCollector:
                 partial_reason = partial_reason or rel_reason
 
             # 10. Contributor SQL Metric Reconciliation (eliminates counter inflation)
-            self.reconcile_contributor_metrics(repository_id=repo.id, db=db)
+            self.reconcile_contributor_metrics(
+                repository_id=repo.id,
+                db=db,
+                mutated_records=mutated_records,
+            )
 
             # Check if client tripped primary rate limit threshold during collection
             if getattr(self.client, "is_primary_rate_limited", False):
@@ -290,6 +325,8 @@ class RepositoryCollector:
 
             # Update repository sync cursor
             repo.last_synced_at = datetime.now(timezone.utc)
+            if repo is not None and len(mutated_records) > 0:
+                repo.analytics_source_revision += 1
             db.commit()
 
         except (BudgetExceededException, EntityBudgetExceededException) as exc:
@@ -299,6 +336,8 @@ class RepositoryCollector:
             for k, v in entity_status.items():
                 if v == "pending":
                     entity_status[k] = "skipped"
+            if repo is not None and len(mutated_records) > 0:
+                repo.analytics_source_revision += 1
             db.commit()
         except GitHubRateLimitExceededException as exc:
             is_partial = True
@@ -308,6 +347,8 @@ class RepositoryCollector:
             for k, v in entity_status.items():
                 if v == "pending":
                     entity_status[k] = "skipped"
+            if repo is not None and len(mutated_records) > 0:
+                repo.analytics_source_revision += 1
             db.commit()
         except Exception as exc:
             logger.exception("Unexpected error during repository collection: %s", exc)
@@ -349,6 +390,7 @@ class RepositoryCollector:
             total_requests_consumed=active_budgeter.total_used,
             items_collected=items_collected,
             entity_status=entity_status,
+            records_mutated=len(mutated_records),
             execution_time_seconds=duration,
             errors=errors,
         )
@@ -358,6 +400,7 @@ class RepositoryCollector:
         repo_name: str,
         budgeter: EntityRateBudgeter,
         db: Session,
+        mutated_records: Optional[Set[Tuple[str, Any]]] = None,
     ) -> Repository:
         """Fetch and idempotently upsert repository root metadata."""
         owner, name = repo_name.split("/")
@@ -382,6 +425,13 @@ class RepositoryCollector:
         created_dt = parse_datetime(data.get("created_at"))
         updated_dt = parse_datetime(data.get("updated_at"))
 
+        new_lang = data.get("language")
+        new_stars = data.get("stargazers_count", 0)
+        new_forks = data.get("forks_count", 0)
+        new_open_issues = data.get("open_issues_count", 0)
+        new_is_archived = bool(data.get("archived", False))
+        new_is_fork = bool(data.get("fork", False))
+
         if repo is None:
             repo = Repository(
                 id=repo_id,
@@ -389,34 +439,48 @@ class RepositoryCollector:
                 owner=owner,
                 name=name,
                 description=data.get("description"),
-                primary_language=data.get("language"),
-                stars_count=data.get("stargazers_count", 0),
-                forks_count=data.get("forks_count", 0),
-                open_issues_count=data.get("open_issues_count", 0),
+                primary_language=new_lang,
+                stars_count=new_stars,
+                forks_count=new_forks,
+                open_issues_count=new_open_issues,
                 github_created_at=created_dt,
                 github_updated_at=updated_dt,
                 is_active=True,
-                is_archived=bool(data.get("archived", False)),
-                is_fork=bool(data.get("fork", False)),
-                upstream_repo=(data.get("parent") or {}).get("full_name") if data.get("fork") else None,
+                is_archived=new_is_archived,
+                is_fork=new_is_fork,
+                upstream_repo=(data.get("parent") or {}).get("full_name") if new_is_fork else None,
             )
             db.add(repo)
+            db.flush()
+            if mutated_records is not None:
+                mutated_records.add(("repository", repo.id))
         else:
+            analytical_changed = (
+                repo.primary_language != new_lang
+                or repo.stars_count != new_stars
+                or repo.forks_count != new_forks
+                or repo.open_issues_count != new_open_issues
+                or repo.is_archived != new_is_archived
+                or repo.is_fork != new_is_fork
+            )
+            if analytical_changed and mutated_records is not None:
+                mutated_records.add(("repository", repo.id))
+
             repo.id = repo_id
             repo.repo_name = repo_name
             repo.owner = owner
             repo.name = name
             repo.description = data.get("description", repo.description)
-            repo.primary_language = data.get("language", repo.primary_language)
-            repo.stars_count = data.get("stargazers_count", repo.stars_count)
-            repo.forks_count = data.get("forks_count", repo.forks_count)
-            repo.open_issues_count = data.get("open_issues_count", repo.open_issues_count)
+            repo.primary_language = new_lang
+            repo.stars_count = new_stars
+            repo.forks_count = new_forks
+            repo.open_issues_count = new_open_issues
             repo.github_updated_at = updated_dt or repo.github_updated_at
-            repo.is_archived = bool(data.get("archived", False))
-            repo.is_fork = bool(data.get("fork", False))
-            repo.upstream_repo = (data.get("parent") or {}).get("full_name") if data.get("fork") else None
+            repo.is_archived = new_is_archived
+            repo.is_fork = new_is_fork
+            repo.upstream_repo = (data.get("parent") or {}).get("full_name") if new_is_fork else None
+            db.flush()
 
-        db.flush()
         return repo
 
     async def collect_commits(
@@ -426,6 +490,7 @@ class RepositoryCollector:
         db: Session,
         since: Optional[datetime] = None,
         mode: str = "standard_diagnostic",
+        mutated_records: Optional[Set[Tuple[str, Any]]] = None,
     ) -> Tuple[int, bool, Optional[str]]:
         """Harvest commits and sample commit detail stats within budget."""
         endpoint = f"/repos/{repo.owner}/{repo.name}/commits"
@@ -453,6 +518,8 @@ class RepositoryCollector:
             author_name = author_data.get("name")
             author_email = author_data.get("email")
             author_date = parse_datetime(author_data.get("date")) or datetime.now(timezone.utc)
+            committer_data = commit_data.get("committer") or {}
+            committer_date = parse_datetime(committer_data.get("date"))
             message = commit_data.get("message")
 
             user_data = item.get("author") or {}
@@ -475,19 +542,35 @@ class RepositoryCollector:
                     author_login=author_login,
                     author_id=author_id,
                     author_date=author_date,
+                    committer_date=committer_date,
                     message=message,
                 )
                 db.add(record)
                 inserted_count += 1
+                if mutated_records is not None:
+                    mutated_records.add(("commit", sha))
                 if len(sample_commits_for_details) < 5:
                     sample_commits_for_details.append(sha)
             else:
-                existing.author_name = author_name
-                existing.author_email = author_email
-                existing.author_login = author_login
-                existing.author_id = author_id
-                existing.author_date = author_date
-                existing.message = message
+                changed = (
+                    existing.author_name != author_name
+                    or existing.author_email != author_email
+                    or existing.author_login != author_login
+                    or existing.author_id != author_id
+                    or not _datetimes_equal(existing.author_date, author_date)
+                    or not _datetimes_equal(existing.committer_date, committer_date)
+                    or existing.message != message
+                )
+                if changed:
+                    existing.author_name = author_name
+                    existing.author_email = author_email
+                    existing.author_login = author_login
+                    existing.author_id = author_id
+                    existing.author_date = author_date
+                    existing.committer_date = committer_date
+                    existing.message = message
+                    if mutated_records is not None:
+                        mutated_records.add(("commit", sha))
 
             # Link activity if contributor exists or can be anchored
             self._record_activity_if_contributor_exists(
@@ -499,6 +582,7 @@ class RepositoryCollector:
                 activity_date=author_date,
                 entity_id=sha,
                 db=db,
+                mutated_records=mutated_records,
             )
 
         db.flush()
@@ -520,9 +604,19 @@ class RepositoryCollector:
                         select(Commit).where(Commit.repository_id == repo.id, Commit.sha == sha)
                     )
                     if cmt:
-                        cmt.additions = c_stats.get("additions")
-                        cmt.deletions = c_stats.get("deletions")
-                        cmt.total_changes = c_stats.get("total")
+                        new_add = c_stats.get("additions")
+                        new_del = c_stats.get("deletions")
+                        new_tot = c_stats.get("total")
+                        if (
+                            cmt.additions != new_add
+                            or cmt.deletions != new_del
+                            or cmt.total_changes != new_tot
+                        ):
+                            cmt.additions = new_add
+                            cmt.deletions = new_del
+                            cmt.total_changes = new_tot
+                            if mutated_records is not None:
+                                mutated_records.add(("commit", sha))
                 except Exception as exc:
                     logger.debug("Could not fetch detailed stats for commit %s: %s", sha, exc)
 
@@ -534,6 +628,7 @@ class RepositoryCollector:
         repo: Repository,
         budgeter: EntityRateBudgeter,
         db: Session,
+        mutated_records: Optional[Set[Tuple[str, Any]]] = None,
     ) -> Tuple[int, bool, Optional[str]]:
         """Harvest contributors anchoring on immutable GitHub user IDs without speculative merging."""
         endpoint = f"/repos/{repo.owner}/{repo.name}/contributors"
@@ -576,12 +671,21 @@ class RepositoryCollector:
                     )
                 )
                 if unlinked is not None:
+                    changed = (
+                        unlinked.github_id != github_id
+                        or (avatar_url and unlinked.avatar_url != avatar_url)
+                        or unlinked.is_bot != is_bot
+                        or unlinked.is_unlinked is not False
+                        or not _floats_equal(unlinked.identity_confidence, 1.0)
+                    )
                     unlinked.github_id = github_id
                     unlinked.avatar_url = avatar_url or unlinked.avatar_url
                     unlinked.is_bot = is_bot
                     unlinked.is_unlinked = False
                     unlinked.identity_confidence = 1.0
                     contributor = unlinked
+                    if changed and mutated_records is not None:
+                        mutated_records.add(("contributor", unlinked.id))
 
             if contributor is None:
                 # Insert verified contributor anchored on GitHub ID
@@ -595,12 +699,23 @@ class RepositoryCollector:
                     identity_confidence=1.0,
                 )
                 db.add(contributor)
+                db.flush()
                 count += 1
+                if mutated_records is not None:
+                    mutated_records.add(("contributor", contributor.id))
             else:
                 # Update username if changed on GitHub while preserving immutable GitHub ID
-                contributor.login = login
-                contributor.avatar_url = avatar_url
-                contributor.is_bot = is_bot
+                changed = (
+                    contributor.login != login
+                    or contributor.avatar_url != avatar_url
+                    or contributor.is_bot != is_bot
+                )
+                if changed:
+                    contributor.login = login
+                    contributor.avatar_url = avatar_url
+                    contributor.is_bot = is_bot
+                    if mutated_records is not None:
+                        mutated_records.add(("contributor", contributor.id))
 
         db.flush()
         return count, res.is_partial, res.partial_reason
@@ -611,6 +726,7 @@ class RepositoryCollector:
         budgeter: EntityRateBudgeter,
         db: Session,
         last_synced_at: Optional[datetime] = None,
+        mutated_records: Optional[Set[Tuple[str, Any]]] = None,
     ) -> Tuple[List[PullRequest], int, bool, Optional[str]]:
         """Harvest pull requests using lookback overlap and open/closed reconciliation sweeps."""
         endpoint = f"/repos/{repo.owner}/{repo.name}/pulls"
@@ -680,22 +796,41 @@ class RepositoryCollector:
                 )
                 db.add(pr)
                 count += 1
+                if mutated_records is not None:
+                    mutated_records.add(("pull_request", pr_num))
             else:
-                pr.title = title
-                pr.state = state
-                pr.author = author
-                pr.author_id = author_id
-                pr.closed_at = closed_at
-                pr.merged_at = merged_at
-                pr.time_to_merge_hours = time_to_merge_hours
-                pr.comments_count = comments_count
-                pr.review_comments_count = review_comments_count
-                if additions is not None:
-                    pr.additions = additions
-                if deletions is not None:
-                    pr.deletions = deletions
-                if changed_files is not None:
-                    pr.changed_files = changed_files
+                changed = (
+                    pr.title != title
+                    or pr.state != state
+                    or pr.author != author
+                    or pr.author_id != author_id
+                    or not _datetimes_equal(pr.closed_at, closed_at)
+                    or not _datetimes_equal(pr.merged_at, merged_at)
+                    or not _floats_equal(pr.time_to_merge_hours, time_to_merge_hours)
+                    or pr.comments_count != comments_count
+                    or pr.review_comments_count != review_comments_count
+                    or (additions is not None and pr.additions != additions)
+                    or (deletions is not None and pr.deletions != deletions)
+                    or (changed_files is not None and pr.changed_files != changed_files)
+                )
+                if changed:
+                    pr.title = title
+                    pr.state = state
+                    pr.author = author
+                    pr.author_id = author_id
+                    pr.closed_at = closed_at
+                    pr.merged_at = merged_at
+                    pr.time_to_merge_hours = time_to_merge_hours
+                    pr.comments_count = comments_count
+                    pr.review_comments_count = review_comments_count
+                    if additions is not None:
+                        pr.additions = additions
+                    if deletions is not None:
+                        pr.deletions = deletions
+                    if changed_files is not None:
+                        pr.changed_files = changed_files
+                    if mutated_records is not None:
+                        mutated_records.add(("pull_request", pr_num))
 
             pr_records.append(pr)
 
@@ -709,6 +844,7 @@ class RepositoryCollector:
                 activity_date=created_at,
                 entity_id=str(pr_num),
                 db=db,
+                mutated_records=mutated_records,
             )
             if merged_at:
                 self._record_activity_if_contributor_exists(
@@ -720,6 +856,7 @@ class RepositoryCollector:
                     activity_date=merged_at,
                     entity_id=str(pr_num),
                     db=db,
+                    mutated_records=mutated_records,
                 )
 
         db.flush()
@@ -732,6 +869,7 @@ class RepositoryCollector:
         budgeter: EntityRateBudgeter,
         db: Session,
         mode: str = "standard_diagnostic",
+        mutated_records: Optional[Set[Tuple[str, Any]]] = None,
     ) -> Tuple[int, bool, Optional[str]]:
         """Harvest review decision envelopes on sampled PRs within quota."""
         max_pr_samples = 2 if mode == "fast_snapshot" else 20
@@ -792,21 +930,35 @@ class RepositoryCollector:
                         )
                         db.add(rev)
                         review_count += 1
+                        if mutated_records is not None:
+                            mutated_records.add(("pr_review", review_id))
                     else:
-                        rev.state = state
-                        rev.submitted_at = submitted_at
-                        rev.body = body
+                        changed = (
+                            rev.state != state
+                            or not _datetimes_equal(rev.submitted_at, submitted_at)
+                            or rev.body != body
+                        )
+                        if changed:
+                            rev.state = state
+                            rev.submitted_at = submitted_at
+                            rev.body = body
+                            if mutated_records is not None:
+                                mutated_records.add(("pr_review", review_id))
 
                     # Update PR time_to_first_review_hours
                     if submitted_at and pr.created_at:
                         diff_h = (submitted_at - pr.created_at).total_seconds() / 3600.0
                         if diff_h >= 0:
-                            if pr.time_to_first_review_hours is None:
-                                pr.time_to_first_review_hours = round(diff_h, 2)
-                            else:
-                                pr.time_to_first_review_hours = min(
-                                    pr.time_to_first_review_hours, round(diff_h, 2)
-                                )
+                            calc_hours = round(diff_h, 2)
+                            target_hours = (
+                                calc_hours
+                                if pr.time_to_first_review_hours is None
+                                else min(pr.time_to_first_review_hours, calc_hours)
+                            )
+                            if pr.time_to_first_review_hours != target_hours:
+                                pr.time_to_first_review_hours = target_hours
+                                if mutated_records is not None:
+                                    mutated_records.add(("pull_request", pr.pr_number))
 
                     if submitted_at:
                         self._record_activity_if_contributor_exists(
@@ -818,6 +970,7 @@ class RepositoryCollector:
                             activity_date=submitted_at,
                             entity_id=str(review_id),
                             db=db,
+                            mutated_records=mutated_records,
                         )
 
             except (BudgetExceededException, EntityBudgetExceededException) as exc:
@@ -835,6 +988,7 @@ class RepositoryCollector:
         repo: Repository,
         budgeter: EntityRateBudgeter,
         db: Session,
+        mutated_records: Optional[Set[Tuple[str, Any]]] = None,
     ) -> Tuple[int, bool, Optional[str]]:
         """Harvest repo-wide diff inline comments tied to specific code lines."""
         endpoint = f"/repos/{repo.owner}/{repo.name}/pulls/comments"
@@ -899,11 +1053,22 @@ class RepositoryCollector:
                 )
                 db.add(inline)
                 count += 1
+                if mutated_records is not None:
+                    mutated_records.add(("pr_inline_comment", comment_id))
             else:
-                inline.body = body
-                inline.line = line
-                inline.path = path
-                inline.updated_at = updated_at
+                changed = (
+                    inline.body != body
+                    or inline.line != line
+                    or inline.path != path
+                    or not _datetimes_equal(inline.updated_at, updated_at)
+                )
+                if changed:
+                    inline.body = body
+                    inline.line = line
+                    inline.path = path
+                    inline.updated_at = updated_at
+                    if mutated_records is not None:
+                        mutated_records.add(("pr_inline_comment", comment_id))
 
         db.flush()
         return count, res.is_partial, res.partial_reason
@@ -914,6 +1079,7 @@ class RepositoryCollector:
         budgeter: EntityRateBudgeter,
         db: Session,
         since: Optional[datetime] = None,
+        mutated_records: Optional[Set[Tuple[str, Any]]] = None,
     ) -> Tuple[int, bool, Optional[str]]:
         """Harvest pure issues (strictly filtering out PRs), text cleaning, and canonical labels."""
         endpoint = f"/repos/{repo.owner}/{repo.name}/issues"
@@ -1037,30 +1203,56 @@ class RepositoryCollector:
                 )
                 db.add(iss)
                 count += 1
+                if mutated_records is not None:
+                    mutated_records.add(("issue", issue_number))
             else:
                 iss = existing
-                iss.title = title
-                iss.body = body
-                iss.clean_title = clean_title
-                iss.clean_body = clean_body
-                iss.combined_text = combined_text
-                iss.clean_title_word_count = clean_title_wc
-                iss.clean_body_word_count = clean_body_wc
-                iss.state = state
-                iss.state_reason = state_reason
-                iss.closed_at = closed_at
-                iss.updated_at = updated_at
-                iss.comments_count = comments_count
-                iss.labels_count = len(labels)
-                iss.has_code_block = has_code
-                iss.code_block_count = code_count
-                iss.has_url = has_url
-                iss.has_stack_trace = has_stack
-                iss.canonical_label = canon_category
-                iss.canonical_label_id = canon_id
-                iss.resolution_time_hours = res_hours
-                iss.resolution_time_days = res_days
-                iss.speed_tier = speed_tier
+                changed = (
+                    iss.title != title
+                    or iss.body != body
+                    or iss.clean_title != clean_title
+                    or iss.clean_body != clean_body
+                    or iss.state != state
+                    or iss.state_reason != state_reason
+                    or not _datetimes_equal(iss.closed_at, closed_at)
+                    or not _datetimes_equal(iss.updated_at, updated_at)
+                    or iss.comments_count != comments_count
+                    or iss.labels_count != len(labels)
+                    or iss.has_code_block != has_code
+                    or iss.code_block_count != code_count
+                    or iss.has_url != has_url
+                    or iss.has_stack_trace != has_stack
+                    or iss.canonical_label != canon_category
+                    or iss.canonical_label_id != canon_id
+                    or not _floats_equal(iss.resolution_time_hours, res_hours)
+                    or not _floats_equal(iss.resolution_time_days, res_days)
+                    or iss.speed_tier != speed_tier
+                )
+                if changed:
+                    iss.title = title
+                    iss.body = body
+                    iss.clean_title = clean_title
+                    iss.clean_body = clean_body
+                    iss.combined_text = combined_text
+                    iss.clean_title_word_count = clean_title_wc
+                    iss.clean_body_word_count = clean_body_wc
+                    iss.state = state
+                    iss.state_reason = state_reason
+                    iss.closed_at = closed_at
+                    iss.updated_at = updated_at
+                    iss.comments_count = comments_count
+                    iss.labels_count = len(labels)
+                    iss.has_code_block = has_code
+                    iss.code_block_count = code_count
+                    iss.has_url = has_url
+                    iss.has_stack_trace = has_stack
+                    iss.canonical_label = canon_category
+                    iss.canonical_label_id = canon_id
+                    iss.resolution_time_hours = res_hours
+                    iss.resolution_time_days = res_days
+                    iss.speed_tier = speed_tier
+                    if mutated_records is not None:
+                        mutated_records.add(("issue", issue_number))
 
             # Insert raw issue labels
             for lbl in labels:
@@ -1081,6 +1273,8 @@ class RepositoryCollector:
                                 canonical_category=canon_category,
                             )
                         )
+                        if mutated_records is not None:
+                            mutated_records.add(("issue_label", f"{issue_id}:{lbl_name}"))
 
             # Contributor activity
             self._record_activity_if_contributor_exists(
@@ -1092,6 +1286,7 @@ class RepositoryCollector:
                 activity_date=created_at,
                 entity_id=str(issue_number),
                 db=db,
+                mutated_records=mutated_records,
             )
 
         db.flush()
@@ -1103,6 +1298,7 @@ class RepositoryCollector:
         budgeter: EntityRateBudgeter,
         db: Session,
         since: Optional[datetime] = None,
+        mutated_records: Optional[Set[Tuple[str, Any]]] = None,
     ) -> Tuple[int, bool, Optional[str]]:
         """Harvest issue & PR conversation comments with mutual-exclusion parent CHECK constraint."""
         endpoint = f"/repos/{repo.owner}/{repo.name}/issues/comments"
@@ -1182,11 +1378,22 @@ class RepositoryCollector:
                 )
                 db.add(comm)
                 count += 1
+                if mutated_records is not None:
+                    mutated_records.add(("issue_comment", comment_id))
             else:
-                comm.body = body
-                comm.updated_at = updated_at
-                comm.issue_id = fk_issue_id
-                comm.pull_request_id = fk_pr_id
+                changed = (
+                    comm.body != body
+                    or not _datetimes_equal(comm.updated_at, updated_at)
+                    or comm.issue_id != fk_issue_id
+                    or comm.pull_request_id != fk_pr_id
+                )
+                if changed:
+                    comm.body = body
+                    comm.updated_at = updated_at
+                    comm.issue_id = fk_issue_id
+                    comm.pull_request_id = fk_pr_id
+                    if mutated_records is not None:
+                        mutated_records.add(("issue_comment", comment_id))
 
             self._record_activity_if_contributor_exists(
                 repo_id=repo.id,
@@ -1197,6 +1404,7 @@ class RepositoryCollector:
                 activity_date=created_at,
                 entity_id=str(comment_id),
                 db=db,
+                mutated_records=mutated_records,
             )
 
         db.flush()
@@ -1207,6 +1415,7 @@ class RepositoryCollector:
         repo: Repository,
         budgeter: EntityRateBudgeter,
         db: Session,
+        mutated_records: Optional[Set[Tuple[str, Any]]] = None,
     ) -> Tuple[int, bool, Optional[str]]:
         """Harvest releases and release tags."""
         endpoint = f"/repos/{repo.owner}/{repo.name}/releases"
@@ -1247,17 +1456,34 @@ class RepositoryCollector:
                 )
                 db.add(rel)
                 count += 1
+                if mutated_records is not None:
+                    mutated_records.add(("release", rel_id))
             else:
-                rel.tag_name = tag_name
-                rel.name = name
-                rel.published_at = published_at
-                rel.is_prerelease = is_prerelease
-                rel.body = body
+                changed = (
+                    rel.tag_name != tag_name
+                    or rel.name != name
+                    or not _datetimes_equal(rel.published_at, published_at)
+                    or rel.is_prerelease != is_prerelease
+                    or rel.body != body
+                )
+                if changed:
+                    rel.tag_name = tag_name
+                    rel.name = name
+                    rel.published_at = published_at
+                    rel.is_prerelease = is_prerelease
+                    rel.body = body
+                    if mutated_records is not None:
+                        mutated_records.add(("release", rel_id))
 
         db.flush()
         return count, res.is_partial, res.partial_reason
 
-    def reconcile_contributor_metrics(self, repository_id: int, db: Session) -> None:
+    def reconcile_contributor_metrics(
+        self,
+        repository_id: int,
+        db: Session,
+        mutated_records: Optional[Set[Tuple[str, Any]]] = None,
+    ) -> None:
         """Idempotently recalculate contributor activity metrics via distinct SQL aggregations."""
         contributors = db.scalars(
             select(Contributor).where(Contributor.repository_id == repository_id)
@@ -1275,13 +1501,16 @@ class RepositoryCollector:
             else:
                 c_filter.append(Commit.author_id == c.github_id)
 
-            c.total_commits = db.scalar(
+            new_total_commits = db.scalar(
                 select(func.count(func.distinct(Commit.sha))).where(and_(*c_filter))
             ) or 0
 
             # 2. PRs authored
+            new_prs_authored = 0
+            new_prs_reviewed = 0
+            new_issues_opened = 0
             if c.login:
-                c.total_prs_authored = db.scalar(
+                new_prs_authored = db.scalar(
                     select(func.count(func.distinct(PullRequest.pr_number))).where(
                         PullRequest.repository_id == repository_id,
                         PullRequest.author == c.login,
@@ -1289,7 +1518,7 @@ class RepositoryCollector:
                 ) or 0
 
                 # 3. PRs reviewed
-                c.total_prs_reviewed = db.scalar(
+                new_prs_reviewed = db.scalar(
                     select(func.count(func.distinct(PullRequestReview.review_id))).join(
                         PullRequest, PullRequestReview.pull_request_id == PullRequest.id
                     ).where(
@@ -1299,7 +1528,7 @@ class RepositoryCollector:
                 ) or 0
 
                 # 4. Issues opened
-                c.total_issues_opened = db.scalar(
+                new_issues_opened = db.scalar(
                     select(func.count(func.distinct(Issue.issue_number))).where(
                         Issue.repository_id == repository_id,
                         Issue.author == c.login,
@@ -1315,15 +1544,40 @@ class RepositoryCollector:
                 ContributorActivity.contributor_id == c.id,
             )
             min_date, max_date = db.execute(act_stmt).first() or (None, None)
-            c.first_contribution_date = min_date
-            c.last_contribution_date = max_date
 
+            new_tenure = c.tenure_days
+            new_is_newcomer = c.is_newcomer
             if min_date and max_date:
-                c.tenure_days = max(0.0, round((max_date - min_date).total_seconds() / 86400.0, 2))
-                c.is_newcomer = c.tenure_days <= 30.0
+                new_tenure = max(0.0, round((max_date - min_date).total_seconds() / 86400.0, 2))
+                new_is_newcomer = new_tenure <= 30.0
 
             # Core contributor classification
-            c.is_core = (c.total_commits >= 10) or (c.total_prs_authored >= 5)
+            new_is_core = (new_total_commits >= 10) or (new_prs_authored >= 5)
+
+            changed = (
+                c.total_commits != new_total_commits
+                or c.total_prs_authored != new_prs_authored
+                or c.total_prs_reviewed != new_prs_reviewed
+                or c.total_issues_opened != new_issues_opened
+                or not _datetimes_equal(c.first_contribution_date, min_date)
+                or not _datetimes_equal(c.last_contribution_date, max_date)
+                or not _floats_equal(c.tenure_days, new_tenure)
+                or c.is_newcomer != new_is_newcomer
+                or c.is_core != new_is_core
+            )
+
+            if changed:
+                c.total_commits = new_total_commits
+                c.total_prs_authored = new_prs_authored
+                c.total_prs_reviewed = new_prs_reviewed
+                c.total_issues_opened = new_issues_opened
+                c.first_contribution_date = min_date
+                c.last_contribution_date = max_date
+                c.tenure_days = new_tenure
+                c.is_newcomer = new_is_newcomer
+                c.is_core = new_is_core
+                if mutated_records is not None:
+                    mutated_records.add(("contributor", c.id))
 
         db.flush()
 
@@ -1337,6 +1591,7 @@ class RepositoryCollector:
         activity_date: datetime,
         entity_id: str,
         db: Session,
+        mutated_records: Optional[Set[Tuple[str, Any]]] = None,
     ) -> None:
         """Helper to find or create contributor and record a timestamped activity event."""
         contributor: Optional[Contributor] = None
@@ -1366,6 +1621,8 @@ class RepositoryCollector:
                 unlinked_record.is_unlinked = False
                 unlinked_record.identity_confidence = 1.0
                 contributor = unlinked_record
+                if mutated_records is not None:
+                    mutated_records.add(("contributor", unlinked_record.id))
 
         # If contributor was found by author_id, check if there was a separate unlinked row with author_email
         if contributor is not None and author_id is not None and author_email is not None:
@@ -1380,6 +1637,9 @@ class RepositoryCollector:
             )
             if old_unlinked is not None and old_unlinked.id != contributor.id:
                 # Reassign activities to verified contributor and remove redundant unlinked stub
+                if mutated_records is not None:
+                    mutated_records.add(("contributor", old_unlinked.id))
+                    mutated_records.add(("contributor", contributor.id))
                 db.execute(
                     ContributorActivity.__table__.update()
                     .where(ContributorActivity.contributor_id == old_unlinked.id)
@@ -1418,6 +1678,8 @@ class RepositoryCollector:
             )
             db.add(contributor)
             db.flush()
+            if mutated_records is not None:
+                mutated_records.add(("contributor", contributor.id))
 
         if contributor is not None:
             # Check unique activity natural key: (repository_id, activity_type, entity_id)
@@ -1437,3 +1699,5 @@ class RepositoryCollector:
                     entity_id=entity_id,
                 )
                 db.add(act)
+                if mutated_records is not None:
+                    mutated_records.add(("activity", f"{repo_id}:{activity_type}:{entity_id}"))

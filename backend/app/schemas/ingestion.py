@@ -128,6 +128,10 @@ class IngestionSummary(BaseModel):
         default_factory=dict,
         description="Execution status per entity stream ('completed', 'truncated', 'skipped', 'failed').",
     )
+    records_mutated: int = Field(
+        0,
+        description="Total distinct database entity records inserted, updated, or deleted.",
+    )
     execution_time_seconds: float = Field(0.0, description="Total execution duration in seconds.")
     errors: List[str] = Field(default_factory=list, description="Non-fatal warnings or error messages.")
 
