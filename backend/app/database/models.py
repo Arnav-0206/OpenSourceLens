@@ -83,6 +83,14 @@ class Repository(Base):
         DateTime(timezone=True), nullable=True
     )
 
+    # Phase C: Additive columns for analytics foundation
+    analytics_source_revision: Mapped[int] = mapped_column(
+        Integer, default=1, server_default="1", nullable=False
+    )
+    last_analyzed_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
     # Relationships
     issues: Mapped[List[Issue]] = relationship(
         "Issue", back_populates="repository", cascade="all, delete-orphan"
@@ -582,12 +590,126 @@ class AnalysisRun(Base):
     )
     error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
+    # Phase C: Additive columns for durable analytics lifecycle
+    requested_source_revision: Mapped[int] = mapped_column(
+        Integer, default=1, server_default="1", nullable=False
+    )
+    analytics_source_revision: Mapped[Optional[int]] = mapped_column(
+        Integer, nullable=True, default=None
+    )
+    requested_methodology_version: Mapped[Optional[str]] = mapped_column(
+        String(50), nullable=True, default=None
+    )
+    methodology_version: Mapped[Optional[str]] = mapped_column(
+        String(50), nullable=True, default=None
+    )
+    analysis_reference_time: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    source_content_digest: Mapped[Optional[str]] = mapped_column(
+        String(64), nullable=True, default=None
+    )
+    worker_id: Mapped[Optional[str]] = mapped_column(
+        String(100), nullable=True
+    )
+    leased_until: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    lease_version: Mapped[int] = mapped_column(
+        Integer, default=0, server_default="0", nullable=False
+    )
+    retry_count: Mapped[int] = mapped_column(
+        Integer, default=0, server_default="0", nullable=False
+    )
+    max_retries: Mapped[int] = mapped_column(
+        Integer, default=3, server_default="3", nullable=False
+    )
+    metrics_payload: Mapped[Optional[Dict[str, Any]]] = mapped_column(
+        JSON, nullable=True
+    )
+    coverage_summary: Mapped[Optional[Dict[str, Any]]] = mapped_column(
+        JSON, nullable=True
+    )
+    confidence_summary: Mapped[Optional[Dict[str, Any]]] = mapped_column(
+        JSON, nullable=True
+    )
+    rule_interpretations: Mapped[Optional[List[Dict[str, Any]]]] = mapped_column(
+        JSON, nullable=True
+    )
+
+    __table_args__ = (
+        Index(
+            "uq_analysis_runs_active_repo",
+            "repository_id",
+            unique=True,
+            sqlite_where=text("status IN ('pending', 'running')"),
+            postgresql_where=text("status IN ('pending', 'running')"),
+        ),
+    )
+
     # Relationships
     repository: Mapped[Repository] = relationship(
         "Repository", back_populates="analysis_runs"
     )
     collection_run: Mapped[Optional[CollectionRun]] = relationship(
         "CollectionRun", back_populates="analysis_runs"
+    )
+    attempts: Mapped[List[AnalysisRunAttempt]] = relationship(
+        "AnalysisRunAttempt",
+        back_populates="analysis_run",
+        cascade="all, delete-orphan",
+    )
+
+
+class AnalysisRunAttempt(Base):
+    """Audit log of individual execution attempts for an analysis run."""
+
+    __tablename__ = "analysis_run_attempts"
+
+    id: Mapped[int] = mapped_column(
+        PK_BIGINT, primary_key=True, autoincrement=True
+    )
+    analysis_run_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey("analysis_runs.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    attempt_number: Mapped[int] = mapped_column(Integer, nullable=False)
+    worker_id: Mapped[str] = mapped_column(String(100), nullable=False)
+    started_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=datetime.utcnow, nullable=False
+    )
+    completed_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    outcome: Mapped[str] = mapped_column(
+        String(30), nullable=False, default="running"
+    )
+    error_category: Mapped[Optional[str]] = mapped_column(
+        String(50), nullable=True
+    )
+    error_message: Mapped[Optional[str]] = mapped_column(
+        Text, nullable=True
+    )
+    interruption_reason: Mapped[Optional[str]] = mapped_column(
+        String(100), nullable=True
+    )
+
+    __table_args__ = (
+        CheckConstraint(
+            "outcome IN ('running', 'completed', 'failed', 'lease_expired', 'interrupted')",
+            name="ck_attempt_outcome",
+        ),
+        UniqueConstraint(
+            "analysis_run_id", "attempt_number", name="uq_attempt_run_number"
+        ),
+        Index("ix_attempts_run_outcome", "analysis_run_id", "outcome"),
+    )
+
+    # Relationships
+    analysis_run: Mapped[AnalysisRun] = relationship(
+        "AnalysisRun", back_populates="attempts"
     )
 
 
@@ -612,6 +734,9 @@ class Commit(Base):
     author_id: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
     author_date: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False
+    )
+    committer_date: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
     )
     message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     additions: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)

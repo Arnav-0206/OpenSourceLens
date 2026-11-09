@@ -81,8 +81,8 @@ def test_staging_migration_lifecycle(staging_db):
     finally:
         conn.close()
 
-    # Step 2: Upgrade to head (002_add_dynamic_tables)
-    command.upgrade(alembic_cfg, "head")
+    # Step 2: Upgrade to 002_add_dynamic_tables
+    command.upgrade(alembic_cfg, "002_add_dynamic_tables")
 
     conn = sqlite3.connect(staging_file)
     try:
@@ -156,7 +156,7 @@ def test_staging_migration_lifecycle(staging_db):
     try:
         cursor = conn.cursor()
         cursor.execute("SELECT version_num FROM alembic_version;")
-        assert cursor.fetchone()[0] == "002_add_dynamic_tables"
+        assert cursor.fetchone()[0] == "003_add_phase_c_analytics_infrastructure"
     finally:
         conn.close()
 
@@ -249,3 +249,99 @@ def test_issue_comment_check_constraint(staging_db):
             assert "CHECK constraint failed" in str(exc_info.value) or "chk_issue_comment_parent" in str(exc_info.value)
     finally:
         engine.dispose()
+
+
+def test_migration_003_lifecycle(staging_db):
+    """Test Phase C Migration 003: upgrade from 002 -> verify schema & data -> downgrade -> re-upgrade."""
+    staging_file, alembic_cfg = staging_db
+
+    # Step 1: Upgrade to 003 head
+    command.upgrade(alembic_cfg, "head")
+
+    conn = sqlite3.connect(staging_file)
+    try:
+        cursor = conn.cursor()
+        cursor.execute("SELECT version_num FROM alembic_version;")
+        assert cursor.fetchone()[0] == "003_add_phase_c_analytics_infrastructure"
+
+        # Verify benchmark issues preserved
+        cursor.execute("SELECT count(*) FROM issues;")
+        assert cursor.fetchone()[0] == 2328
+
+        # Verify repository additions
+        cursor.execute("PRAGMA table_info(repositories);")
+        repo_cols = {r[1]: r for r in cursor.fetchall()}
+        assert "analytics_source_revision" in repo_cols
+        assert "last_analyzed_at" in repo_cols
+
+        # Verify commits committer_date addition and NULL preservation
+        cursor.execute("PRAGMA table_info(commits);")
+        commit_cols = {r[1]: r for r in cursor.fetchall()}
+        assert "committer_date" in commit_cols
+        cursor.execute("SELECT count(*) FROM commits WHERE committer_date IS NOT NULL;")
+        assert cursor.fetchone()[0] == 0, "Historical commits must have NULL committer_date"
+
+        # Verify analysis_runs additions
+        cursor.execute("PRAGMA table_info(analysis_runs);")
+        ar_cols = {r[1]: r for r in cursor.fetchall()}
+        assert "requested_source_revision" in ar_cols
+        assert "analytics_source_revision" in ar_cols
+        assert "requested_methodology_version" in ar_cols
+        assert "methodology_version" in ar_cols
+        assert "analysis_reference_time" in ar_cols
+        assert "source_content_digest" in ar_cols
+        assert "worker_id" in ar_cols
+        assert "leased_until" in ar_cols
+        assert "lease_version" in ar_cols
+        assert "retry_count" in ar_cols
+        assert "max_retries" in ar_cols
+        assert "metrics_payload" in ar_cols
+        assert "coverage_summary" in ar_cols
+        assert "confidence_summary" in ar_cols
+        assert "rule_interpretations" in ar_cols
+
+        # Verify partial unique index
+        cursor.execute("PRAGMA index_list(analysis_runs);")
+        indexes = {idx[1] for idx in cursor.fetchall()}
+        assert "uq_analysis_runs_active_repo" in indexes
+
+        # Verify analysis_run_attempts table
+        cursor.execute("PRAGMA table_info(analysis_run_attempts);")
+        att_cols = {r[1]: r for r in cursor.fetchall()}
+        assert "outcome" in att_cols
+        assert "analysis_run_id" in att_cols
+    finally:
+        conn.close()
+
+    # Step 2: Downgrade to 002
+    command.downgrade(alembic_cfg, "002_add_dynamic_tables")
+
+    conn = sqlite3.connect(staging_file)
+    try:
+        cursor = conn.cursor()
+        cursor.execute("SELECT version_num FROM alembic_version;")
+        assert cursor.fetchone()[0] == "002_add_dynamic_tables"
+
+        cursor.execute("PRAGMA table_info(analysis_runs);")
+        ar_cols_down = {r[1]: r for r in cursor.fetchall()}
+        assert "requested_source_revision" not in ar_cols_down
+
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='analysis_run_attempts';")
+        assert len(cursor.fetchall()) == 0
+    finally:
+        conn.close()
+
+    # Step 3: Re-upgrade to 003 head
+    command.upgrade(alembic_cfg, "head")
+
+    conn = sqlite3.connect(staging_file)
+    try:
+        cursor = conn.cursor()
+        cursor.execute("SELECT version_num FROM alembic_version;")
+        assert cursor.fetchone()[0] == "003_add_phase_c_analytics_infrastructure"
+
+        cursor.execute("SELECT count(*) FROM issues;")
+        assert cursor.fetchone()[0] == 2328
+    finally:
+        conn.close()
+
