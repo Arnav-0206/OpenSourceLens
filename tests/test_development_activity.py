@@ -81,6 +81,9 @@ class TestBenchmarkRepositoriesEmptyCommitHandling:
                 assert result.metrics["summary"]["total_commits"] == 0
                 assert result.metrics["velocity"]["trailing_4w_velocity"] == 0.0
                 assert result.metrics["releases"]["total_releases"] == 0
+                assert result.metrics["consistency"]["consistency_classification"] == "insufficient_history"
+                assert result.metrics["anomalies"]["status"] == "insufficient_history"
+                assert result.metrics["change_points"]["justified"] is False
                 assert any(r.rule_id == "RULE-ACT-EMPTY" for r in result.rules)
 
 
@@ -432,8 +435,12 @@ class TestQueueAndSnapshotIntegration:
 
         in_memory_db.refresh(claimed_run)
         assert claimed_run.status == "completed"
-        assert claimed_run.metrics_payload["development_activity"]["summary"]["total_commits"] == 6
+        dev_act = claimed_run.metrics_payload["development_activity"]
+        assert dev_act["summary"]["total_commits"] == 6
+        assert "consistency" in dev_act and "rolling_statistics" in dev_act
+        assert "anomalies" in dev_act and "change_points" in dev_act
         assert claimed_run.coverage_summary["development_activity"]["status"] == "sufficient"
+        assert "subdomains" in claimed_run.coverage_summary["development_activity"]["details"]
 
 
 class TestAdvancedActivityScenarios:
@@ -918,5 +925,323 @@ class TestTrailingVelocityWindowRefinement:
         accel_rule = next(r for r in res_accel.rules if r.rule_id == "RULE-ACT-002")
         assert accel_rule.severity == "positive"
         assert "Accelerating Velocity" in accel_rule.finding
+
+
+def _seed_completed_weekly_commits(
+    db: Session,
+    repo_id: int,
+    ref_time_utc: datetime,
+    weekly_counts: list[int],
+    sha_prefix: str = "c22",
+) -> None:
+    """Seed exact commit counts per completed Monday-Sunday UTC week strictly prior to ref_time's week."""
+    current_week_monday = datetime(
+        ref_time_utc.year, ref_time_utc.month, ref_time_utc.day, 0, 0, 0, tzinfo=timezone.utc
+    ) - timedelta(days=ref_time_utc.weekday())
+    first_week_monday = current_week_monday - timedelta(weeks=len(weekly_counts))
+
+    db.add(Repository(id=repo_id, repo_name=f"c22/{sha_prefix}", owner="c22", name=sha_prefix, analytics_source_revision=1))
+    commit_seq = 0
+    for week_idx, count in enumerate(weekly_counts):
+        week_base = first_week_monday + timedelta(weeks=week_idx, days=1, hours=12)  # Tuesday 12:00 UTC
+        for j in range(count):
+            db.add(
+                Commit(
+                    repository_id=repo_id,
+                    sha=f"sha_{sha_prefix}_{repo_id}_{commit_seq}",
+                    author_date=week_base + timedelta(minutes=j * 10),
+                    author_login="c22_dev",
+                )
+            )
+            commit_seq += 1
+    db.commit()
+
+
+class TestActivityConsistencyRollingAnomaliesC22:
+    """Focused tests for C.2.2 consistency, rolling statistics, anomaly detection, and change-point detection."""
+
+    def test_normal_steady_activity_and_rolling_windows(self, in_memory_db):
+        """Steady ~10 commits/week yields consistent_steady, accurate 4w/12w rolling stats, and 0 anomalies."""
+        calc = DevelopmentActivityCalculator()
+        # Monday 2026-11-09 02:00 UTC (incomplete current week with 0 commits)
+        ref_time = datetime(2026, 11, 9, 2, 0, 0, tzinfo=timezone.utc)
+        pattern = [9, 10, 11, 10, 10, 9, 11, 10, 10, 11, 9, 10, 10, 11]  # 14 completed weeks
+        _seed_completed_weekly_commits(in_memory_db, 5001, ref_time, pattern, "steady")
+
+        res = calc.calculate(5001, in_memory_db, ref_time, snapshot_revision=1)
+        cons = res.metrics["consistency"]
+        roll = res.metrics["rolling_statistics"]
+        anom = res.metrics["anomalies"]
+        cp = res.metrics["change_points"]
+
+        assert cons["status"] == "sufficient"
+        assert cons["completed_weeks_count"] == 14
+        assert cons["consistency_classification"] == "consistent_steady"
+        assert cons["active_week_ratio"] == 1.0
+        assert cons["coefficient_of_variation"] < 0.15
+
+        # Rolling stats must exclude incomplete Monday 02:00 week and flag warmup windows cleanly
+        assert roll["status"] == "sufficient"
+        assert roll["incomplete_current_week"]["week_start"] == "2026-11-09"
+        assert roll["incomplete_current_week"]["commit_count"] == 0
+        assert roll["incomplete_current_week"]["excluded_from_baseline"] is True
+        assert roll["series"][0]["window_4w_complete"] is False
+        assert roll["series"][0]["rolling_4w_mean"] is None
+        assert roll["series"][3]["window_4w_complete"] is True
+        assert roll["series"][3]["rolling_4w_mean"] == 10.0  # (9+10+11+10)/4
+        assert roll["latest"]["window_12w_complete"] is True
+        assert roll["latest"]["rolling_4w_mean"] == 10.0  # (9+10+10+11)/4
+        assert roll["latest"]["rolling_12w_mean"] == 10.17  # 122/12
+
+        # Zero false anomalies or false structural breaks
+        assert anom["status"] == "analyzed"
+        assert anom["total_anomalies_detected"] == 0
+        assert anom["ongoing_partial_week_surge"] is None
+        assert cp["status"] == "no_significant_shift"
+        assert cp["detected_change_points"] == []
+
+        assert any(r.rule_id == "RULE-ACT-004" and r.severity == "positive" for r in res.rules)
+        assert not any(r.rule_id == "RULE-ACT-005" for r in res.rules)
+        assert not any(r.rule_id == "RULE-ACT-006" for r in res.rules)
+
+    def test_distinguish_consistently_low_from_sparse_and_zero_mean(self, in_memory_db):
+        """Consistently low (1/wk) is separated from sparse zero-heavy series; neither triggers false anomalies."""
+        calc = DevelopmentActivityCalculator()
+        ref_time = datetime(2026, 11, 9, 12, 0, 0, tzinfo=timezone.utc)
+
+        # 1. Consistently low: 1 commit every week for 10 completed weeks
+        _seed_completed_weekly_commits(in_memory_db, 5002, ref_time, [1] * 10, "low_steady")
+        res_low = calc.calculate(5002, in_memory_db, ref_time, snapshot_revision=1)
+        assert res_low.metrics["consistency"]["consistency_classification"] == "consistently_low"
+        assert res_low.metrics["consistency"]["coefficient_of_variation"] == 0.0
+        assert res_low.metrics["anomalies"]["total_anomalies_detected"] == 0
+        low_rule = next(r for r in res_low.rules if r.rule_id == "RULE-ACT-004")
+        assert low_rule.severity == "info"
+        assert "Consistently Low Activity" in low_rule.finding
+
+        # 2. Sparse zero-heavy series: occasional commits across 16 completed weeks (active ratio = 4/16 = 0.25)
+        sparse_pattern = [1, 0, 0, 0, 1, 0, 0, 0, 2, 0, 0, 0, 1, 0, 0, 0]
+        _seed_completed_weekly_commits(in_memory_db, 5003, ref_time, sparse_pattern, "sparse")
+        res_sparse = calc.calculate(5003, in_memory_db, ref_time, snapshot_revision=1)
+        assert res_sparse.metrics["consistency"]["consistency_classification"] == "sparse_intermittent"
+        assert res_sparse.metrics["consistency"]["zero_week_ratio"] == 0.75
+        assert res_sparse.metrics["anomalies"]["total_anomalies_detected"] == 0
+        assert res_sparse.metrics["change_points"]["justified"] is False
+
+        # 3. Zero-mean completed weeks (commits exist only in current in-progress week -> CV safely None)
+        db_repo = Repository(id=5004, repo_name="c22/zero_completed", owner="c22", name="zero_completed", analytics_source_revision=1)
+        in_memory_db.add(db_repo)
+        in_memory_db.add(Commit(repository_id=5004, sha="sha_cur_week_only", author_date=ref_time - timedelta(hours=1), author_login="dev"))
+        in_memory_db.commit()
+        res_zero = calc.calculate(5004, in_memory_db, ref_time, snapshot_revision=1)
+        assert res_zero.metrics["consistency"]["completed_weeks_count"] == 0
+        assert res_zero.metrics["consistency"]["coefficient_of_variation"] is None
+
+    def test_sudden_spike_detected_and_separated_from_change_point(self, in_memory_db):
+        """A single-week surge (35 vs ~5.5) triggers MAD anomaly with evidence, without false change-point."""
+        calc = DevelopmentActivityCalculator()
+        ref_time = datetime(2026, 11, 9, 12, 0, 0, tzinfo=timezone.utc)
+        # Non-zero MAD baseline (4..8, median ~5.5, MAD >= 1.0) followed by isolated spike 35 at week index 10
+        pattern = [4, 7, 5, 6, 4, 8, 5, 6, 4, 7, 35, 5, 6, 4, 7, 5]
+        _seed_completed_weekly_commits(in_memory_db, 5005, ref_time, pattern, "spike")
+
+        res = calc.calculate(5005, in_memory_db, ref_time, snapshot_revision=1)
+        anom = res.metrics["anomalies"]
+        cp = res.metrics["change_points"]
+
+        assert anom["status"] == "analyzed"
+        assert anom["total_anomalies_detected"] == 1
+        assert anom["high_activity_anomalies_count"] == 1
+        assert anom["low_activity_anomalies_count"] == 0
+
+        item = anom["items"][0]
+        assert item["direction"] == "high"
+        assert item["observed_commits"] == 35
+        assert item["period_status"] == "completed_week"
+        assert item["method"] == "rolling_robust_mad"
+        assert 5.0 <= item["baseline"]["median"] <= 6.0
+        assert item["deviation"]["score"] >= 10.0
+        assert "week_start" in item and "confidence" in item and "limitations" in item
+
+        # Single burst week must NOT register as a permanent structural regime shift
+        assert cp["status"] == "no_significant_shift"
+        assert cp["detected_change_points"] == []
+        assert any(r.rule_id == "RULE-ACT-005" for r in res.rules)
+        assert not any(r.rule_id == "RULE-ACT-006" for r in res.rules)
+
+        # Also verify zero-MAD with non-zero stdev selects rolling_zscore fallback cleanly
+        z_pattern = [5, 6, 5, 5, 6, 5, 5, 6, 5, 6, 30, 5]
+        _seed_completed_weekly_commits(in_memory_db, 5011, ref_time, z_pattern, "zscore_fb")
+        res_z = calc.calculate(5011, in_memory_db, ref_time, snapshot_revision=1)
+        assert res_z.metrics["anomalies"]["total_anomalies_detected"] == 1
+        assert res_z.metrics["anomalies"]["items"][0]["method"] == "rolling_zscore"
+
+    def test_sudden_drop_detected_and_incomplete_monday_not_misflagged(self, in_memory_db):
+        """Drop to 0 inside an active baseline triggers drop anomaly; empty incomplete current week does not."""
+        calc = DevelopmentActivityCalculator()
+        # Monday 00:30 UTC (only 30 mins elapsed in current week -> 0 commits so far)
+        ref_time = datetime(2026, 11, 9, 0, 30, 0, tzinfo=timezone.utc)
+        # Drop happens at completed week index 9 (0 vs 8-10 baseline), recovering at week 10-11
+        pattern = [9, 8, 10, 9, 8, 9, 10, 8, 9, 0, 9, 8]
+        _seed_completed_weekly_commits(in_memory_db, 5006, ref_time, pattern, "drop")
+
+        res = calc.calculate(5006, in_memory_db, ref_time, snapshot_revision=1)
+        anom = res.metrics["anomalies"]
+
+        assert anom["total_anomalies_detected"] == 1
+        assert anom["low_activity_anomalies_count"] == 1
+        item = anom["items"][0]
+        assert item["direction"] == "low"
+        assert item["observed_commits"] == 0
+        assert item["deviation"]["score"] <= -2.5
+        assert item["baseline"]["median"] >= 8.0
+        assert any(r.rule_id == "RULE-ACT-005" and r.severity == "warning" for r in res.rules)
+
+    def test_constant_baseline_poisson_fallback_and_ongoing_partial_week_surge(self, in_memory_db):
+        """Zero-MAD constant series uses Poisson dispersion floor and avoids +1 false alarms while catching surges."""
+        calc = DevelopmentActivityCalculator()
+        ref_time = datetime(2026, 11, 11, 12, 0, 0, tzinfo=timezone.utc)  # Wednesday of current week
+        # Strictly constant baseline of 6 commits/wk -> MAD=0, stdev=0; week 8 has routine +1 (7),
+        # followed by 8 constant weeks [6]*8, and current partial week (Mon-Wed) has 25 commits!
+        pattern = [6] * 8 + [7] + [6] * 8
+        _seed_completed_weekly_commits(in_memory_db, 5007, ref_time, pattern, "poisson")
+
+        # Add 25 commits inside ongoing Wednesday current week
+        for i in range(25):
+            in_memory_db.add(
+                Commit(
+                    repository_id=5007,
+                    sha=f"sha_partial_surge_{i}",
+                    author_date=ref_time - timedelta(hours=1 + i),
+                    author_login="c22_dev",
+                )
+            )
+        in_memory_db.commit()
+
+        res = calc.calculate(5007, in_memory_db, ref_time, snapshot_revision=1)
+        anom = res.metrics["anomalies"]
+
+        # +1 jitter week (7 vs 6) is NOT flagged as an anomaly
+        assert anom["total_anomalies_detected"] == 0
+        # Ongoing 25-commit surge inside Wednesday partial week IS flagged transparently
+        surge = anom["ongoing_partial_week_surge"]
+        assert surge is not None
+        assert surge["direction"] == "high"
+        assert surge["period_status"] == "partial_current_week"
+        assert surge["method"] == "rolling_poisson_floored"
+        assert surge["observed_commits"] == 25
+
+    def test_structural_change_points_step_increase_and_decrease(self, in_memory_db):
+        """CUSUM/SSB split + Mann-Whitney U identifies sustained regime shifts accurately."""
+        calc = DevelopmentActivityCalculator()
+        ref_time = datetime(2026, 11, 9, 12, 0, 0, tzinfo=timezone.utc)
+
+        # 1. Step Increase: 8 weeks at 2-3/wk -> 8 weeks at 18-22/wk
+        inc_pattern = [2, 3, 2, 3, 2, 3, 2, 3, 18, 20, 19, 22, 20, 18, 21, 19]
+        _seed_completed_weekly_commits(in_memory_db, 5008, ref_time, inc_pattern, "cp_inc")
+        res_inc = calc.calculate(5008, in_memory_db, ref_time, snapshot_revision=1)
+        cp_inc = res_inc.metrics["change_points"]
+        assert cp_inc["status"] == "detected"
+        assert cp_inc["justified"] is True
+        assert len(cp_inc["detected_change_points"]) == 1
+        rec_inc = cp_inc["detected_change_points"][0]
+        assert rec_inc["direction"] == "step_increase"
+        assert rec_inc["before_segment"]["weeks"] == 8
+        assert rec_inc["after_segment"]["weeks"] == 8
+        assert rec_inc["statistics"]["mann_whitney_u_pvalue"] <= 0.01
+        assert any(r.rule_id == "RULE-ACT-006" and r.severity == "positive" for r in res_inc.rules)
+
+        # 2. Step Decrease: 8 weeks at 18-22/wk -> 8 weeks at 1-2/wk
+        dec_pattern = [20, 19, 21, 18, 22, 19, 20, 18, 2, 1, 2, 1, 2, 1, 2, 1]
+        _seed_completed_weekly_commits(in_memory_db, 5009, ref_time, dec_pattern, "cp_dec")
+        res_dec = calc.calculate(5009, in_memory_db, ref_time, snapshot_revision=1)
+        cp_dec = res_dec.metrics["change_points"]
+        assert cp_dec["status"] == "detected"
+        rec_dec = cp_dec["detected_change_points"][0]
+        assert rec_dec["direction"] == "step_decrease"
+        assert rec_dec["before_segment"]["median_weekly_commits"] >= 18.0
+        assert rec_dec["after_segment"]["median_weekly_commits"] <= 2.0
+        assert any(r.rule_id == "RULE-ACT-006" and r.severity == "warning" for r in res_dec.rules)
+
+    def test_insufficient_samples_and_reference_time_future_exclusion(self, in_memory_db):
+        """Short histories defer statistical claims cleanly; future commits beyond ref_time are excluded."""
+        calc = DevelopmentActivityCalculator()
+        tz_plus5 = timezone(timedelta(hours=5))
+        # Frozen reference time in +05:00 -> converts to 2026-11-09 07:00 UTC (Monday)
+        ref_time_tz = datetime(2026, 11, 9, 12, 0, 0, tzinfo=tz_plus5)
+        ref_utc = ref_time_tz.astimezone(timezone.utc)
+
+        # Only 3 completed weeks (insufficient for consistency, rolling 4w/12w, anomalies, change-points)
+        _seed_completed_weekly_commits(in_memory_db, 5010, ref_utc, [4, 5, 4], "short_hist")
+        # Add future commits after ref_time (must never enter completed weeks or anomaly stats)
+        for i in range(40):
+            in_memory_db.add(
+                Commit(
+                    repository_id=5010,
+                    sha=f"sha_future_c22_{i}",
+                    author_date=ref_utc + timedelta(days=7, hours=i),
+                    author_login="c22_dev",
+                )
+            )
+        in_memory_db.commit()
+
+        res = calc.calculate(5010, in_memory_db, ref_time_tz, snapshot_revision=1)
+        assert res.metrics["summary"]["total_commits"] == 13
+        assert res.metrics["consistency"]["status"] == "insufficient"
+        assert res.metrics["consistency"]["consistency_classification"] == "insufficient_history"
+        assert res.metrics["rolling_statistics"]["status"] == "insufficient"
+        assert res.metrics["rolling_statistics"]["latest"]["window_4w_complete"] is False
+        assert res.metrics["rolling_statistics"]["latest"]["rolling_4w_mean"] is None
+        assert res.metrics["anomalies"]["status"] == "insufficient_history"
+        assert res.metrics["change_points"]["status"] == "insufficient_history"
+        assert res.metrics["change_points"]["justified"] is False
+
+    def test_highly_volatile_classification_and_queue_json_persistence(self, in_memory_db):
+        """Verify highly_volatile regime detection and full C.2.2 JSON publication through AnalyticsJobQueue."""
+        import json
+
+        calc = DevelopmentActivityCalculator()
+        queue = AnalyticsJobQueue()
+        ref_time = datetime(2026, 11, 9, 12, 0, 0, tzinfo=timezone.utc)
+
+        # Highly volatile alternating bursts across 12 completed weeks
+        volatile_pattern = [1, 2, 30, 1, 2, 35, 1, 1, 28, 2, 1, 25]
+        _seed_completed_weekly_commits(in_memory_db, 5012, ref_time, volatile_pattern, "volatile")
+
+        run, _ = queue.enqueue_analysis(repo_id=5012, db=in_memory_db)
+        claimed_run, attempt = queue.claim_job(worker_id="c22_worker", db=in_memory_db)
+
+        res = calc.calculate(5012, in_memory_db, ref_time, snapshot_revision=claimed_run.requested_source_revision)
+        assert res.metrics["consistency"]["consistency_classification"] == "highly_volatile"
+        assert res.metrics["consistency"]["coefficient_of_variation"] > 1.0
+        assert any(r.rule_id == "RULE-ACT-004" and r.severity == "warning" for r in res.rules)
+
+        # Ensure strict JSON serializability and full lifecycle persistence via AnalyticsJobQueue
+        json.dumps(res.metrics)
+        published = queue.publish_and_finalize(
+            run_id=claimed_run.id,
+            attempt_id=attempt.id,
+            worker_id="c22_worker",
+            expected_lease_version=claimed_run.lease_version,
+            attempt_number=attempt.attempt_number,
+            snapshot_revision=claimed_run.requested_source_revision,
+            actual_methodology=CURRENT_METHODOLOGY_VERSION,
+            reference_time=ref_time,
+            metrics_payload={"development_activity": res.metrics},
+            coverage_summary={"development_activity": res.coverage.model_dump()},
+            confidence_summary={
+                "score": round(1.0 - res.confidence_penalty, 3),
+                "band": "high",
+                "penalties": res.details.get("penalties", []),
+            },
+            rule_interpretations=[r.model_dump() for r in res.rules],
+            db=in_memory_db,
+        )
+        assert published is True
+        in_memory_db.refresh(claimed_run)
+        assert claimed_run.status == "completed"
+        assert claimed_run.metrics_payload["development_activity"]["consistency"]["consistency_classification"] == "highly_volatile"
+
+
 
 

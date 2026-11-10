@@ -1,13 +1,16 @@
 """Development Activity Intelligence Module for OpenSourceLens.
 
-Implements C.2.1 Activity Aggregation adhering to BaseMetricCalculator:
+Implements C.2.1 Activity Aggregation & C.2.2 Consistency, Rolling Statistics, Anomaly & Change-Point Detection:
 - Daily and weekly commit activity time-series aggregation.
 - Continuous zero-filled calendar intervals.
-- Multi-horizon weekly commit velocity (trailing 4w, 12w, 52w, overall).
+- Multi-horizon weekly commit velocity (exact rolling 28d/84d/364d windows, overall).
 - Contributor activity & active author aggregation.
 - Release cadence, interval statistics (mean, median, min, max, stdev), and classification.
-- Robust timezone normalization to UTC.
-- Complete coverage assessment and deterministic rule-based diagnostics.
+- Weekly activity consistency (CV, IQR, MAD, active week ratio, regime classification).
+- Rolling weekly statistics (4w/12w SMA, stdev, median, 4w EWMA) excluding incomplete current week.
+- Adaptive anomaly detection (MAD modified z-score with z-score/Poisson dispersion fallbacks).
+- Justified structural change-point detection (CUSUM/SSB split validated with Mann-Whitney U).
+- Robust timezone normalization to UTC and deterministic rule-based diagnostics.
 """
 
 from __future__ import annotations
@@ -40,6 +43,21 @@ def _get_week_start_utc(dt: datetime) -> datetime:
     utc_dt = _ensure_utc(dt)
     monday = utc_dt - timedelta(days=utc_dt.weekday())
     return datetime(monday.year, monday.month, monday.day, 0, 0, 0, tzinfo=timezone.utc)
+
+
+def _linear_percentile(sorted_vals: List[float], q: float) -> float:
+    """Compute linear-interpolated quantile q in [0.0, 1.0] on non-empty sorted values."""
+    if not sorted_vals:
+        return 0.0
+    if len(sorted_vals) == 1:
+        return float(sorted_vals[0])
+    pos = q * (len(sorted_vals) - 1)
+    lo = int(math.floor(pos))
+    hi = int(math.ceil(pos))
+    if lo == hi:
+        return float(sorted_vals[lo])
+    frac = pos - lo
+    return float(sorted_vals[lo] * (1.0 - frac) + sorted_vals[hi] * frac)
 
 
 class DevelopmentActivityCalculator(BaseMetricCalculator):
@@ -262,6 +280,29 @@ class DevelopmentActivityCalculator(BaseMetricCalculator):
         # 8. Release Cadence Calculations
         release_metrics = self._calculate_release_cadence(valid_releases, ref_time)
 
+        # 8b. C.2.2 Consistency, Rolling Statistics, Anomaly Detection, Change-Point Analysis
+        # Strictly exclude the ongoing calendar week [last_week, ref_time] from completed-week
+        # baseline statistics to avoid partial-week day-of-week downward bias.
+        completed_weeks = weekly_time_series[:-1] if len(weekly_time_series) >= 1 else []
+        current_week_entry = weekly_time_series[-1] if weekly_time_series else {
+            "week_start": last_week.strftime("%Y-%m-%d"),
+            "commit_count": 0,
+        }
+        elapsed_current_week_days = round(
+            max(0.0, (ref_time - last_week).total_seconds() / 86400.0), 2
+        )
+        partial_current_week = {
+            "week_start": current_week_entry["week_start"],
+            "commit_count": current_week_entry["commit_count"],
+            "elapsed_days": elapsed_current_week_days,
+            "excluded_from_baseline": True,
+        }
+
+        consistency_metrics = self._calculate_consistency(completed_weeks)
+        rolling_stats = self._calculate_rolling_statistics(completed_weeks, partial_current_week)
+        anomaly_results = self._detect_anomalies(completed_weeks, consistency_metrics, partial_current_week)
+        change_point_results = self._detect_change_points(completed_weeks)
+
         # 9. Coverage and Confidence Evaluation
         min_sample = 5
         span_days_threshold = 14
@@ -312,6 +353,13 @@ class DevelopmentActivityCalculator(BaseMetricCalculator):
                 "total_span_days": total_span_days,
                 "total_releases": len(valid_releases),
                 "total_authors": len(all_authors),
+                "completed_weeks_count": len(completed_weeks),
+                "subdomains": {
+                    "consistency": consistency_metrics["status"],
+                    "rolling_statistics": rolling_stats["status"],
+                    "anomalies": anomaly_results["status"],
+                    "change_points": change_point_results["status"],
+                },
             },
         )
 
@@ -439,6 +487,15 @@ class DevelopmentActivityCalculator(BaseMetricCalculator):
                 )
             )
 
+        # Rule 4–6: Consistency, Anomalies & Structural Change-Points (C.2.2)
+        rules.extend(
+            self._build_c22_rules(
+                consistency_metrics=consistency_metrics,
+                anomaly_results=anomaly_results,
+                change_point_results=change_point_results,
+            )
+        )
+
         # Assemble Full Metrics Dictionary
         metrics: Dict[str, Any] = {
             "summary": {
@@ -468,6 +525,10 @@ class DevelopmentActivityCalculator(BaseMetricCalculator):
                 "total_contributors_recorded": contributors_count,
             },
             "releases": release_metrics,
+            "consistency": consistency_metrics,
+            "rolling_statistics": rolling_stats,
+            "anomalies": anomaly_results,
+            "change_points": change_point_results,
             "weekly_time_series": weekly_time_series,
             "daily_time_series_90d": daily_time_series,
         }
@@ -574,6 +635,17 @@ class DevelopmentActivityCalculator(BaseMetricCalculator):
     ) -> CalculationResult:
         """Construct deterministic output when repository has zero observed commits."""
         release_metrics = self._calculate_release_cadence(releases_rows, ref_time)
+        last_week = _get_week_start_utc(ref_time)
+        partial_current_week = {
+            "week_start": last_week.strftime("%Y-%m-%d"),
+            "commit_count": 0,
+            "elapsed_days": round(max(0.0, (ref_time - last_week).total_seconds() / 86400.0), 2),
+            "excluded_from_baseline": True,
+        }
+        consistency_metrics = self._calculate_consistency([])
+        rolling_stats = self._calculate_rolling_statistics([], partial_current_week)
+        anomaly_results = self._detect_anomalies([], consistency_metrics, partial_current_week)
+        change_point_results = self._detect_change_points([])
 
         metrics: Dict[str, Any] = {
             "summary": {
@@ -603,6 +675,10 @@ class DevelopmentActivityCalculator(BaseMetricCalculator):
                 "total_contributors_recorded": contributors_count,
             },
             "releases": release_metrics,
+            "consistency": consistency_metrics,
+            "rolling_statistics": rolling_stats,
+            "anomalies": anomaly_results,
+            "change_points": change_point_results,
             "weekly_time_series": [],
             "daily_time_series_90d": [],
         }
@@ -612,7 +688,17 @@ class DevelopmentActivityCalculator(BaseMetricCalculator):
             status="empty",
             sample_size=0,
             min_sample_required=5,
-            details={"reason": "No commits found in repository snapshot", "total_commits": 0},
+            details={
+                "reason": "No commits found in repository snapshot",
+                "total_commits": 0,
+                "completed_weeks_count": 0,
+                "subdomains": {
+                    "consistency": consistency_metrics["status"],
+                    "rolling_statistics": rolling_stats["status"],
+                    "anomalies": anomaly_results["status"],
+                    "change_points": change_point_results["status"],
+                },
+            },
         )
 
         rules = [
@@ -643,3 +729,641 @@ class DevelopmentActivityCalculator(BaseMetricCalculator):
                 "snapshot_revision": snapshot_revision,
             },
         )
+
+    def _calculate_consistency(
+        self,
+        completed_weeks: List[Dict[str, Any]],
+    ) -> Dict[str, Any]:
+        """Measure week-to-week commit consistency and classify activity regularity."""
+        k_weeks = len(completed_weeks)
+        if k_weeks == 0:
+            return {
+                "status": "insufficient",
+                "completed_weeks_count": 0,
+                "incomplete_current_week_excluded": True,
+                "mean_weekly_commits": None,
+                "median_weekly_commits": None,
+                "stdev_weekly_commits": None,
+                "iqr_weekly_commits": None,
+                "mad_weekly_commits": None,
+                "coefficient_of_variation": None,
+                "active_week_ratio": None,
+                "zero_week_ratio": None,
+                "consistency_classification": "insufficient_history",
+                "limitations": "Zero completed calendar weeks observed prior to the current partial week.",
+            }
+
+        counts = [int(w["commit_count"]) for w in completed_weeks]
+        total_completed_commits = sum(counts)
+        active_weeks = sum(1 for c in counts if c > 0)
+        alpha_raw = active_weeks / float(k_weeks)
+        active_ratio = round(alpha_raw, 4)
+        zero_ratio = round(1.0 - alpha_raw, 4)
+
+        if k_weeks == 1:
+            return {
+                "status": "insufficient",
+                "completed_weeks_count": 1,
+                "incomplete_current_week_excluded": True,
+                "mean_weekly_commits": round(float(counts[0]), 2),
+                "median_weekly_commits": round(float(counts[0]), 2),
+                "stdev_weekly_commits": None,
+                "iqr_weekly_commits": None,
+                "mad_weekly_commits": None,
+                "coefficient_of_variation": None,
+                "active_week_ratio": active_ratio,
+                "zero_week_ratio": zero_ratio,
+                "consistency_classification": "insufficient_history",
+                "limitations": "At least 4 completed weeks and 5 commits are required to evaluate weekly consistency.",
+            }
+
+        mean_val = statistics.mean(counts)
+        median_val = statistics.median(counts)
+        stdev_val = statistics.stdev(counts)
+        sorted_counts = sorted(float(c) for c in counts)
+        iqr_val = round(_linear_percentile(sorted_counts, 0.75) - _linear_percentile(sorted_counts, 0.25), 2)
+        mad_val = round(statistics.median([abs(c - median_val) for c in counts]), 2)
+        cv_raw = (stdev_val / mean_val) if mean_val > 0.0 else None
+        cv_rounded = round(cv_raw, 4) if cv_raw is not None else None
+
+        if k_weeks < 4 or total_completed_commits < 5:
+            status = "insufficient"
+            classification = "insufficient_history"
+            limitations: Optional[str] = (
+                f"Observed {k_weeks} completed weeks and {total_completed_commits} completed-week commits; "
+                "minimum 4 completed weeks and 5 commits required for consistency classification."
+            )
+        else:
+            status = "limited" if k_weeks < 8 else "sufficient"
+            limitations = (
+                "Limited historical span (< 8 completed weeks); variability estimates may stabilize with more weeks."
+                if k_weeks < 8
+                else None
+            )
+
+            # Classify volume + regularity without mislabeling steady low volume as volatile or anomalous
+            if mean_val == 0.0 or alpha_raw < 0.5 or (mean_val < 1.0 and (cv_raw is None or cv_raw > 1.0)):
+                classification = "sparse_intermittent"
+            elif mean_val < 2.0 and cv_raw is not None and cv_raw <= 0.75:
+                classification = "consistently_low"
+            elif alpha_raw >= 0.75 and mean_val >= 2.0 and cv_raw is not None and cv_raw <= 0.5:
+                classification = "consistent_steady"
+            elif cv_raw is not None and cv_raw <= 1.0:
+                classification = "moderately_variable"
+            else:
+                classification = "highly_volatile"
+
+        return {
+            "status": status,
+            "completed_weeks_count": k_weeks,
+            "incomplete_current_week_excluded": True,
+            "mean_weekly_commits": round(mean_val, 2),
+            "median_weekly_commits": round(float(median_val), 2),
+            "stdev_weekly_commits": round(stdev_val, 2),
+            "iqr_weekly_commits": iqr_val,
+            "mad_weekly_commits": mad_val,
+            "coefficient_of_variation": cv_rounded,
+            "active_week_ratio": active_ratio,
+            "zero_week_ratio": zero_ratio,
+            "consistency_classification": classification,
+            "limitations": limitations,
+        }
+
+    def _calculate_rolling_statistics(
+        self,
+        completed_weeks: List[Dict[str, Any]],
+        partial_current_week: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        """Compute rolling 4w/12w means, stdevs, medians, and 4w EWMA over completed calendar weeks."""
+        k_weeks = len(completed_weeks)
+        ewma_span = 4
+        ewma_alpha = round(2.0 / (ewma_span + 1.0), 4)
+
+        if k_weeks == 0:
+            return {
+                "status": "insufficient",
+                "window_sizes_weeks": [4, 12],
+                "ewma_span_weeks": ewma_span,
+                "ewma_alpha": ewma_alpha,
+                "completed_weeks_count": 0,
+                "incomplete_current_week": partial_current_week,
+                "latest": {
+                    "week_start": None,
+                    "rolling_4w_mean": None,
+                    "rolling_4w_stdev": None,
+                    "rolling_4w_median": None,
+                    "rolling_12w_mean": None,
+                    "rolling_12w_stdev": None,
+                    "rolling_12w_median": None,
+                    "ewma_4w": None,
+                    "window_4w_complete": False,
+                    "window_12w_complete": False,
+                },
+                "series": [],
+                "limitations": "No completed calendar weeks available prior to analysis_reference_time week.",
+            }
+
+        counts = [int(w["commit_count"]) for w in completed_weeks]
+        series: List[Dict[str, Any]] = []
+        ewma_val = float(counts[0])
+
+        for i in range(k_weeks):
+            if i > 0:
+                ewma_val = ewma_alpha * float(counts[i]) + (1.0 - ewma_alpha) * ewma_val
+
+            w4_complete = i >= 3
+            w12_complete = i >= 11
+
+            r4_mean = r4_stdev = r4_median = None
+            if w4_complete:
+                slice_4 = counts[i - 3 : i + 1]
+                r4_mean = round(statistics.mean(slice_4), 2)
+                r4_stdev = round(statistics.stdev(slice_4), 2)
+                r4_median = round(float(statistics.median(slice_4)), 2)
+
+            r12_mean = r12_stdev = r12_median = None
+            if w12_complete:
+                slice_12 = counts[i - 11 : i + 1]
+                r12_mean = round(statistics.mean(slice_12), 2)
+                r12_stdev = round(statistics.stdev(slice_12), 2)
+                r12_median = round(float(statistics.median(slice_12)), 2)
+
+            series.append({
+                "week_start": completed_weeks[i]["week_start"],
+                "commit_count": counts[i],
+                "rolling_4w_mean": r4_mean,
+                "rolling_4w_stdev": r4_stdev,
+                "rolling_4w_median": r4_median,
+                "rolling_12w_mean": r12_mean,
+                "rolling_12w_stdev": r12_stdev,
+                "rolling_12w_median": r12_median,
+                "ewma_4w": round(ewma_val, 2),
+                "window_4w_complete": w4_complete,
+                "window_12w_complete": w12_complete,
+            })
+
+        status = "insufficient" if k_weeks < 4 else ("limited" if k_weeks < 12 else "sufficient")
+        limitations: Optional[str] = None
+        if k_weeks < 4:
+            limitations = f"Only {k_weeks} completed weeks observed; 4-week and 12-week rolling windows are incomplete."
+        elif k_weeks < 12:
+            limitations = f"Only {k_weeks} completed weeks observed; 12-week rolling statistics require 12 full weeks."
+
+        # Retain trailing 104 completed weeks in payload while keeping full-history EWMA warmup
+        bounded_series = series[-104:] if len(series) > 104 else series
+
+        return {
+            "status": status,
+            "window_sizes_weeks": [4, 12],
+            "ewma_span_weeks": ewma_span,
+            "ewma_alpha": ewma_alpha,
+            "completed_weeks_count": k_weeks,
+            "incomplete_current_week": partial_current_week,
+            "latest": bounded_series[-1],
+            "series": bounded_series,
+            "limitations": limitations,
+        }
+
+    def _evaluate_week_anomaly(
+        self,
+        observed: int,
+        baseline_vals: List[int],
+        week_start: str,
+        window_start: str,
+        window_end: str,
+        period_status: str,
+        allow_drop: bool,
+    ) -> Optional[Dict[str, Any]]:
+        """Evaluate a single week against its trailing prior baseline using robust MAD with safe fallbacks."""
+        b_median = float(statistics.median(baseline_vals))
+        b_mean = float(statistics.mean(baseline_vals))
+        mad = float(statistics.median([abs(x - b_median) for x in baseline_vals]))
+        b_stdev = float(statistics.stdev(baseline_vals)) if len(baseline_vals) >= 2 else 0.0
+
+        if mad > 0.0:
+            method = "rolling_robust_mad"
+            scale = max(1.4826 * mad, 1.0)
+            center = b_median
+            method_note = "Evaluated via rolling modified Z-score (1.4826 * MAD)."
+        elif b_stdev > 0.0:
+            method = "rolling_zscore"
+            scale = max(b_stdev, 1.0)
+            center = b_mean
+            method_note = "Zero baseline MAD; fell back to rolling sample Z-score with dispersion floor >= 1.0."
+        else:
+            method = "rolling_poisson_floored"
+            scale = max(1.0, math.sqrt(max(1.0, b_mean)))
+            center = b_mean
+            method_note = "Constant prior baseline (MAD=0, stdev=0); used Poisson dispersion floor sqrt(mean)."
+
+        score = (observed - center) / scale
+        direction: Optional[str] = None
+
+        # High surge criteria: statistical significance + absolute volume + >=2x baseline magnification
+        is_high = (
+            observed >= 6
+            and (observed - b_median) >= 4.0
+            and observed >= 2.0 * max(1.0, b_median)
+            and score >= 3.0
+        )
+        if is_high:
+            direction = "high"
+        elif allow_drop:
+            # Drop criteria: established active baseline (>=75% non-zero, median & mean >= 4) + >=75% reduction
+            nonzero_frac = sum(1 for x in baseline_vals if x > 0) / float(len(baseline_vals))
+            if nonzero_frac >= 0.75 and b_median >= 4.0 and b_mean >= 4.0:
+                if observed <= 0.25 * b_median and (
+                    score <= -2.5 or (observed == 0 and b_median >= 5.0 and score <= -2.0)
+                ):
+                    direction = "low"
+
+        if direction is None:
+            return None
+
+        is_high_conf = len(baseline_vals) == 8 and method == "rolling_robust_mad" and period_status == "completed_week"
+        confidence = "high" if is_high_conf else "moderate"
+
+        caveats = [method_note]
+        if len(baseline_vals) < 8:
+            caveats.append(f"Baseline used {len(baseline_vals)} prior weeks (<8 ideal).")
+        if period_status == "partial_current_week":
+            caveats.append("Detected within an in-progress partial week exceeding full-week spike threshold.")
+
+        return {
+            "week_start": week_start,
+            "period_status": period_status,
+            "direction": direction,
+            "observed_commits": observed,
+            "baseline": {
+                "window_weeks": len(baseline_vals),
+                "window_start": window_start,
+                "window_end": window_end,
+                "median": round(b_median, 2),
+                "mean": round(b_mean, 2),
+                "scale": round(scale, 3),
+            },
+            "deviation": {
+                "score": round(score, 2),
+                "absolute_delta": round(float(observed) - b_median, 2),
+                "ratio_to_baseline": round(float(observed) / b_median, 2) if b_median > 0.0 else None,
+            },
+            "method": method,
+            "confidence": confidence,
+            "limitations": " ".join(caveats),
+        }
+
+    def _detect_anomalies(
+        self,
+        completed_weeks: List[Dict[str, Any]],
+        consistency: Dict[str, Any],
+        partial_current_week: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        """Detect statistically anomalous weekly spikes/drops with sparsity and minimum-sample guards."""
+        k_weeks = len(completed_weeks)
+        counts = [int(w["commit_count"]) for w in completed_weeks]
+        total_completed = sum(counts)
+        active_weeks = sum(1 for c in counts if c > 0)
+        alpha = (active_weeks / float(k_weeks)) if k_weeks > 0 else 0.0
+
+        base_meta = {
+            "method_selection": "adaptive_rolling_robust_mad_with_zscore_poisson_fallback",
+            "min_completed_weeks_required": 8,
+            "min_completed_commits_required": 15,
+            "min_prior_baseline_weeks": 6,
+            "max_prior_baseline_weeks": 8,
+        }
+
+        if k_weeks < 8 or total_completed < 15:
+            return {
+                **base_meta,
+                "status": "insufficient_history",
+                "evaluated_weeks_count": 0,
+                "total_anomalies_detected": 0,
+                "high_activity_anomalies_count": 0,
+                "low_activity_anomalies_count": 0,
+                "ongoing_partial_week_surge": None,
+                "items": [],
+                "limitations": (
+                    f"Anomaly detection deferred: observed {k_weeks} completed weeks and {total_completed} commits "
+                    "(requires >= 8 completed weeks and >= 15 commits)."
+                ),
+            }
+
+        if alpha < 0.40 and active_weeks < 6:
+            return {
+                **base_meta,
+                "status": "skipped_sparse_series",
+                "evaluated_weeks_count": 0,
+                "total_anomalies_detected": 0,
+                "high_activity_anomalies_count": 0,
+                "low_activity_anomalies_count": 0,
+                "ongoing_partial_week_surge": None,
+                "items": [],
+                "limitations": (
+                    f"Series is sparse/zero-heavy (active_week_ratio={round(alpha, 2)}, active_weeks={active_weeks}); "
+                    "outlier flagging suppressed to prevent false positives on low-frequency intermittent activity."
+                ),
+            }
+
+        items: List[Dict[str, Any]] = []
+        min_prior = 6
+        max_prior = 8
+
+        for k in range(min_prior, k_weeks):
+            start_idx = max(0, k - max_prior)
+            baseline_slice = counts[start_idx:k]
+            hit = self._evaluate_week_anomaly(
+                observed=counts[k],
+                baseline_vals=baseline_slice,
+                week_start=completed_weeks[k]["week_start"],
+                window_start=completed_weeks[start_idx]["week_start"],
+                window_end=completed_weeks[k - 1]["week_start"],
+                period_status="completed_week",
+                allow_drop=True,
+            )
+            if hit is not None:
+                items.append(hit)
+
+        # Check whether the in-progress partial week already represents a statistically significant surge
+        # (partial weeks are never flagged as drop anomalies because elapsed days < 7.0)
+        tail_start = max(0, k_weeks - max_prior)
+        ongoing_surge = self._evaluate_week_anomaly(
+            observed=int(partial_current_week["commit_count"]),
+            baseline_vals=counts[tail_start:k_weeks],
+            week_start=partial_current_week["week_start"],
+            window_start=completed_weeks[tail_start]["week_start"],
+            window_end=completed_weeks[k_weeks - 1]["week_start"],
+            period_status="partial_current_week",
+            allow_drop=False,
+        )
+
+        high_count = sum(1 for item in items if item["direction"] == "high")
+        low_count = sum(1 for item in items if item["direction"] == "low")
+
+        return {
+            **base_meta,
+            "status": "analyzed",
+            "evaluated_weeks_count": k_weeks - min_prior,
+            "total_anomalies_detected": len(items),
+            "high_activity_anomalies_count": high_count,
+            "low_activity_anomalies_count": low_count,
+            "ongoing_partial_week_surge": ongoing_surge,
+            "items": items,
+            "limitations": (
+                f"Evaluates completed weeks starting at week index {min_prior} using a trailing {min_prior}-{max_prior} "
+                "week prior baseline; initial 6 warm-up weeks are excluded from anomaly flagging."
+            ),
+        }
+
+    def _detect_change_points(
+        self,
+        completed_weeks: List[Dict[str, Any]],
+    ) -> Dict[str, Any]:
+        """Identify statistically justified structural regime shifts using SSB/CUSUM split and Mann-Whitney U."""
+        k_weeks = len(completed_weeks)
+        counts = [int(w["commit_count"]) for w in completed_weeks]
+        total_commits = sum(counts)
+        active_weeks = sum(1 for c in counts if c > 0)
+
+        min_weeks = 12
+        min_segment = 5
+        min_commits = 30
+        min_active = 6
+
+        base_meta = {
+            "method": "cusum_ssb_split_with_mannwhitney_u",
+            "min_completed_weeks_required": min_weeks,
+            "min_segment_weeks": min_segment,
+            "min_commits_required": min_commits,
+            "evaluated_completed_weeks": k_weeks,
+        }
+
+        if k_weeks < min_weeks or total_commits < min_commits or active_weeks < min_active:
+            return {
+                **base_meta,
+                "status": "insufficient_history",
+                "justified": False,
+                "detected_change_points": [],
+                "limitations": (
+                    f"Structural change-point analysis deferred: requires >= {min_weeks} completed weeks, "
+                    f">= {min_commits} commits, and >= {min_active} active weeks "
+                    f"(observed {k_weeks} weeks, {total_commits} commits, {active_weeks} active weeks)."
+                ),
+            }
+
+        # Optimal single binary-segmentation split maximizing between-segment sum of squares (SSB)
+        prefix = [0]
+        for c in counts:
+            prefix.append(prefix[-1] + c)
+
+        best_split = min_segment
+        best_ssb = -1.0
+        for split in range(min_segment, k_weeks - min_segment + 1):
+            n1 = split
+            n2 = k_weeks - split
+            mean1 = prefix[split] / float(n1)
+            mean2 = (prefix[k_weeks] - prefix[split]) / float(n2)
+            ssb = (n1 * n2 / float(k_weeks)) * ((mean1 - mean2) ** 2)
+            if ssb > best_ssb:
+                best_ssb = ssb
+                best_split = split
+
+        before = counts[:best_split]
+        after = counts[best_split:]
+        mean_before = float(statistics.mean(before))
+        mean_after = float(statistics.mean(after))
+        med_before = float(statistics.median(before))
+        med_after = float(statistics.median(after))
+
+        abs_mean_shift = abs(mean_after - mean_before)
+        abs_med_shift = abs(med_after - med_before)
+        rel_ratio = max(mean_after / max(0.5, mean_before), mean_before / max(0.5, mean_after))
+
+        from scipy.stats import mannwhitneyu
+
+        u_res = mannwhitneyu(before, after, alternative="two-sided")
+        pvalue = float(u_res.pvalue)
+
+        is_significant = (
+            pvalue <= 0.01
+            and abs_mean_shift >= 3.0
+            and abs_med_shift >= 2.0
+            and rel_ratio >= 1.75
+        )
+
+        if not is_significant:
+            return {
+                **base_meta,
+                "status": "no_significant_shift",
+                "justified": True,
+                "detected_change_points": [],
+                "limitations": (
+                    "Single-regime test evaluated across all completed weeks; candidate shifts did not meet "
+                    "non-parametric significance (p <= 0.01) and practical magnitude thresholds."
+                ),
+            }
+
+        direction = "step_increase" if mean_after > mean_before else "step_decrease"
+        confidence = "high" if (pvalue <= 0.002 and min(len(before), len(after)) >= 7) else "moderate"
+
+        cp_record = {
+            "change_point_week_start": completed_weeks[best_split]["week_start"],
+            "direction": direction,
+            "before_segment": {
+                "weeks": len(before),
+                "start_week": completed_weeks[0]["week_start"],
+                "end_week": completed_weeks[best_split - 1]["week_start"],
+                "mean_weekly_commits": round(mean_before, 2),
+                "median_weekly_commits": round(med_before, 2),
+            },
+            "after_segment": {
+                "weeks": len(after),
+                "start_week": completed_weeks[best_split]["week_start"],
+                "end_week": completed_weeks[-1]["week_start"],
+                "mean_weekly_commits": round(mean_after, 2),
+                "median_weekly_commits": round(med_after, 2),
+            },
+            "statistics": {
+                "mann_whitney_u_pvalue": round(pvalue, 6),
+                "absolute_mean_shift": round(abs_mean_shift, 2),
+                "absolute_median_shift": round(abs_med_shift, 2),
+                "relative_shift_ratio": round(rel_ratio, 2),
+            },
+            "method": "cusum_ssb_split_with_mannwhitney_u",
+            "confidence": confidence,
+            "limitations": (
+                "Identifies at most one dominant structural regime shift with >= 5-week edge segments; "
+                "short-lived bursts are separated out as point anomalies rather than regime shifts."
+            ),
+        }
+
+        return {
+            **base_meta,
+            "status": "detected",
+            "justified": True,
+            "detected_change_points": [cp_record],
+            "limitations": cp_record["limitations"],
+        }
+
+    def _build_c22_rules(
+        self,
+        consistency_metrics: Dict[str, Any],
+        anomaly_results: Dict[str, Any],
+        change_point_results: Dict[str, Any],
+    ) -> List[RuleInterpretation]:
+        """Generate deterministic, evidence-backed RuleInterpretation entries for C.2.2 signals."""
+        rules: List[RuleInterpretation] = []
+
+        # RULE-ACT-004: Activity Consistency Classification
+        cls_name = consistency_metrics["consistency_classification"]
+        if cls_name == "consistent_steady":
+            rules.append(
+                RuleInterpretation(
+                    rule_id="RULE-ACT-004",
+                    domain=self.domain_name,
+                    severity="positive",
+                    finding="Consistent Weekly Activity: Repository maintains steady week-to-week commit cadence with low variability.",
+                    evidence={
+                        "consistency_classification": cls_name,
+                        "coefficient_of_variation": consistency_metrics["coefficient_of_variation"],
+                        "active_week_ratio": consistency_metrics["active_week_ratio"],
+                        "mean_weekly_commits": consistency_metrics["mean_weekly_commits"],
+                    },
+                    recommendation=None,
+                )
+            )
+        elif cls_name == "consistently_low":
+            rules.append(
+                RuleInterpretation(
+                    rule_id="RULE-ACT-004",
+                    domain=self.domain_name,
+                    severity="info",
+                    finding="Consistently Low Activity: Regular low-volume maintenance cadence with low week-to-week variability.",
+                    evidence={
+                        "consistency_classification": cls_name,
+                        "coefficient_of_variation": consistency_metrics["coefficient_of_variation"],
+                        "active_week_ratio": consistency_metrics["active_week_ratio"],
+                        "mean_weekly_commits": consistency_metrics["mean_weekly_commits"],
+                    },
+                    recommendation=None,
+                )
+            )
+        elif cls_name == "highly_volatile":
+            rules.append(
+                RuleInterpretation(
+                    rule_id="RULE-ACT-004",
+                    domain=self.domain_name,
+                    severity="warning",
+                    finding="Highly Variable Weekly Activity: Commit output fluctuates sharply across completed weeks.",
+                    evidence={
+                        "consistency_classification": cls_name,
+                        "coefficient_of_variation": consistency_metrics["coefficient_of_variation"],
+                        "iqr_weekly_commits": consistency_metrics["iqr_weekly_commits"],
+                    },
+                    recommendation="Inspect burst weeks and release-driven batches using anomaly and cadence views.",
+                )
+            )
+        elif cls_name == "sparse_intermittent":
+            rules.append(
+                RuleInterpretation(
+                    rule_id="RULE-ACT-004",
+                    domain=self.domain_name,
+                    severity="info",
+                    finding="Sparse/Intermittent Activity: Commits occur periodically in fewer than half of observed weeks.",
+                    evidence={
+                        "consistency_classification": cls_name,
+                        "active_week_ratio": consistency_metrics["active_week_ratio"],
+                        "zero_week_ratio": consistency_metrics["zero_week_ratio"],
+                    },
+                    recommendation=None,
+                )
+            )
+
+        # RULE-ACT-005: Statistically Significant Activity Anomalies (emitted only when triggered)
+        anomaly_items = anomaly_results["items"]
+        ongoing_surge = anomaly_results["ongoing_partial_week_surge"]
+        if anomaly_items or ongoing_surge:
+            peak = (
+                max(anomaly_items, key=lambda x: abs(x["deviation"]["score"]))
+                if anomaly_items
+                else ongoing_surge
+            )
+            rules.append(
+                RuleInterpretation(
+                    rule_id="RULE-ACT-005",
+                    domain=self.domain_name,
+                    severity="info" if peak["direction"] == "high" else "warning",
+                    finding=(
+                        f"Activity Anomaly Detected: {len(anomaly_items)} completed-week anomaly(ies)"
+                        + (" plus an ongoing partial-week surge" if ongoing_surge else "")
+                        + f" identified (peak in week {peak['week_start']}: {peak['observed_commits']} vs baseline median {peak['baseline']['median']})."
+                    ),
+                    evidence={
+                        "completed_anomalies_count": len(anomaly_items),
+                        "has_ongoing_partial_week_surge": ongoing_surge is not None,
+                        "peak_anomaly": peak,
+                    },
+                    recommendation="Review commit activity and release events around the flagged week(s).",
+                )
+            )
+
+        # RULE-ACT-006: Justified Structural Change-Point
+        cps = change_point_results["detected_change_points"]
+        if cps:
+            cp = cps[0]
+            rules.append(
+                RuleInterpretation(
+                    rule_id="RULE-ACT-006",
+                    domain=self.domain_name,
+                    severity="positive" if cp["direction"] == "step_increase" else "warning",
+                    finding=(
+                        f"Structural Activity Shift ({cp['direction']}): Sustained change beginning week {cp['change_point_week_start']} "
+                        f"(median shifted from {cp['before_segment']['median_weekly_commits']} to {cp['after_segment']['median_weekly_commits']} commits/week, "
+                        f"p={cp['statistics']['mann_whitney_u_pvalue']})."
+                    ),
+                    evidence=cp,
+                    recommendation=None,
+                )
+            )
+
+        return rules
