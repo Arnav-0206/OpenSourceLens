@@ -576,3 +576,347 @@ class TestAdvancedActivityScenarios:
         assert rel["stdev_release_interval_days"] == 0.0  # Perfectly regular
         assert rel["cadence_classification"] == "rapid"
 
+
+class TestTrailingVelocityWindowRefinement:
+    """Regression tests for exact rolling day-window velocities (28d, 84d, 364d)."""
+
+    def test_monday_vs_friday_equivalent_activity_rates(self, in_memory_db):
+        """Steady daily commit cadence must produce identical velocity on Monday vs Friday."""
+        calc = DevelopmentActivityCalculator()
+        repo = Repository(id=4009, repo_name="steady/mon-fri", owner="steady", name="mon-fri", analytics_source_revision=1)
+        in_memory_db.add(repo)
+
+        # 1 commit every day at 12:00 UTC from June 1, 2026 through Nov 15, 2026 (>160 days)
+        start_day = datetime(2026, 6, 1, 12, 0, 0, tzinfo=timezone.utc)
+        for day_idx in range(168):
+            in_memory_db.add(
+                Commit(
+                    repository_id=4009,
+                    sha=f"sha_steady_{day_idx}",
+                    author_date=start_day + timedelta(days=day_idx),
+                    author_login="steady_dev",
+                )
+            )
+        in_memory_db.commit()
+
+        # Monday Nov 2, 2026 12:00 UTC (early in calendar week)
+        ref_monday = datetime(2026, 11, 2, 12, 0, 0, tzinfo=timezone.utc)
+        assert ref_monday.weekday() == 0
+        res_mon = calc.calculate(4009, in_memory_db, ref_monday, snapshot_revision=1)
+
+        # Friday Nov 6, 2026 12:00 UTC (late in calendar week)
+        ref_friday = datetime(2026, 11, 6, 12, 0, 0, tzinfo=timezone.utc)
+        assert ref_friday.weekday() == 4
+        res_fri = calc.calculate(4009, in_memory_db, ref_friday, snapshot_revision=1)
+
+        # Calendar-week series still reflects partial Monday (1 commit) vs Friday (5 commits)
+        assert res_mon.metrics["weekly_time_series"][-1]["week_start"] == "2026-11-02"
+        assert res_mon.metrics["weekly_time_series"][-1]["commit_count"] == 1
+        assert res_fri.metrics["weekly_time_series"][-1]["week_start"] == "2026-11-02"
+        assert res_fri.metrics["weekly_time_series"][-1]["commit_count"] == 5
+
+        # Trailing velocities must be completely invariant to Monday vs Friday day-of-week
+        assert res_mon.metrics["velocity"]["trailing_4w_velocity"] == 7.0
+        assert res_fri.metrics["velocity"]["trailing_4w_velocity"] == 7.0
+        assert res_mon.metrics["velocity"]["trailing_12w_velocity"] == 7.0
+        assert res_fri.metrics["velocity"]["trailing_12w_velocity"] == 7.0
+        assert res_mon.metrics["velocity"]["velocity_trend_ratio"] == 1.0
+        assert res_fri.metrics["velocity"]["velocity_trend_ratio"] == 1.0
+
+        mon_rule = next(r for r in res_mon.rules if r.rule_id == "RULE-ACT-002")
+        fri_rule = next(r for r in res_fri.rules if r.rule_id == "RULE-ACT-002")
+        assert mon_rule.severity == "info"
+        assert fri_rule.severity == "info"
+
+    def test_incomplete_current_week_preserves_steady_velocity(self, in_memory_db):
+        """Monday 01:00 UTC with 0 commits in the current hour must not trigger false deceleration."""
+        calc = DevelopmentActivityCalculator()
+        repo = Repository(id=4010, repo_name="steady/early-mon", owner="steady", name="early-mon", analytics_source_revision=1)
+        in_memory_db.add(repo)
+
+        # Anchor: Monday Nov 9, 2026 01:00 UTC (brand new incomplete week with 0 commits)
+        ref_mon_early = datetime(2026, 11, 9, 1, 0, 0, tzinfo=timezone.utc)
+        assert ref_mon_early.weekday() == 0
+
+        # Seed strictly 3 commits/week on Tue, Thu, Sat at 10:00 UTC for 16 prior weeks
+        # First week Monday starts 16 weeks before Nov 9 -> Jul 20, 2026
+        first_monday = datetime(2026, 7, 20, 10, 0, 0, tzinfo=timezone.utc)
+        commit_idx = 0
+        for week_idx in range(16):
+            week_mon = first_monday + timedelta(weeks=week_idx)
+            for offset_days in (1, 3, 5):  # Tue, Thu, Sat
+                in_memory_db.add(
+                    Commit(
+                        repository_id=4010,
+                        sha=f"sha_tue_thu_sat_{commit_idx}",
+                        author_date=week_mon + timedelta(days=offset_days),
+                        author_login="dev",
+                    )
+                )
+                commit_idx += 1
+        in_memory_db.commit()
+
+        result = calc.calculate(4010, in_memory_db, ref_mon_early, snapshot_revision=1)
+
+        # Current calendar week in series has 0 commits (Monday 01:00 UTC)
+        assert result.metrics["weekly_time_series"][-1]["week_start"] == "2026-11-09"
+        assert result.metrics["weekly_time_series"][-1]["commit_count"] == 0
+
+        # Trailing 28d and 84d windows capture exact 4 weeks (12) and 12 weeks (36) of prior Tue/Thu/Sat
+        vel = result.metrics["velocity"]
+        assert vel["trailing_4w_velocity"] == 3.0
+        assert vel["trailing_12w_velocity"] == 3.0
+        assert vel["velocity_trend_ratio"] == 1.0
+        trend_rule = next(r for r in result.rules if r.rule_id == "RULE-ACT-002")
+        assert trend_rule.severity == "info"
+        assert "Steady Velocity" in trend_rule.finding
+
+    def test_exact_28d_and_84d_window_boundaries(self, in_memory_db):
+        """Verify half-open boundaries (ref_time - N days, ref_time] across 28d, 84d, and 364d."""
+        calc = DevelopmentActivityCalculator()
+        repo = Repository(id=4011, repo_name="edge/boundaries", owner="edge", name="boundaries", analytics_source_revision=1)
+        in_memory_db.add(repo)
+
+        ref_time = datetime(2026, 11, 10, 12, 0, 0, tzinfo=timezone.utc)
+
+        boundary_commits = [
+            ("sha_future", ref_time + timedelta(seconds=1)),                          # excluded completely
+            ("sha_at_ref", ref_time),                                                # in 28d, 84d, 364d
+            ("sha_28d_in", ref_time - timedelta(days=28) + timedelta(seconds=1)),    # in 28d, 84d, 364d
+            ("sha_28d_out", ref_time - timedelta(days=28)),                          # in 84d, 364d (excluded from 28d)
+            ("sha_84d_in", ref_time - timedelta(days=84) + timedelta(seconds=1)),    # in 84d, 364d
+            ("sha_84d_out", ref_time - timedelta(days=84)),                          # in 364d (excluded from 84d)
+            ("sha_364d_in", ref_time - timedelta(days=364) + timedelta(seconds=1)),  # in 364d
+            ("sha_364d_out", ref_time - timedelta(days=364)),                        # excluded from 364d
+        ]
+
+        for sha, dt in boundary_commits:
+            in_memory_db.add(Commit(repository_id=4011, sha=sha, author_date=dt, author_login="dev"))
+        in_memory_db.commit()
+
+        result = calc.calculate(4011, in_memory_db, ref_time, snapshot_revision=1)
+
+        assert result.metrics["summary"]["total_commits"] == 7
+        vel = result.metrics["velocity"]
+        # 2 commits in (T-28d, T] -> 2 / 4 = 0.50
+        assert vel["trailing_4w_velocity"] == 0.5
+        # 4 commits in (T-84d, T] -> 4 / 12 = 0.33
+        assert vel["trailing_12w_velocity"] == 0.33
+        # 6 commits in (T-364d, T] over full 52w observable history -> 6 / 52 = 0.12
+        assert vel["trailing_52w_velocity"] == 0.12
+
+    def test_less_than_52_weeks_history_normalization(self, in_memory_db):
+        """Young repos normalize 52w velocity by observable history instead of dividing by 52."""
+        calc = DevelopmentActivityCalculator()
+        ref_time = datetime(2026, 11, 10, 12, 0, 0, tzinfo=timezone.utc)
+
+        # Case A: 20-week-old repository (140 days), 20 commits at exact weekly rate of 1/week
+        repo_20w = Repository(id=4012, repo_name="young/20w", owner="young", name="20w", analytics_source_revision=1)
+        in_memory_db.add(repo_20w)
+        for w in range(20):
+            in_memory_db.add(
+                Commit(
+                    repository_id=4012,
+                    sha=f"sha_20w_{w}",
+                    author_date=ref_time - timedelta(days=140 - w * 7),
+                    author_login="dev",
+                )
+            )
+
+        # Case B: Brand-new 3-day-old repository with 5 commits (floors divisor at 1.0 week)
+        repo_3d = Repository(id=4013, repo_name="young/3d", owner="young", name="3d", analytics_source_revision=1)
+        in_memory_db.add(repo_3d)
+        for i in range(5):
+            in_memory_db.add(
+                Commit(
+                    repository_id=4013,
+                    sha=f"sha_3d_{i}",
+                    author_date=ref_time - timedelta(days=3) + timedelta(hours=i * 12),
+                    author_login="dev",
+                )
+            )
+
+        # Case C: Mature 450-day repository with 104 commits inside trailing 364d + older history (caps at 52.0 weeks)
+        repo_old = Repository(id=4014, repo_name="mature/old", owner="mature", name="old", analytics_source_revision=1)
+        in_memory_db.add(repo_old)
+        in_memory_db.add(
+            Commit(
+                repository_id=4014,
+                sha="sha_old_anchor",
+                author_date=ref_time - timedelta(days=450),
+                author_login="dev",
+            )
+        )
+        for i in range(104):
+            # 2 commits every 7 days within trailing 364d
+            in_memory_db.add(
+                Commit(
+                    repository_id=4014,
+                    sha=f"sha_mature_{i}",
+                    author_date=ref_time - timedelta(days=int(i * 3.5)),
+                    author_login="dev",
+                )
+            )
+        in_memory_db.commit()
+
+        res_20w = calc.calculate(4012, in_memory_db, ref_time, snapshot_revision=1)
+        # 20 commits / 20.0 observed weeks = 1.00 (not 20/52 = 0.38)
+        assert res_20w.metrics["velocity"]["trailing_52w_velocity"] == 1.0
+
+        res_3d = calc.calculate(4013, in_memory_db, ref_time, snapshot_revision=1)
+        # 5 commits / max(1.0, 3/7) = 5.00
+        assert res_3d.metrics["velocity"]["trailing_52w_velocity"] == 5.0
+
+        res_old = calc.calculate(4014, in_memory_db, ref_time, snapshot_revision=1)
+        # 104 commits / min(52.0, 450/7) = 2.00
+        assert res_old.metrics["velocity"]["trailing_52w_velocity"] == 2.0
+
+    def test_future_commits_and_timezone_normalization_with_aware_reference(self, in_memory_db):
+        """Timezone-aware reference time and non-UTC commit timestamps normalize consistently to UTC."""
+        from unittest.mock import MagicMock
+        from types import SimpleNamespace
+
+        calc = DevelopmentActivityCalculator()
+        # Analysis reference time in JST (+09:00): 2026-11-10 11:00+09:00 == 2026-11-10 02:00:00 UTC
+        tz_jst = timezone(timedelta(hours=9))
+        tz_est = timezone(timedelta(hours=-5))
+        ref_time_jst = datetime(2026, 11, 10, 11, 0, 0, tzinfo=tz_jst)
+
+        # Simulate driver returning mixed timezone-aware datetimes (e.g. PostgreSQL or offset-aware driver)
+        # Cutoff 28d in UTC: 2026-10-13 02:00:00 UTC == 2026-10-12 21:00:00 EST
+        rows = [
+            # Chronologically earliest in UTC (even though listed out-of-order / mixed offsets):
+            # 2026-10-12 20:59:59 EST == 2026-10-13 01:59:59 UTC (1s outside 28d, inside 84d)
+            SimpleNamespace(
+                id=1, sha="s_out_28d", author_date=datetime(2026, 10, 12, 20, 59, 59, tzinfo=tz_est),
+                committer_date=None, author_login="est_dev", author_name=None, author_email=None,
+                additions=10, deletions=0, total_changes=10,
+            ),
+            # 2026-10-12 21:00:01 EST == 2026-10-13 02:00:01 UTC (1s inside 28d)
+            SimpleNamespace(
+                id=2, sha="s_in_28d", author_date=datetime(2026, 10, 12, 21, 0, 1, tzinfo=tz_est),
+                committer_date=None, author_login="est_dev", author_name=None, author_email=None,
+                additions=10, deletions=0, total_changes=10,
+            ),
+            # 2026-11-10 10:30:00 JST == 2026-11-10 01:30:00 UTC (30m before ref_time, inside 28d)
+            SimpleNamespace(
+                id=3, sha="s_past_jst", author_date=datetime(2026, 11, 10, 10, 30, 0, tzinfo=tz_jst),
+                committer_date=None, author_login="jst_dev", author_name=None, author_email=None,
+                additions=10, deletions=0, total_changes=10,
+            ),
+            # 2026-11-09 22:00:00 EST == 2026-11-10 03:00:00 UTC (1h AFTER ref_time despite Nov 9 local date!)
+            SimpleNamespace(
+                id=4, sha="s_future_est", author_date=datetime(2026, 11, 9, 22, 0, 0, tzinfo=tz_est),
+                committer_date=None, author_login="est_dev", author_name=None, author_email=None,
+                additions=999, deletions=999, total_changes=1998,
+            ),
+        ]
+
+        mock_db = MagicMock()
+        mock_execute_commits = MagicMock()
+        mock_execute_commits.fetchall.return_value = rows
+        mock_execute_releases = MagicMock()
+        mock_execute_releases.fetchall.return_value = []
+        mock_db.execute.side_effect = [mock_execute_commits, mock_execute_releases]
+        mock_db.scalar.return_value = 2
+
+        result = calc.calculate(9999, mock_db, ref_time_jst, snapshot_revision=1)
+
+        # Future EST commit (Nov 9 22:00-05:00 = Nov 10 03:00Z > 02:00Z) must be excluded
+        assert result.metrics["summary"]["total_commits"] == 3
+        assert result.metrics["summary"]["total_changes"] == 30
+        assert result.metrics["summary"]["earliest_commit_date"] == "2026-10-13T01:59:59+00:00"
+        assert result.metrics["summary"]["latest_commit_date"] == "2026-11-10T01:30:00+00:00"
+
+        # 2 commits inside 28d -> 2 / 4 = 0.50; 3 commits inside 84d -> 3 / 12 = 0.25
+        assert result.metrics["velocity"]["trailing_4w_velocity"] == 0.5
+        assert result.metrics["velocity"]["trailing_12w_velocity"] == 0.25
+
+        # Verify UTC day binning from EST evening and JST morning offsets
+        daily = {d["date"]: d["commit_count"] for d in result.metrics["daily_time_series_90d"]}
+        assert daily["2026-10-13"] == 2  # Both 2026-10-12 20:59/21:00 EST rolled to Oct 13 UTC
+        assert daily["2026-11-10"] == 1  # Nov 10 10:30 JST -> Nov 10 01:30 UTC (excluded Nov 9 EST future commit)
+
+        # Also verify real SQLite DB session queries against non-UTC analysis_reference_time
+        repo = Repository(id=4017, repo_name="tz/ref", owner="tz", name="ref", analytics_source_revision=1)
+        in_memory_db.add(repo)
+        in_memory_db.add_all([
+            Commit(repository_id=4017, sha="db_past_1", author_date=datetime(2026, 11, 10, 1, 30, 0, tzinfo=timezone.utc), author_login="dev"),
+            Commit(repository_id=4017, sha="db_past_2", author_date=datetime(2026, 10, 13, 2, 0, 1, tzinfo=timezone.utc), author_login="dev"),
+            Commit(repository_id=4017, sha="db_future_1", author_date=datetime(2026, 11, 10, 2, 0, 1, tzinfo=timezone.utc), author_login="dev"),
+        ])
+        in_memory_db.commit()
+
+        db_res = calc.calculate(4017, in_memory_db, ref_time_jst, snapshot_revision=1)
+        assert db_res.metrics["summary"]["total_commits"] == 2
+        assert db_res.metrics["velocity"]["trailing_4w_velocity"] == 0.5
+
+    def test_deceleration_and_acceleration_rules_after_refinement(self, in_memory_db):
+        """Verify RULE-ACT-002 produces expected accelerating and decelerating diagnostics."""
+        calc = DevelopmentActivityCalculator()
+        ref_time = datetime(2026, 11, 10, 12, 0, 0, tzinfo=timezone.utc)
+
+        # 1. Deceleration repository: 36 commits in prior 8 weeks (days -83..-29), only 2 commits in trailing 28d
+        repo_decel = Repository(id=4015, repo_name="trend/decel", owner="trend", name="decel", analytics_source_revision=1)
+        in_memory_db.add(repo_decel)
+        for i in range(36):
+            in_memory_db.add(
+                Commit(
+                    repository_id=4015,
+                    sha=f"sha_decel_old_{i}",
+                    author_date=ref_time - timedelta(days=30 + i),
+                    author_login="dev",
+                )
+            )
+        for i in range(2):
+            in_memory_db.add(
+                Commit(
+                    repository_id=4015,
+                    sha=f"sha_decel_recent_{i}",
+                    author_date=ref_time - timedelta(days=5 + i * 7),
+                    author_login="dev",
+                )
+            )
+
+        # 2. Acceleration repository: 6 commits in prior 8 weeks, 20 commits in trailing 28d
+        repo_accel = Repository(id=4016, repo_name="trend/accel", owner="trend", name="accel", analytics_source_revision=1)
+        in_memory_db.add(repo_accel)
+        for i in range(6):
+            in_memory_db.add(
+                Commit(
+                    repository_id=4016,
+                    sha=f"sha_accel_old_{i}",
+                    author_date=ref_time - timedelta(days=35 + i * 8),
+                    author_login="dev",
+                )
+            )
+        for i in range(20):
+            in_memory_db.add(
+                Commit(
+                    repository_id=4016,
+                    sha=f"sha_accel_recent_{i}",
+                    author_date=ref_time - timedelta(days=1 + i),
+                    author_login="dev",
+                )
+            )
+        in_memory_db.commit()
+
+        res_decel = calc.calculate(4015, in_memory_db, ref_time, snapshot_revision=1)
+        # 28d: 2/4 = 0.50; 84d: 38/12 = 3.17 -> ratio = 0.16 <= 0.75
+        assert res_decel.metrics["velocity"]["trailing_4w_velocity"] == 0.5
+        assert res_decel.metrics["velocity"]["trailing_12w_velocity"] == 3.17
+        assert res_decel.metrics["velocity"]["velocity_trend_ratio"] <= 0.75
+        decel_rule = next(r for r in res_decel.rules if r.rule_id == "RULE-ACT-002")
+        assert decel_rule.severity == "warning"
+        assert "Decelerating Velocity" in decel_rule.finding
+
+        res_accel = calc.calculate(4016, in_memory_db, ref_time, snapshot_revision=1)
+        # 28d: 20/4 = 5.00; 84d: 26/12 = 2.17 -> ratio = 2.30 >= 1.25
+        assert res_accel.metrics["velocity"]["trailing_4w_velocity"] == 5.0
+        assert res_accel.metrics["velocity"]["trailing_12w_velocity"] == 2.17
+        assert res_accel.metrics["velocity"]["velocity_trend_ratio"] >= 1.25
+        accel_rule = next(r for r in res_accel.rules if r.rule_id == "RULE-ACT-002")
+        assert accel_rule.severity == "positive"
+        assert "Accelerating Velocity" in accel_rule.finding
+
+

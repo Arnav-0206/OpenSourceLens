@@ -107,21 +107,23 @@ class DevelopmentActivityCalculator(BaseMetricCalculator):
             select(func.count(Contributor.id)).where(Contributor.repository_id == repository_id)
         ) or 0
 
-        # Filter commits up to frozen reference time
+        # Filter commits up to frozen reference time and sort chronologically in UTC
         valid_commits = []
         for row in commits_rows:
             commit_date = _ensure_utc(row.author_date or row.committer_date)
             if commit_date is not None and commit_date <= ref_time:
                 valid_commits.append((row, commit_date))
+        valid_commits.sort(key=lambda item: item[1])
 
         total_commits = len(valid_commits)
 
-        # Filter releases up to frozen reference time
+        # Filter releases up to frozen reference time and sort chronologically in UTC
         valid_releases = []
         for rel in releases_rows:
             pub_date = _ensure_utc(rel.published_at)
             if pub_date is not None and pub_date <= ref_time:
                 valid_releases.append((rel, pub_date))
+        valid_releases.sort(key=lambda item: item[1])
 
         # Handle Empty Commit History Edge Case
         if total_commits == 0:
@@ -218,20 +220,25 @@ class DevelopmentActivityCalculator(BaseMetricCalculator):
             })
 
         # 6. Weekly Commit Velocity & Moving Averages
-        # Trailing 4 weeks (last 4 elements of continuous weekly series)
-        trailing_4w_series = weekly_time_series[-4:] if len(weekly_time_series) >= 4 else weekly_time_series
-        trailing_4w_commits = sum(w["commit_count"] for w in trailing_4w_series)
+        # Use exact half-open trailing windows (ref_time - N days, ref_time] to avoid
+        # incomplete-calendar-week day-of-week boundary bias.
+        cutoff_28d = ref_time - timedelta(days=28)
+        cutoff_84d = ref_time - timedelta(days=84)
+        cutoff_364d = ref_time - timedelta(days=364)
+
+        # Trailing 4 weeks (exact trailing 28-day window divided by 4)
+        trailing_4w_commits = sum(1 for _, c_date in valid_commits if c_date > cutoff_28d)
         trailing_4w_velocity = round(trailing_4w_commits / 4.0, 2)
 
-        # Trailing 12 weeks
-        trailing_12w_series = weekly_time_series[-12:] if len(weekly_time_series) >= 12 else weekly_time_series
-        trailing_12w_commits = sum(w["commit_count"] for w in trailing_12w_series)
+        # Trailing 12 weeks (exact trailing 84-day window divided by 12)
+        trailing_12w_commits = sum(1 for _, c_date in valid_commits if c_date > cutoff_84d)
         trailing_12w_velocity = round(trailing_12w_commits / 12.0, 2)
 
-        # Trailing 52 weeks
-        trailing_52w_series = weekly_time_series[-52:] if len(weekly_time_series) >= 52 else weekly_time_series
-        trailing_52w_commits = sum(w["commit_count"] for w in trailing_52w_series)
-        divisor_52w = min(52.0, max(1.0, float(len(weekly_time_series))))
+        # Trailing 52 weeks (exact trailing 364-day window normalized by observable history in window)
+        trailing_52w_commits = sum(1 for _, c_date in valid_commits if c_date > cutoff_364d)
+        effective_52w_start = max(cutoff_364d, earliest_date)
+        observed_52w_days = (ref_time - effective_52w_start).total_seconds() / 86400.0
+        divisor_52w = min(52.0, max(1.0, observed_52w_days / 7.0))
         trailing_52w_velocity = round(trailing_52w_commits / divisor_52w, 2)
 
         # Overall historical weekly velocity
