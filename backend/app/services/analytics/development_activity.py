@@ -9,7 +9,7 @@ Implements C.2.1 Activity Aggregation & C.2.2 Consistency, Rolling Statistics, A
 - Weekly activity consistency (CV, IQR, MAD, active week ratio, regime classification).
 - Rolling weekly statistics (4w/12w SMA, stdev, median, 4w EWMA) excluding incomplete current week.
 - Adaptive anomaly detection (MAD modified z-score with z-score/Poisson dispersion fallbacks).
-- Justified structural change-point detection (CUSUM/SSB split validated with Mann-Whitney U).
+- Justified structural change-point detection (deterministic max-SSB permutation test across eligible splits).
 - Robust timezone normalization to UTC and deterministic rule-based diagnostics.
 """
 
@@ -17,6 +17,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
+import hashlib
 import math
 import statistics
 from typing import Any, Dict, List, Optional, Tuple
@@ -1115,11 +1116,55 @@ class DevelopmentActivityCalculator(BaseMetricCalculator):
             ),
         }
 
+    def _run_max_ssb_permutation_test(
+        self,
+        counts: List[int],
+        min_segment: int = 5,
+        n_permutations: int = 999,
+    ) -> Tuple[int, float, float, int]:
+        """Run deterministic vectorized max-SSB permutation test across eligible splits.
+
+        Returns:
+            Tuple of (best_split_index, observed_max_ssb, empirical_p_perm, eligible_splits_count).
+        """
+        import numpy as np
+
+        arr = np.asarray(counts, dtype=np.float64)
+        k_weeks = len(counts)
+        splits = np.arange(min_segment, k_weeks - min_segment + 1)
+        n1 = splits.astype(np.float64)
+        n2 = (k_weeks - splits).astype(np.float64)
+        denom = float(k_weeks) * n1 * n2
+        total = float(arr.sum())
+
+        # Observed SSB across all eligible splits: (K * P_t - n1 * T)^2 / (K * n1 * n2)
+        obs_cum = np.cumsum(arr)[splits - 1]
+        obs_ssb = ((float(k_weeks) * obs_cum - n1 * total) ** 2) / denom
+        best_idx = int(np.argmax(obs_ssb))
+        best_split = int(splits[best_idx])
+        obs_max_ssb = float(obs_ssb[best_idx])
+
+        # Versioned deterministic seed derived from frozen weekly counts vector
+        seed_payload = f"osl:max_ssb_perm_v1:{','.join(str(c) for c in counts)}".encode("utf-8")
+        seed_int = int.from_bytes(hashlib.sha256(seed_payload).digest()[:16], "big")
+        rng = np.random.default_rng(seed_int)
+
+        # Vectorized Fisher-Yates row permutations evaluating identical eligible split indices
+        perm_matrix = rng.permuted(np.broadcast_to(arr, (n_permutations, k_weeks)), axis=1)
+        perm_cum = np.cumsum(perm_matrix, axis=1)[:, splits - 1]
+        perm_ssb = ((float(k_weeks) * perm_cum - n1 * total) ** 2) / denom
+        perm_max = np.max(perm_ssb, axis=1)
+
+        exceed_count = int(np.sum(perm_max >= obs_max_ssb - 1e-12))
+        p_perm = float((1 + exceed_count) / (n_permutations + 1))
+
+        return best_split, obs_max_ssb, p_perm, int(len(splits))
+
     def _detect_change_points(
         self,
         completed_weeks: List[Dict[str, Any]],
     ) -> Dict[str, Any]:
-        """Identify statistically justified structural regime shifts using SSB/CUSUM split and Mann-Whitney U."""
+        """Identify statistically justified structural regime shifts via max-SSB permutation test."""
         k_weeks = len(completed_weeks)
         counts = [int(w["commit_count"]) for w in completed_weeks]
         total_commits = sum(counts)
@@ -1129,12 +1174,17 @@ class DevelopmentActivityCalculator(BaseMetricCalculator):
         min_segment = 5
         min_commits = 30
         min_active = 6
+        n_permutations = 999
+        alpha_level = 0.01
 
         base_meta = {
-            "method": "cusum_ssb_split_with_mannwhitney_u",
+            "method": "max_ssb_permutation_test",
+            "permutations": n_permutations,
+            "significance_level": alpha_level,
             "min_completed_weeks_required": min_weeks,
             "min_segment_weeks": min_segment,
             "min_commits_required": min_commits,
+            "min_active_weeks_required": min_active,
             "evaluated_completed_weeks": k_weeks,
         }
 
@@ -1151,22 +1201,11 @@ class DevelopmentActivityCalculator(BaseMetricCalculator):
                 ),
             }
 
-        # Optimal single binary-segmentation split maximizing between-segment sum of squares (SSB)
-        prefix = [0]
-        for c in counts:
-            prefix.append(prefix[-1] + c)
-
-        best_split = min_segment
-        best_ssb = -1.0
-        for split in range(min_segment, k_weeks - min_segment + 1):
-            n1 = split
-            n2 = k_weeks - split
-            mean1 = prefix[split] / float(n1)
-            mean2 = (prefix[k_weeks] - prefix[split]) / float(n2)
-            ssb = (n1 * n2 / float(k_weeks)) * ((mean1 - mean2) ** 2)
-            if ssb > best_ssb:
-                best_ssb = ssb
-                best_split = split
+        best_split, obs_max_ssb, p_perm, eligible_splits = self._run_max_ssb_permutation_test(
+            counts=counts,
+            min_segment=min_segment,
+            n_permutations=n_permutations,
+        )
 
         before = counts[:best_split]
         after = counts[best_split:]
@@ -1179,13 +1218,13 @@ class DevelopmentActivityCalculator(BaseMetricCalculator):
         abs_med_shift = abs(med_after - med_before)
         rel_ratio = max(mean_after / max(0.5, mean_before), mean_before / max(0.5, mean_after))
 
+        # Secondary diagnostic only: unadjusted Mann-Whitney U does NOT govern significance
         from scipy.stats import mannwhitneyu
 
-        u_res = mannwhitneyu(before, after, alternative="two-sided")
-        pvalue = float(u_res.pvalue)
+        mw_pvalue = float(mannwhitneyu(before, after, alternative="two-sided").pvalue)
 
         is_significant = (
-            pvalue <= 0.01
+            p_perm <= alpha_level
             and abs_mean_shift >= 3.0
             and abs_med_shift >= 2.0
             and rel_ratio >= 1.75
@@ -1198,13 +1237,21 @@ class DevelopmentActivityCalculator(BaseMetricCalculator):
                 "justified": True,
                 "detected_change_points": [],
                 "limitations": (
-                    "Single-regime test evaluated across all completed weeks; candidate shifts did not meet "
-                    "non-parametric significance (p <= 0.01) and practical magnitude thresholds."
+                    f"Single-regime max-SSB permutation test (B={n_permutations}, {eligible_splits} eligible splits, "
+                    "min_segment=5) evaluated; candidate shifts did not meet p_perm <= 0.01 and practical magnitude filters. "
+                    "Assumes exchangeable (non-autocorrelated) observations under the null hypothesis."
                 ),
             }
 
         direction = "step_increase" if mean_after > mean_before else "step_decrease"
-        confidence = "high" if (pvalue <= 0.002 and min(len(before), len(after)) >= 7) else "moderate"
+        confidence = "high" if (p_perm <= 0.002 and min(len(before), len(after)) >= 7) else "moderate"
+
+        shift_limitations = (
+            "Identifies at most one dominant discrete shift with >= 5-week segments using a deterministic "
+            "max-SSB permutation test (B=999) assuming exchangeable (non-autocorrelated) observations under the null. "
+            "Positive serial autocorrelation, recurring release cycles, or steady gradual trends can inflate permutation "
+            "significance without an abrupt step shift; short-lived bursts are isolated as point anomalies."
+        )
 
         cp_record = {
             "change_point_week_start": completed_weeks[best_split]["week_start"],
@@ -1224,17 +1271,18 @@ class DevelopmentActivityCalculator(BaseMetricCalculator):
                 "median_weekly_commits": round(med_after, 2),
             },
             "statistics": {
-                "mann_whitney_u_pvalue": round(pvalue, 6),
+                "permutation_pvalue": round(p_perm, 6),
+                "observed_max_ssb": round(obs_max_ssb, 4),
+                "permutations": n_permutations,
+                "eligible_splits_count": eligible_splits,
+                "mann_whitney_u_diagnostic_pvalue": round(mw_pvalue, 6),
                 "absolute_mean_shift": round(abs_mean_shift, 2),
                 "absolute_median_shift": round(abs_med_shift, 2),
                 "relative_shift_ratio": round(rel_ratio, 2),
             },
-            "method": "cusum_ssb_split_with_mannwhitney_u",
+            "method": "max_ssb_permutation_test",
             "confidence": confidence,
-            "limitations": (
-                "Identifies at most one dominant structural regime shift with >= 5-week edge segments; "
-                "short-lived bursts are separated out as point anomalies rather than regime shifts."
-            ),
+            "limitations": shift_limitations,
         }
 
         return {
@@ -1242,7 +1290,7 @@ class DevelopmentActivityCalculator(BaseMetricCalculator):
             "status": "detected",
             "justified": True,
             "detected_change_points": [cp_record],
-            "limitations": cp_record["limitations"],
+            "limitations": shift_limitations,
         }
 
     def _build_c22_rules(
@@ -1359,7 +1407,7 @@ class DevelopmentActivityCalculator(BaseMetricCalculator):
                     finding=(
                         f"Structural Activity Shift ({cp['direction']}): Sustained change beginning week {cp['change_point_week_start']} "
                         f"(median shifted from {cp['before_segment']['median_weekly_commits']} to {cp['after_segment']['median_weekly_commits']} commits/week, "
-                        f"p={cp['statistics']['mann_whitney_u_pvalue']})."
+                        f"p_perm={cp['statistics']['permutation_pvalue']})."
                     ),
                     evidence=cp,
                     recommendation=None,

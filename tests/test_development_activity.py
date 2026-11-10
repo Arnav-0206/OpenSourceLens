@@ -1132,7 +1132,7 @@ class TestActivityConsistencyRollingAnomaliesC22:
         assert surge["observed_commits"] == 25
 
     def test_structural_change_points_step_increase_and_decrease(self, in_memory_db):
-        """CUSUM/SSB split + Mann-Whitney U identifies sustained regime shifts accurately."""
+        """Max-SSB permutation test identifies sustained regime shifts accurately with corrected p-values."""
         calc = DevelopmentActivityCalculator()
         ref_time = datetime(2026, 11, 9, 12, 0, 0, tzinfo=timezone.utc)
 
@@ -1142,13 +1142,20 @@ class TestActivityConsistencyRollingAnomaliesC22:
         res_inc = calc.calculate(5008, in_memory_db, ref_time, snapshot_revision=1)
         cp_inc = res_inc.metrics["change_points"]
         assert cp_inc["status"] == "detected"
+        assert cp_inc["method"] == "max_ssb_permutation_test"
+        assert cp_inc["permutations"] == 999
         assert cp_inc["justified"] is True
         assert len(cp_inc["detected_change_points"]) == 1
         rec_inc = cp_inc["detected_change_points"][0]
         assert rec_inc["direction"] == "step_increase"
         assert rec_inc["before_segment"]["weeks"] == 8
         assert rec_inc["after_segment"]["weeks"] == 8
-        assert rec_inc["statistics"]["mann_whitney_u_pvalue"] <= 0.01
+        assert rec_inc["statistics"]["permutation_pvalue"] == 0.001
+        assert rec_inc["statistics"]["permutations"] == 999
+        assert rec_inc["statistics"]["eligible_splits_count"] == 7  # 16 - 5 - 5 + 1
+        assert "mann_whitney_u_diagnostic_pvalue" in rec_inc["statistics"]
+        assert "exchangeable" in rec_inc["limitations"].lower()
+        assert "autocorrelation" in rec_inc["limitations"].lower()
         assert any(r.rule_id == "RULE-ACT-006" and r.severity == "positive" for r in res_inc.rules)
 
         # 2. Step Decrease: 8 weeks at 18-22/wk -> 8 weeks at 1-2/wk
@@ -1159,6 +1166,7 @@ class TestActivityConsistencyRollingAnomaliesC22:
         assert cp_dec["status"] == "detected"
         rec_dec = cp_dec["detected_change_points"][0]
         assert rec_dec["direction"] == "step_decrease"
+        assert rec_dec["statistics"]["permutation_pvalue"] == 0.001
         assert rec_dec["before_segment"]["median_weekly_commits"] >= 18.0
         assert rec_dec["after_segment"]["median_weekly_commits"] <= 2.0
         assert any(r.rule_id == "RULE-ACT-006" and r.severity == "warning" for r in res_dec.rules)
@@ -1241,6 +1249,103 @@ class TestActivityConsistencyRollingAnomaliesC22:
         in_memory_db.refresh(claimed_run)
         assert claimed_run.status == "completed"
         assert claimed_run.metrics_payload["development_activity"]["consistency"]["consistency_classification"] == "highly_volatile"
+
+
+class TestMaxSsbPermutationChangePointCorrection:
+    """Tests for deterministic max-SSB permutation correction eliminating post-selection bias."""
+
+    def test_stationary_series_and_post_selection_bias_suppression(self, in_memory_db):
+        """Stationary sequences where unadjusted Mann-Whitney falls <=0.01 are rejected by p_perm > 0.01."""
+        import random
+        from scipy.stats import mannwhitneyu
+
+        calc = DevelopmentActivityCalculator()
+        ref_time = datetime(2026, 11, 9, 12, 0, 0, tzinfo=timezone.utc)
+
+        # Concrete 26-week i.i.d. stationary vector where unadjusted MW yields p=0.00873<=0.01,
+        # while full-search max-SSB permutation test gives p_perm > 0.01.
+        post_selection_trap = [14, 12, 16, 13, 3, 16, 11, 10, 8, 3, 4, 10, 3, 9, 9, 5, 6, 9, 5, 6, 7, 7, 6, 7, 9, 17]
+        best_split, _, p_perm, eligible = calc._run_max_ssb_permutation_test(post_selection_trap)
+        mw_p = float(mannwhitneyu(post_selection_trap[:best_split], post_selection_trap[best_split:], alternative="two-sided").pvalue)
+        assert mw_p <= 0.01
+        assert p_perm > 0.01
+        assert eligible == 17  # 26 - 5 - 5 + 1
+
+        _seed_completed_weekly_commits(in_memory_db, 5020, ref_time, post_selection_trap, "post_sel_trap")
+        res_trap = calc.calculate(5020, in_memory_db, ref_time, snapshot_revision=1)
+        assert res_trap.metrics["change_points"]["status"] == "no_significant_shift"
+        assert res_trap.metrics["change_points"]["detected_change_points"] == []
+
+        # Also evaluate 20 seeded stationary sequences via full calculator
+        rng = random.Random(202611)
+        false_positives = 0
+        for idx in range(20):
+            stationary = [rng.randint(3, 17) for _ in range(20)]
+            _seed_completed_weekly_commits(in_memory_db, 5100 + idx, ref_time, stationary, f"stat_{idx}")
+            res = calc.calculate(5100 + idx, in_memory_db, ref_time, snapshot_revision=1)
+            if res.metrics["change_points"]["status"] == "detected":
+                false_positives += 1
+        assert false_positives == 0
+
+    def test_deterministic_reproducibility_and_minimum_resolution(self, in_memory_db):
+        """Repeated runs produce bit-identical results; B=999 provides exact 0.001 minimum p_perm resolution."""
+        calc = DevelopmentActivityCalculator()
+        ref_time = datetime(2026, 11, 9, 12, 0, 0, tzinfo=timezone.utc)
+
+        # Bit-identical repeated runs
+        pattern = [2, 3, 2, 3, 2, 3, 2, 3, 18, 20, 19, 22, 20, 18, 21, 19]
+        _seed_completed_weekly_commits(in_memory_db, 5021, ref_time, pattern, "determinism")
+        res1 = calc.calculate(5021, in_memory_db, ref_time, snapshot_revision=1)
+        res2 = calc.calculate(5021, in_memory_db, ref_time, snapshot_revision=1)
+
+        assert res1.metrics == res2.metrics
+        assert res1.rules == res2.rules
+
+        # Exact resolution checks: B=999 -> min p_perm = 1 / 1000 = 0.001; constant vector -> p_perm = 1.0
+        _, _, p_min, _ = calc._run_max_ssb_permutation_test([2] * 8 + [20] * 8, min_segment=5, n_permutations=999)
+        assert p_min == pytest.approx(0.001, abs=1e-9)
+
+        _, _, p_const, _ = calc._run_max_ssb_permutation_test([5] * 12, min_segment=5, n_permutations=999)
+        assert p_const == pytest.approx(1.0, abs=1e-9)
+
+        # Single extreme outlier spike remains non-significant under max-SSB permutation
+        _, _, p_spike, _ = calc._run_max_ssb_permutation_test(
+            [4, 7, 5, 6, 4, 8, 5, 6, 4, 7, 35, 5, 6, 4, 7, 5], min_segment=5, n_permutations=999
+        )
+        assert p_spike > 0.01
+
+    def test_minimum_history_and_minimum_segment_boundaries(self, in_memory_db):
+        """Enforce min_weeks=12, min_commits=30, min_active=6, and min_segment=5 boundaries."""
+        calc = DevelopmentActivityCalculator()
+        ref_time = datetime(2026, 11, 9, 12, 0, 0, tzinfo=timezone.utc)
+
+        # 1. 11 completed weeks (< 12) even with large shift -> insufficient_history
+        _seed_completed_weekly_commits(in_memory_db, 5022, ref_time, [2] * 5 + [20] * 6, "k11")
+        assert calc.calculate(5022, in_memory_db, ref_time, snapshot_revision=1).metrics["change_points"]["status"] == "insufficient_history"
+
+        # 2. 12 completed weeks with 29 commits (< 30) -> insufficient_history
+        _seed_completed_weekly_commits(in_memory_db, 5023, ref_time, [1, 1, 1, 1, 1, 1, 4, 4, 4, 4, 4, 3], "c29")
+        assert calc.calculate(5023, in_memory_db, ref_time, snapshot_revision=1).metrics["change_points"]["status"] == "insufficient_history"
+
+        # 3. 12 completed weeks with >=30 commits across only 5 active weeks (< 6) -> insufficient_history
+        _seed_completed_weekly_commits(in_memory_db, 5024, ref_time, [8, 0, 0, 8, 0, 0, 8, 0, 0, 8, 0, 8], "a5")
+        assert calc.calculate(5024, in_memory_db, ref_time, snapshot_revision=1).metrics["change_points"]["status"] == "insufficient_history"
+
+        # 4. Surge strictly in trailing 3 weeks (< min_segment=5) -> excluded splits + permutation rejects
+        _seed_completed_weekly_commits(in_memory_db, 5025, ref_time, [2] * 9 + [25] * 3, "seg3")
+        res_seg3 = calc.calculate(5025, in_memory_db, ref_time, snapshot_revision=1)
+        assert res_seg3.metrics["change_points"]["status"] == "no_significant_shift"
+
+        # 5. Exact minimal valid shift boundary: K=12, segments 5 vs 7 -> detected with before=5, after=7
+        _seed_completed_weekly_commits(in_memory_db, 5026, ref_time, [2] * 5 + [20] * 7, "k12_valid")
+        res_valid = calc.calculate(5026, in_memory_db, ref_time, snapshot_revision=1)
+        cp_valid = res_valid.metrics["change_points"]
+        assert cp_valid["status"] == "detected"
+        assert cp_valid["detected_change_points"][0]["before_segment"]["weeks"] == 5
+        assert cp_valid["detected_change_points"][0]["after_segment"]["weeks"] == 7
+        assert cp_valid["detected_change_points"][0]["statistics"]["eligible_splits_count"] == 3  # t in [5, 6, 7]
+        assert cp_valid["detected_change_points"][0]["statistics"]["permutation_pvalue"] <= 0.01
+
 
 
 
