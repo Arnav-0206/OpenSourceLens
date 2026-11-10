@@ -84,6 +84,12 @@ class TestBenchmarkRepositoriesEmptyCommitHandling:
                 assert result.metrics["consistency"]["consistency_classification"] == "insufficient_history"
                 assert result.metrics["anomalies"]["status"] == "insufficient_history"
                 assert result.metrics["change_points"]["justified"] is False
+                assert result.metrics["activity_rhythms"]["status"] == "empty"
+                assert result.metrics["code_churn"]["status"] == "empty"
+                assert result.metrics["commit_landing_latency"]["status"] == "empty"
+                assert result.coverage.details["subdomains"]["activity_rhythms"] == "empty"
+                assert result.coverage.details["subdomains"]["code_churn"] == "empty"
+                assert result.coverage.details["subdomains"]["commit_landing_latency"] == "empty"
                 assert any(r.rule_id == "RULE-ACT-EMPTY" for r in result.rules)
 
 
@@ -1345,6 +1351,484 @@ class TestMaxSsbPermutationChangePointCorrection:
         assert cp_valid["detected_change_points"][0]["after_segment"]["weeks"] == 7
         assert cp_valid["detected_change_points"][0]["statistics"]["eligible_splits_count"] == 3  # t in [5, 6, 7]
         assert cp_valid["detected_change_points"][0]["statistics"]["permutation_pvalue"] <= 0.01
+
+
+class TestRhythmsChurnAndLatencyC23:
+    """Focused unit & integration tests for C.2.3 rhythms, diff-aware code churn, and landing latency."""
+
+    def test_activity_rhythms_distributions_and_thresholds(self, in_memory_db):
+        """Verify 7x24 UTC matrix, weekday/weekend boundary hours, sample gates, and UTC limitation."""
+        calc = DevelopmentActivityCalculator()
+        ref_time = datetime(2026, 11, 10, 12, 0, 0, tzinfo=timezone.utc)
+
+        # 1. Insufficient sample (< 5 commits -> None matrix & ratios)
+        in_memory_db.add(Repository(id=6001, repo_name="rhythm/insuff", owner="rhythm", name="insuff", analytics_source_revision=1))
+        for i in range(4):
+            in_memory_db.add(
+                Commit(
+                    repository_id=6001,
+                    sha=f"sha_r_ins_{i}",
+                    author_date=datetime(2026, 11, 2, 10 + i, 0, 0, tzinfo=timezone.utc),
+                    author_login="dev",
+                )
+            )
+        in_memory_db.commit()
+        res_ins = calc.calculate(6001, in_memory_db, ref_time, snapshot_revision=1)
+        r_ins = res_ins.metrics["activity_rhythms"]
+        assert r_ins["status"] == "insufficient"
+        assert r_ins["weekday_hour_matrix"] is None
+        assert r_ins["weekday_ratio"] is None
+        assert "local working hours" in r_ins["limitations"].lower()
+
+        # 2. Limited sample (5..19 commits -> computed matrix & status='limited', no RULE-ACT-007)
+        in_memory_db.add(Repository(id=6002, repo_name="rhythm/lim", owner="rhythm", name="lim", analytics_source_revision=1))
+        for i in range(10):
+            in_memory_db.add(
+                Commit(
+                    repository_id=6002,
+                    sha=f"sha_r_lim_{i}",
+                    author_date=datetime(2026, 11, 2, 14, 0, 0, tzinfo=timezone.utc) + timedelta(days=i % 5),
+                    author_login="dev",
+                )
+            )
+        in_memory_db.commit()
+        res_lim = calc.calculate(6002, in_memory_db, ref_time, snapshot_revision=1)
+        assert res_lim.metrics["activity_rhythms"]["status"] == "limited"
+        assert sum(res_lim.metrics["activity_rhythms"]["weekday_totals"]) == 10
+        assert not any(r.rule_id == "RULE-ACT-007" for r in res_lim.rules)
+
+        # 3. Sufficient sample (>= 20 commits) across Friday 23:00 UTC vs Saturday 00:00 UTC boundary
+        in_memory_db.add(Repository(id=6003, repo_name="rhythm/suff", owner="rhythm", name="suff", analytics_source_revision=1))
+        # 10 weekday commits on Friday 2026-11-06 at 23:15 UTC (weekday=4, hour=23)
+        for i in range(10):
+            in_memory_db.add(
+                Commit(
+                    repository_id=6003,
+                    sha=f"sha_r_fri_{i}",
+                    author_date=datetime(2026, 11, 6, 23, 15, 0, tzinfo=timezone.utc),
+                    author_login="dev",
+                )
+            )
+        # 14 weekend commits on Saturday 2026-11-07 at 00:30 UTC (weekday=5, hour=0)
+        for i in range(14):
+            in_memory_db.add(
+                Commit(
+                    repository_id=6003,
+                    sha=f"sha_r_sat_{i}",
+                    author_date=datetime(2026, 11, 7, 0, 30, 0, tzinfo=timezone.utc),
+                    author_login="dev",
+                )
+            )
+        # Future commit ignored
+        in_memory_db.add(
+            Commit(
+                repository_id=6003,
+                sha="sha_r_future",
+                author_date=ref_time + timedelta(hours=1),
+                author_login="dev",
+            )
+        )
+        in_memory_db.commit()
+
+        res_suff = calc.calculate(6003, in_memory_db, ref_time, snapshot_revision=1)
+        r_suff = res_suff.metrics["activity_rhythms"]
+        assert r_suff["status"] == "sufficient"
+        assert r_suff["total_commits"] == 24
+        assert len(r_suff["weekday_hour_matrix"]) == 7
+        assert all(len(row) == 24 for row in r_suff["weekday_hour_matrix"])
+        assert r_suff["weekday_hour_matrix"][4][23] == 10  # Friday 23:xx UTC
+        assert r_suff["weekday_hour_matrix"][5][0] == 14   # Saturday 00:xx UTC
+        assert r_suff["weekday_commits"] == 10
+        assert r_suff["weekend_commits"] == 14
+        assert r_suff["weekday_ratio"] == round(10 / 24, 4)
+        assert r_suff["weekend_ratio"] == round(1.0 - round(10 / 24, 4), 4)
+        assert r_suff["peak_weekday"]["name"] == "Saturday"
+        assert r_suff["peak_utc_hour"]["hour_utc"] == 0
+        assert "local working hours" in r_suff["limitations"].lower()
+        assert any(r.rule_id == "RULE-ACT-007" and "weekend" in r.finding.lower() for r in res_suff.rules)
+
+    def test_diff_aware_code_churn_coverage_and_volatility(self, in_memory_db):
+        """Verify NULL vs 0-line edits, coverage denominators, sampled diffs, and clean volatility exclusion."""
+        calc = DevelopmentActivityCalculator()
+        # Anchor Monday Nov 9 12:00 UTC -> completed weeks precede 2026-11-09
+        ref_time = datetime(2026, 11, 9, 12, 0, 0, tzinfo=timezone.utc)
+
+        # Case A: All-NULL diff payloads across 10 commits (e.g. fast_snapshot) -> diff_metrics_not_collected
+        in_memory_db.add(Repository(id=6010, repo_name="churn/all_null", owner="churn", name="all_null", analytics_source_revision=1))
+        for i in range(10):
+            in_memory_db.add(
+                Commit(
+                    repository_id=6010,
+                    sha=f"sha_c_null_{i}",
+                    author_date=ref_time - timedelta(days=5 + i),
+                    additions=None,
+                    deletions=None,
+                )
+            )
+
+        # Case B: Insufficient diffs (< 5 commits with diffs out of 10 total)
+        in_memory_db.add(Repository(id=6011, repo_name="churn/insuff", owner="churn", name="insuff", analytics_source_revision=1))
+        for i in range(10):
+            in_memory_db.add(
+                Commit(
+                    repository_id=6011,
+                    sha=f"sha_c_ins_{i}",
+                    author_date=ref_time - timedelta(days=5 + i),
+                    additions=50 if i < 3 else None,
+                    deletions=10 if i < 3 else None,
+                )
+            )
+
+        # Case C: Genuine zero-line edits (additions=0, deletions=0 explicitly present) across 6 commits
+        in_memory_db.add(Repository(id=6012, repo_name="churn/zero_edit", owner="churn", name="zero_edit", analytics_source_revision=1))
+        for i in range(6):
+            in_memory_db.add(
+                Commit(
+                    repository_id=6012,
+                    sha=f"sha_c_zero_{i}",
+                    author_date=ref_time - timedelta(days=10 + i * 3),
+                    additions=0,
+                    deletions=0,
+                    total_changes=0,
+                )
+            )
+
+        # Case D: Partial sampled diffs (5 with diffs out of 25 total commits, like standard_diagnostic)
+        in_memory_db.add(Repository(id=6013, repo_name="churn/partial", owner="churn", name="partial", analytics_source_revision=1))
+        for i in range(25):
+            in_memory_db.add(
+                Commit(
+                    repository_id=6013,
+                    sha=f"sha_c_part_{i}",
+                    author_date=ref_time - timedelta(days=3 + i * 2),
+                    additions=100 if i < 5 else None,
+                    deletions=40 if i < 5 else None,
+                )
+            )
+
+        # Case E: Sufficient diffs across 5 completed weeks [100, 300, 100, 300, 200] + giant current partial week (9999)
+        in_memory_db.add(Repository(id=6014, repo_name="churn/complete", owner="churn", name="complete", analytics_source_revision=1))
+        monday_current = datetime(2026, 11, 9, 0, 0, 0, tzinfo=timezone.utc)
+        weekly_churn_vals = [100, 300, 100, 300, 200]
+        for w_idx, target_gross in enumerate(weekly_churn_vals):
+            wk_dt = monday_current - timedelta(weeks=len(weekly_churn_vals) - w_idx) + timedelta(days=2)  # Wednesday
+            in_memory_db.add(
+                Commit(
+                    repository_id=6014,
+                    sha=f"sha_c_full_w{w_idx}",
+                    author_date=wk_dt,
+                    additions=int(target_gross * 0.7),
+                    deletions=int(target_gross * 0.3),
+                )
+            )
+        # Current partial week (Monday Nov 9 05:00 UTC) has huge diff 9999 -> MUST be excluded from completed-week volatility
+        in_memory_db.add(
+            Commit(
+                repository_id=6014,
+                sha="sha_c_partial_huge",
+                author_date=datetime(2026, 11, 9, 5, 0, 0, tzinfo=timezone.utc),
+                additions=6000,
+                deletions=3999,
+            )
+        )
+        in_memory_db.commit()
+
+        res_null = calc.calculate(6010, in_memory_db, ref_time, snapshot_revision=1)
+        ch_null = res_null.metrics["code_churn"]
+        assert ch_null["status"] == "diff_metrics_not_collected"
+        assert ch_null["diff_coverage_ratio"] == 0.0
+        assert ch_null["commits_missing_diff_count"] == 10
+        assert ch_null["gross_code_churn"] is None
+        assert ch_null["churn_per_commit"] is None
+        assert not any(r.rule_id == "RULE-ACT-009" for r in res_null.rules)
+
+        res_ins = calc.calculate(6011, in_memory_db, ref_time, snapshot_revision=1)
+        ch_ins = res_ins.metrics["code_churn"]
+        assert ch_ins["status"] == "insufficient"
+        assert ch_ins["commits_with_diff_count"] == 3
+        assert ch_ins["diff_coverage_ratio"] == 0.3
+        assert ch_ins["gross_code_churn"] is None
+
+        res_zero = calc.calculate(6012, in_memory_db, ref_time, snapshot_revision=1)
+        ch_zero = res_zero.metrics["code_churn"]
+        assert ch_zero["status"] == "sufficient"
+        assert ch_zero["commits_with_diff_count"] == 6
+        assert ch_zero["zero_change_diff_commits_count"] == 6
+        assert ch_zero["diff_coverage_ratio"] == 1.0
+        assert ch_zero["gross_code_churn"] == 0
+        assert ch_zero["net_code_delta"] == 0
+        assert ch_zero["churn_per_commit"] == 0.0
+
+        res_part = calc.calculate(6013, in_memory_db, ref_time, snapshot_revision=1)
+        ch_part = res_part.metrics["code_churn"]
+        assert ch_part["status"] == "limited"
+        assert ch_part["commits_with_diff_count"] == 5
+        assert ch_part["diff_coverage_ratio"] == 0.2
+        assert ch_part["gross_code_churn"] == 700   # 5 * (100+40)
+        assert ch_part["net_code_delta"] == 300     # 5 * (100-40)
+        assert ch_part["churn_per_commit"] == 140.0
+        assert ch_part["weekly_churn_volatility"] is None  # Deferred under partial coverage
+        assert not any(r.rule_id == "RULE-ACT-009" for r in res_part.rules)
+
+        res_full = calc.calculate(6014, in_memory_db, ref_time, snapshot_revision=1)
+        ch_full = res_full.metrics["code_churn"]
+        assert ch_full["status"] == "sufficient"
+        assert ch_full["diff_coverage_ratio"] == 1.0
+        assert ch_full["completed_weeks_with_complete_diffs"] == 5
+        # stdev([100, 300, 100, 300, 200]) = 100.0; partial week's 9999 must not inflate volatility
+        assert ch_full["weekly_churn_volatility"] == 100.0
+        assert any(r.rule_id == "RULE-ACT-009" for r in res_full.rules)
+
+        # Case F: 5 completed weeks where 4 have identical 100-line churn and 1 has a missing-diff commit -> must omit incomplete week
+        in_memory_db.add(Repository(id=6015, repo_name="churn/mixed_week", owner="churn", name="mixed_week", analytics_source_revision=1))
+        for w_idx in range(5):
+            wk_dt = monday_current - timedelta(weeks=5 - w_idx) + timedelta(days=2)
+            in_memory_db.add(
+                Commit(
+                    repository_id=6015,
+                    sha=f"sha_c_mix_a_{w_idx}",
+                    author_date=wk_dt,
+                    additions=70 if w_idx != 2 else None,
+                    deletions=30 if w_idx != 2 else None,
+                )
+            )
+            if w_idx != 2:
+                # 2nd commit in valid weeks to ensure >= 50% coverage overall
+                in_memory_db.add(Commit(repository_id=6015, sha=f"sha_c_mix_b_{w_idx}", author_date=wk_dt + timedelta(hours=1), additions=0, deletions=0))
+        in_memory_db.commit()
+        res_mix = calc.calculate(6015, in_memory_db, ref_time, snapshot_revision=1)
+        ch_mix = res_mix.metrics["code_churn"]
+        assert ch_mix["completed_weeks_with_complete_diffs"] == 4
+        assert ch_mix["weekly_churn_volatility"] == 0.0  # Week 2 skipped, not zero-imputed!
+
+    def test_commit_landing_latency_non_substitution_skew_and_quantiles(self, in_memory_db):
+        """Verify strict non-substitution, coverage denominators, clock-skew isolation, and P25-P90."""
+        calc = DevelopmentActivityCalculator()
+        ref_time = datetime(2026, 11, 10, 12, 0, 0, tzinfo=timezone.utc)
+
+        # Case A: All committer_date NULL across 8 commits -> never substitute author_date
+        in_memory_db.add(Repository(id=6020, repo_name="lat/all_null", owner="lat", name="all_null", analytics_source_revision=1))
+        for i in range(8):
+            in_memory_db.add(
+                Commit(
+                    repository_id=6020,
+                    sha=f"sha_l_null_{i}",
+                    author_date=ref_time - timedelta(days=1 + i),
+                    committer_date=None,
+                )
+            )
+
+        # Case B: Insufficient valid non-negative (< 5), mixing missing + clock-skew + 3 valid
+        in_memory_db.add(Repository(id=6021, repo_name="lat/insuff", owner="lat", name="insuff", analytics_source_revision=1))
+        for i in range(10):
+            a_dt = ref_time - timedelta(days=2 + i)
+            if i < 5:
+                c_dt = None
+            elif i < 7:
+                c_dt = a_dt - timedelta(hours=2)  # negative skew
+            else:
+                c_dt = a_dt + timedelta(hours=10)
+            in_memory_db.add(Commit(repository_id=6021, sha=f"sha_l_ins_{i}", author_date=a_dt, committer_date=c_dt))
+
+        # Case C: Mixed valid intervals [0, 0, 12, 24, 36, 48, 72, 96], 2 skew (-3h, -1.5h), 2 NULL
+        in_memory_db.add(Repository(id=6022, repo_name="lat/quantiles", owner="lat", name="quantiles", analytics_source_revision=1))
+        lags_hours = [0, 0, 12, 24, 36, 48, 72, 96]
+        for idx, lag in enumerate(lags_hours):
+            a_dt = ref_time - timedelta(days=20 - idx, hours=4)
+            in_memory_db.add(
+                Commit(
+                    repository_id=6022,
+                    sha=f"sha_l_q_{idx}",
+                    author_date=a_dt,
+                    committer_date=a_dt + timedelta(hours=lag),
+                )
+            )
+        # 2 clock-skew commits (-3.0h, -1.5h)
+        in_memory_db.add(
+            Commit(
+                repository_id=6022,
+                sha="sha_l_skew_1",
+                author_date=ref_time - timedelta(days=5),
+                committer_date=ref_time - timedelta(days=5, hours=3),
+            )
+        )
+        in_memory_db.add(
+            Commit(
+                repository_id=6022,
+                sha="sha_l_skew_2",
+                author_date=ref_time - timedelta(days=6),
+                committer_date=ref_time - timedelta(days=6, hours=1, minutes=30),
+            )
+        )
+        # 2 missing committer_date commits
+        in_memory_db.add(Commit(repository_id=6022, sha="sha_l_miss_1", author_date=ref_time - timedelta(days=7), committer_date=None))
+        in_memory_db.add(Commit(repository_id=6022, sha="sha_l_miss_2", author_date=ref_time - timedelta(days=8), committer_date=None))
+
+        # Case D: >= 20 valid intervals with 100% coverage -> status == 'sufficient'
+        in_memory_db.add(Repository(id=6023, repo_name="lat/suff", owner="lat", name="suff", analytics_source_revision=1))
+        for i in range(22):
+            a_dt = ref_time - timedelta(days=30 - i)
+            in_memory_db.add(Commit(repository_id=6023, sha=f"sha_l_suff_{i}", author_date=a_dt, committer_date=a_dt + timedelta(hours=2)))
+        in_memory_db.commit()
+
+        res_null = calc.calculate(6020, in_memory_db, ref_time, snapshot_revision=1)
+        l_null = res_null.metrics["commit_landing_latency"]
+        assert l_null["status"] == "committer_dates_not_collected"
+        assert l_null["committer_date_coverage_ratio"] == 0.0
+        assert l_null["mean_latency_hours"] is None
+        assert l_null["p50_latency_hours"] is None
+
+        res_ins = calc.calculate(6021, in_memory_db, ref_time, snapshot_revision=1)
+        l_ins = res_ins.metrics["commit_landing_latency"]
+        assert l_ins["status"] == "insufficient"
+        assert l_ins["eligible_commits_count"] == 10
+        assert l_ins["commits_with_committer_date_count"] == 5
+        assert l_ins["committer_date_coverage_ratio"] == 0.5
+        assert l_ins["negative_clock_skew_count"] == 2
+        assert l_ins["valid_non_negative_count"] == 3
+        assert l_ins["mean_latency_hours"] is None
+
+        res_q = calc.calculate(6022, in_memory_db, ref_time, snapshot_revision=1)
+        l_q = res_q.metrics["commit_landing_latency"]
+        assert l_q["status"] == "limited"
+        assert l_q["eligible_commits_count"] == 12
+        assert l_q["commits_with_committer_date_count"] == 10
+        assert l_q["commits_missing_committer_date_count"] == 2
+        assert l_q["committer_date_coverage_ratio"] == round(10 / 12, 4)
+        assert l_q["negative_clock_skew_count"] == 2
+        assert l_q["min_negative_clock_skew_hours"] == -3.0
+        assert l_q["valid_non_negative_count"] == 8
+        assert l_q["zero_lag_count"] == 2
+        assert l_q["positive_delay_count"] == 6
+        assert l_q["positive_delay_share"] == 0.75
+        assert l_q["mean_latency_hours"] == 36.0
+        assert l_q["p25_latency_hours"] == 9.0
+        assert l_q["p50_latency_hours"] == 30.0
+        assert l_q["p75_latency_hours"] == 54.0
+        assert l_q["p90_latency_hours"] == 79.2
+        assert any(r.rule_id == "RULE-ACT-008" and "Delayed Commit Landing" in r.finding for r in res_q.rules)
+
+        res_suff = calc.calculate(6023, in_memory_db, ref_time, snapshot_revision=1)
+        assert res_suff.metrics["commit_landing_latency"]["status"] == "sufficient"
+        assert res_suff.metrics["commit_landing_latency"]["positive_delay_share"] == 1.0
+
+    def test_c23_queue_publication_and_subdomain_coverage(self, in_memory_db):
+        """Publish complete C.2.1 + C.2.2 + C.2.3 payload via AnalyticsJobQueue and verify schema."""
+        import json
+
+        calc = DevelopmentActivityCalculator()
+        queue = AnalyticsJobQueue()
+        ref_time = datetime(2026, 11, 10, 12, 0, 0, tzinfo=timezone.utc)
+
+        in_memory_db.add(
+            Repository(id=6030, repo_name="queue/c23", owner="queue", name="c23", analytics_source_revision=3, is_active=True)
+        )
+        for i in range(25):
+            a_dt = ref_time - timedelta(days=30 - i, hours=2)
+            in_memory_db.add(
+                Commit(
+                    repository_id=6030,
+                    sha=f"sha_qc23_{i}",
+                    author_date=a_dt,
+                    committer_date=a_dt + timedelta(hours=4),
+                    author_login="c23_dev",
+                    additions=30,
+                    deletions=10,
+                    total_changes=40,
+                )
+            )
+        in_memory_db.commit()
+
+        queue.enqueue_analysis(repo_id=6030, db=in_memory_db)
+        claimed_run, attempt = queue.claim_job(worker_id="c23_worker", db=in_memory_db)
+        res = calc.calculate(6030, in_memory_db, ref_time, snapshot_revision=claimed_run.requested_source_revision)
+
+        json.dumps(res.metrics)
+        assert queue.publish_and_finalize(
+            run_id=claimed_run.id,
+            attempt_id=attempt.id,
+            worker_id="c23_worker",
+            expected_lease_version=claimed_run.lease_version,
+            attempt_number=attempt.attempt_number,
+            snapshot_revision=claimed_run.requested_source_revision,
+            actual_methodology=CURRENT_METHODOLOGY_VERSION,
+            reference_time=ref_time,
+            metrics_payload={"development_activity": res.metrics},
+            coverage_summary={"development_activity": res.coverage.model_dump()},
+            confidence_summary={
+                "score": round(1.0 - res.confidence_penalty, 3),
+                "band": "high",
+                "penalties": res.details.get("penalties", []),
+            },
+            rule_interpretations=[r.model_dump() for r in res.rules],
+            db=in_memory_db,
+        )
+
+        in_memory_db.refresh(claimed_run)
+        subdomains = claimed_run.coverage_summary["development_activity"]["details"]["subdomains"]
+        assert set(subdomains.keys()) == {
+            "consistency",
+            "rolling_statistics",
+            "anomalies",
+            "change_points",
+            "activity_rhythms",
+            "code_churn",
+            "commit_landing_latency",
+        }
+        payload = claimed_run.metrics_payload["development_activity"]
+        assert payload["activity_rhythms"]["status"] == "sufficient"
+        assert payload["code_churn"]["status"] == "sufficient"
+        assert payload["commit_landing_latency"]["status"] == "sufficient"
+
+    def test_c23_non_utc_offset_aware_rhythms_and_latency(self):
+        """Offset-aware timestamps convert accurately to UTC before computing rhythms and commit lag."""
+        from types import SimpleNamespace
+        from unittest.mock import MagicMock
+
+        calc = DevelopmentActivityCalculator()
+        tz_est = timezone(timedelta(hours=-5))
+        tz_jst = timezone(timedelta(hours=9))
+        ref_time_jst = datetime(2026, 11, 10, 12, 0, 0, tzinfo=tz_jst)  # 2026-11-10 03:00 UTC
+
+        # Construct 6 offset-aware commits:
+        # 5 commits authored Friday 2026-11-06 23:15 EST == Saturday 2026-11-07 04:15 UTC (weekday=5, hour=4)
+        # Committed 3 hours later expressed in JST (+09:00): Saturday 2026-11-07 16:15 JST == 07:15 UTC (lag = +3.0h)
+        rows = [
+            SimpleNamespace(
+                id=i + 1,
+                sha=f"sha_tz_c23_{i}",
+                author_date=datetime(2026, 11, 6, 23, 15, 0, tzinfo=tz_est),
+                committer_date=datetime(2026, 11, 7, 16, 15, 0, tzinfo=tz_jst),
+                author_login="tz_dev",
+                author_name=None,
+                author_email=None,
+                additions=10,
+                deletions=5,
+                total_changes=15,
+            )
+            for i in range(5)
+        ]
+
+        mock_db = MagicMock()
+        c_exec = MagicMock()
+        c_exec.fetchall.return_value = rows
+        r_exec = MagicMock()
+        r_exec.fetchall.return_value = []
+        mock_db.execute.side_effect = [c_exec, r_exec]
+        mock_db.scalar.return_value = 1
+
+        res = calc.calculate(9998, mock_db, ref_time_jst, snapshot_revision=1)
+        rhythms = res.metrics["activity_rhythms"]
+        latency = res.metrics["commit_landing_latency"]
+
+        # Friday 23:15-05:00 rolled over midnight to Saturday 04:15 UTC
+        assert rhythms["weekday_hour_matrix"][5][4] == 5
+        assert rhythms["weekend_ratio"] == 1.0
+        assert latency["mean_latency_hours"] == 3.0
+        assert latency["p50_latency_hours"] == 3.0
+        assert latency["positive_delay_share"] == 1.0
+
+
 
 
 

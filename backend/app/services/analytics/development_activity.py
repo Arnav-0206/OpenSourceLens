@@ -1,6 +1,7 @@
 """Development Activity Intelligence Module for OpenSourceLens.
 
-Implements C.2.1 Activity Aggregation & C.2.2 Consistency, Rolling Statistics, Anomaly & Change-Point Detection:
+Implements C.2.1 Activity Aggregation, C.2.2 Consistency/Rolling/Anomaly/Change-Point Detection,
+and C.2.3 Activity Rhythms, Diff-Aware Code Churn & Commit Landing Latency:
 - Daily and weekly commit activity time-series aggregation.
 - Continuous zero-filled calendar intervals.
 - Multi-horizon weekly commit velocity (exact rolling 28d/84d/364d windows, overall).
@@ -10,6 +11,9 @@ Implements C.2.1 Activity Aggregation & C.2.2 Consistency, Rolling Statistics, A
 - Rolling weekly statistics (4w/12w SMA, stdev, median, 4w EWMA) excluding incomplete current week.
 - Adaptive anomaly detection (MAD modified z-score with z-score/Poisson dispersion fallbacks).
 - Justified structural change-point detection (deterministic max-SSB permutation test across eligible splits).
+- 7x24 UTC activity rhythms (explicitly noting UTC timestamps do not capture contributor local hours).
+- Diff-aware code churn coverage, net/gross churn, churn-per-commit, and completed-week volatility.
+- Commit authoring-to-landing latency (committer_date - author_date) with strict non-substitution & skew isolation.
 - Robust timezone normalization to UTC and deterministic rule-based diagnostics.
 """
 
@@ -304,6 +308,11 @@ class DevelopmentActivityCalculator(BaseMetricCalculator):
         anomaly_results = self._detect_anomalies(completed_weeks, consistency_metrics, partial_current_week)
         change_point_results = self._detect_change_points(completed_weeks)
 
+        # 8c. C.2.3 Activity Rhythms, Diff-Aware Code Churn, Commit Landing Latency
+        rhythm_metrics = self._calculate_activity_rhythms(valid_commits)
+        churn_metrics = self._calculate_code_churn(valid_commits, completed_weeks)
+        latency_metrics = self._calculate_commit_landing_latency(valid_commits)
+
         # 9. Coverage and Confidence Evaluation
         min_sample = 5
         span_days_threshold = 14
@@ -360,6 +369,9 @@ class DevelopmentActivityCalculator(BaseMetricCalculator):
                     "rolling_statistics": rolling_stats["status"],
                     "anomalies": anomaly_results["status"],
                     "change_points": change_point_results["status"],
+                    "activity_rhythms": rhythm_metrics["status"],
+                    "code_churn": churn_metrics["status"],
+                    "commit_landing_latency": latency_metrics["status"],
                 },
             },
         )
@@ -497,6 +509,15 @@ class DevelopmentActivityCalculator(BaseMetricCalculator):
             )
         )
 
+        # Rule 7–9: Rhythms, Churn & Commit Landing Latency (C.2.3)
+        rules.extend(
+            self._build_c23_rules(
+                rhythm_metrics=rhythm_metrics,
+                churn_metrics=churn_metrics,
+                latency_metrics=latency_metrics,
+            )
+        )
+
         # Assemble Full Metrics Dictionary
         metrics: Dict[str, Any] = {
             "summary": {
@@ -530,6 +551,9 @@ class DevelopmentActivityCalculator(BaseMetricCalculator):
             "rolling_statistics": rolling_stats,
             "anomalies": anomaly_results,
             "change_points": change_point_results,
+            "activity_rhythms": rhythm_metrics,
+            "code_churn": churn_metrics,
+            "commit_landing_latency": latency_metrics,
             "weekly_time_series": weekly_time_series,
             "daily_time_series_90d": daily_time_series,
         }
@@ -647,6 +671,9 @@ class DevelopmentActivityCalculator(BaseMetricCalculator):
         rolling_stats = self._calculate_rolling_statistics([], partial_current_week)
         anomaly_results = self._detect_anomalies([], consistency_metrics, partial_current_week)
         change_point_results = self._detect_change_points([])
+        rhythm_metrics = self._calculate_activity_rhythms([])
+        churn_metrics = self._calculate_code_churn([], [])
+        latency_metrics = self._calculate_commit_landing_latency([])
 
         metrics: Dict[str, Any] = {
             "summary": {
@@ -680,6 +707,9 @@ class DevelopmentActivityCalculator(BaseMetricCalculator):
             "rolling_statistics": rolling_stats,
             "anomalies": anomaly_results,
             "change_points": change_point_results,
+            "activity_rhythms": rhythm_metrics,
+            "code_churn": churn_metrics,
+            "commit_landing_latency": latency_metrics,
             "weekly_time_series": [],
             "daily_time_series_90d": [],
         }
@@ -698,6 +728,9 @@ class DevelopmentActivityCalculator(BaseMetricCalculator):
                     "rolling_statistics": rolling_stats["status"],
                     "anomalies": anomaly_results["status"],
                     "change_points": change_point_results["status"],
+                    "activity_rhythms": rhythm_metrics["status"],
+                    "code_churn": churn_metrics["status"],
+                    "commit_landing_latency": latency_metrics["status"],
                 },
             },
         )
@@ -1410,6 +1443,447 @@ class DevelopmentActivityCalculator(BaseMetricCalculator):
                         f"p_perm={cp['statistics']['permutation_pvalue']})."
                     ),
                     evidence=cp,
+                    recommendation=None,
+                )
+            )
+
+        return rules
+
+    def _calculate_activity_rhythms(
+        self,
+        valid_commits: List[Tuple[Any, datetime]],
+    ) -> Dict[str, Any]:
+        """Compute 7x24 UTC weekday/hour commit distribution with sample gating and UTC caveats."""
+        weekday_names = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+        total_commits = len(valid_commits)
+        min_sample = 5
+        confident_sample = 20
+        utc_limitation = (
+            "All commit timestamps are grouped in UTC; 7x24 weekday and hour distributions reflect aggregate "
+            "timestamp timing in UTC and do not reveal contributors' local working hours or personal schedules."
+        )
+
+        if total_commits == 0 or total_commits < min_sample:
+            status = "empty" if total_commits == 0 else "insufficient"
+            return {
+                "status": status,
+                "total_commits": total_commits,
+                "min_sample_required": min_sample,
+                "confident_sample_required": confident_sample,
+                "weekday_names": weekday_names,
+                "weekday_hour_matrix": None,
+                "weekday_totals": None,
+                "hour_totals_utc": None,
+                "weekday_commits": 0 if total_commits == 0 else None,
+                "weekend_commits": 0 if total_commits == 0 else None,
+                "weekday_ratio": None,
+                "weekend_ratio": None,
+                "peak_weekday": None,
+                "peak_utc_hour": None,
+                "limitations": (
+                    f"Observed {total_commits} commits (< {min_sample} minimum); rhythm distributions deferred. "
+                    + utc_limitation
+                ),
+            }
+
+        matrix = [[0] * 24 for _ in range(7)]
+        for _, c_date in valid_commits:
+            matrix[c_date.weekday()][c_date.hour] += 1
+
+        weekday_totals = [sum(matrix[d]) for d in range(7)]
+        hour_totals = [sum(matrix[d][h] for d in range(7)) for h in range(24)]
+        weekday_commits = sum(weekday_totals[:5])
+        weekend_commits = sum(weekday_totals[5:])
+        weekday_ratio = round(weekday_commits / float(total_commits), 4)
+        weekend_ratio = round(1.0 - weekday_ratio, 4)
+
+        peak_day_idx = max(range(7), key=lambda d: weekday_totals[d])
+        peak_hour_idx = max(range(24), key=lambda h: hour_totals[h])
+
+        status = "limited" if total_commits < confident_sample else "sufficient"
+        limitations = (
+            f"Limited commit sample ({total_commits} < {confident_sample}); day/hour peaks may shift with additional history. {utc_limitation}"
+            if status == "limited"
+            else utc_limitation
+        )
+
+        return {
+            "status": status,
+            "total_commits": total_commits,
+            "min_sample_required": min_sample,
+            "confident_sample_required": confident_sample,
+            "weekday_names": weekday_names,
+            "weekday_hour_matrix": matrix,
+            "weekday_totals": weekday_totals,
+            "hour_totals_utc": hour_totals,
+            "weekday_commits": weekday_commits,
+            "weekend_commits": weekend_commits,
+            "weekday_ratio": weekday_ratio,
+            "weekend_ratio": weekend_ratio,
+            "peak_weekday": {
+                "index": peak_day_idx,
+                "name": weekday_names[peak_day_idx],
+                "commit_count": weekday_totals[peak_day_idx],
+            },
+            "peak_utc_hour": {
+                "hour_utc": peak_hour_idx,
+                "commit_count": hour_totals[peak_hour_idx],
+            },
+            "limitations": limitations,
+        }
+
+    def _calculate_code_churn(
+        self,
+        valid_commits: List[Tuple[Any, datetime]],
+        completed_weeks: List[Dict[str, Any]],
+    ) -> Dict[str, Any]:
+        """Compute diff-coverage-aware code churn without conflating NULL diffs with zero edits."""
+        eligible = len(valid_commits)
+        min_diff_commits = 5
+        min_completed_weeks_volatility = 4
+        min_coverage_sufficient = 0.50
+
+        with_diff = 0
+        missing_diff = 0
+        zero_change_diff = 0
+        total_adds = 0
+        total_dels = 0
+        weekly_gross: Dict[str, int] = defaultdict(int)
+        weekly_missing_diff: Dict[str, int] = defaultdict(int)
+
+        for row, c_date in valid_commits:
+            w_str = _get_week_start_utc(c_date).strftime("%Y-%m-%d")
+            if row.additions is not None and row.deletions is not None:
+                adds = int(row.additions)
+                dels = int(row.deletions)
+                with_diff += 1
+                if adds == 0 and dels == 0:
+                    zero_change_diff += 1
+                total_adds += adds
+                total_dels += dels
+                weekly_gross[w_str] += adds + dels
+            else:
+                missing_diff += 1
+                weekly_missing_diff[w_str] += 1
+
+        diff_cov = round(with_diff / float(eligible), 4) if eligible > 0 else None
+
+        base_cov = {
+            "eligible_commits_count": eligible,
+            "commits_with_diff_count": with_diff,
+            "commits_missing_diff_count": missing_diff,
+            "zero_change_diff_commits_count": zero_change_diff,
+            "diff_coverage_ratio": diff_cov,
+            "min_diff_commits_required": min_diff_commits,
+            "min_coverage_ratio_for_sufficient": min_coverage_sufficient,
+            "min_completed_weeks_for_volatility": min_completed_weeks_volatility,
+        }
+
+        if eligible == 0 or with_diff == 0 or with_diff < min_diff_commits:
+            if eligible == 0:
+                status = "empty"
+                reason = "No commits found in repository snapshot."
+            elif with_diff == 0:
+                status = "diff_metrics_not_collected"
+                reason = "Diff line stats (additions/deletions) are NULL across all eligible commits."
+            else:
+                status = "insufficient"
+                reason = (
+                    f"Only {with_diff} of {eligible} eligible commits have diff stats "
+                    f"(minimum {min_diff_commits} required)."
+                )
+            return {
+                **base_cov,
+                "status": status,
+                "total_additions": None,
+                "total_deletions": None,
+                "gross_code_churn": None,
+                "net_code_delta": None,
+                "churn_per_commit": None,
+                "weekly_churn_volatility": None,
+                "completed_weeks_with_complete_diffs": 0,
+                "limitations": reason,
+            }
+
+        gross_churn = total_adds + total_dels
+        net_delta = total_adds - total_dels
+        churn_per_commit = round(gross_churn / float(with_diff), 2)
+
+        # Exclude completed weeks that contain commits with uncollected (NULL) diffs
+        # rather than fabricating zero churn for unsampled commits.
+        clean_weekly_churns: List[int] = [
+            weekly_gross.get(w["week_start"], 0)
+            for w in completed_weeks
+            if weekly_missing_diff.get(w["week_start"], 0) == 0
+        ]
+        completed_clean_count = len(clean_weekly_churns)
+
+        is_sufficient_coverage = diff_cov is not None and diff_cov >= min_coverage_sufficient
+        status = "sufficient" if is_sufficient_coverage else "limited"
+
+        if is_sufficient_coverage and completed_clean_count >= min_completed_weeks_volatility:
+            weekly_churn_volatility: Optional[float] = round(statistics.stdev(clean_weekly_churns), 2)
+        else:
+            weekly_churn_volatility = None
+
+        limitation_notes: List[str] = []
+        if not is_sufficient_coverage:
+            limitation_notes.append(
+                f"Partial diff sampling ({round((diff_cov or 0.0) * 100.0, 1)}% coverage across {eligible} commits); "
+                "churn aggregates cover sampled commits only and weekly churn volatility is deferred."
+            )
+        elif weekly_churn_volatility is None:
+            limitation_notes.append(
+                f"Only {completed_clean_count} completed weeks with complete diff coverage "
+                f"(>= {min_completed_weeks_volatility} required for weekly churn volatility)."
+            )
+        limitation_notes.append(
+            "Line additions and deletions can be skewed by vendored dependencies, lockfiles, or code formatting."
+        )
+
+        return {
+            **base_cov,
+            "status": status,
+            "total_additions": total_adds,
+            "total_deletions": total_dels,
+            "gross_code_churn": gross_churn,
+            "net_code_delta": net_delta,
+            "churn_per_commit": churn_per_commit,
+            "weekly_churn_volatility": weekly_churn_volatility,
+            "completed_weeks_with_complete_diffs": completed_clean_count,
+            "limitations": " ".join(limitation_notes),
+        }
+
+    def _calculate_commit_landing_latency(
+        self,
+        valid_commits: List[Tuple[Any, datetime]],
+    ) -> Dict[str, Any]:
+        """Compute authoring-to-landing latency (committer_date - author_date) strictly without substitution."""
+        eligible = len(valid_commits)
+        min_sample = 5
+        confident_sample = 20
+        min_coverage_sufficient = 0.50
+
+        with_committer = 0
+        missing_committer = 0
+        missing_author = 0
+        negative_lags: List[float] = []
+        nonneg_lags: List[float] = []
+        positive_delay_count = 0
+        zero_lag_count = 0
+
+        for row, _ in valid_commits:
+            c_dt = _ensure_utc(row.committer_date)
+            if c_dt is None:
+                missing_committer += 1
+                continue
+            with_committer += 1
+
+            a_dt = _ensure_utc(row.author_date)
+            if a_dt is None:
+                missing_author += 1
+                continue
+
+            lag_hours = (c_dt - a_dt).total_seconds() / 3600.0
+            if lag_hours < 0.0:
+                negative_lags.append(lag_hours)
+            else:
+                nonneg_lags.append(lag_hours)
+                if c_dt > a_dt:
+                    positive_delay_count += 1
+                else:
+                    zero_lag_count += 1
+
+        committer_cov = round(with_committer / float(eligible), 4) if eligible > 0 else None
+        valid_nonneg = len(nonneg_lags)
+        skew_count = len(negative_lags)
+
+        base_meta = {
+            "eligible_commits_count": eligible,
+            "commits_with_committer_date_count": with_committer,
+            "commits_missing_committer_date_count": missing_committer,
+            "commits_missing_author_date_count": missing_author,
+            "committer_date_coverage_ratio": committer_cov,
+            "valid_non_negative_count": valid_nonneg,
+            "zero_lag_count": zero_lag_count,
+            "positive_delay_count": positive_delay_count,
+            "negative_clock_skew_count": skew_count,
+            "min_negative_clock_skew_hours": round(min(negative_lags), 2) if negative_lags else None,
+            "min_sample_required": min_sample,
+            "confident_sample_required": confident_sample,
+        }
+
+        if eligible == 0 or with_committer == 0 or valid_nonneg == 0 or valid_nonneg < min_sample:
+            if eligible == 0:
+                status = "empty"
+                reason = "No commits found in repository snapshot."
+            elif with_committer == 0:
+                status = "committer_dates_not_collected"
+                reason = "All eligible commits have committer_date IS NULL; author_date is never substituted."
+            elif valid_nonneg == 0:
+                status = "no_valid_non_negative_intervals"
+                reason = f"All {skew_count} commit pairs with committer_date had negative clock-skew intervals."
+            else:
+                status = "insufficient"
+                reason = (
+                    f"Only {valid_nonneg} valid non-negative commit interval(s) observed "
+                    f"(minimum {min_sample} required for stable latency percentiles)."
+                )
+            return {
+                **base_meta,
+                "status": status,
+                "positive_delay_share": None,
+                "mean_latency_hours": None,
+                "p25_latency_hours": None,
+                "p50_latency_hours": None,
+                "p75_latency_hours": None,
+                "p90_latency_hours": None,
+                "limitations": reason,
+            }
+
+        sorted_lags = sorted(nonneg_lags)
+        positive_share = round(positive_delay_count / float(valid_nonneg), 4)
+        is_sufficient = (
+            valid_nonneg >= confident_sample
+            and committer_cov is not None
+            and committer_cov >= min_coverage_sufficient
+        )
+        status = "sufficient" if is_sufficient else "limited"
+
+        notes: List[str] = []
+        if committer_cov is not None and committer_cov < 1.0:
+            notes.append(f"Partial committer_date coverage ({round(committer_cov * 100.0, 1)}% of eligible commits).")
+        if valid_nonneg < confident_sample:
+            notes.append(f"Sample size {valid_nonneg} < {confident_sample}; quantiles may shift with more commits.")
+        if skew_count > 0:
+            notes.append(f"Excluded {skew_count} negative clock-skew interval(s) from non-negative latency percentiles.")
+        notes.append("Strict non-substitution: missing committer_date records are never filled from author_date.")
+
+        return {
+            **base_meta,
+            "status": status,
+            "positive_delay_share": positive_share,
+            "mean_latency_hours": round(statistics.mean(nonneg_lags), 2),
+            "p25_latency_hours": round(_linear_percentile(sorted_lags, 0.25), 2),
+            "p50_latency_hours": round(_linear_percentile(sorted_lags, 0.50), 2),
+            "p75_latency_hours": round(_linear_percentile(sorted_lags, 0.75), 2),
+            "p90_latency_hours": round(_linear_percentile(sorted_lags, 0.90), 2),
+            "limitations": " ".join(notes),
+        }
+
+    def _build_c23_rules(
+        self,
+        rhythm_metrics: Dict[str, Any],
+        churn_metrics: Dict[str, Any],
+        latency_metrics: Dict[str, Any],
+    ) -> List[RuleInterpretation]:
+        """Generate deterministic, sample-gated RuleInterpretation findings for C.2.3 signals."""
+        rules: List[RuleInterpretation] = []
+
+        # RULE-ACT-007: UTC Activity Rhythm Concentration (sufficient >= 20 commits)
+        if rhythm_metrics["status"] == "sufficient":
+            weekend_ratio = rhythm_metrics["weekend_ratio"]
+            weekday_ratio = rhythm_metrics["weekday_ratio"]
+            if weekend_ratio is not None and weekend_ratio >= 0.40:
+                rules.append(
+                    RuleInterpretation(
+                        rule_id="RULE-ACT-007",
+                        domain=self.domain_name,
+                        severity="info",
+                        finding=(
+                            f"Notable UTC Weekend Commit Share: {round(weekend_ratio * 100.0, 1)}% of commits fall on "
+                            "Saturday/Sunday UTC (UTC timestamps do not indicate contributors' local working hours)."
+                        ),
+                        evidence={
+                            "weekend_ratio": weekend_ratio,
+                            "weekday_ratio": weekday_ratio,
+                            "total_commits": rhythm_metrics["total_commits"],
+                            "peak_weekday": rhythm_metrics["peak_weekday"],
+                        },
+                        recommendation=None,
+                    )
+                )
+            elif weekday_ratio is not None and weekday_ratio >= 0.85:
+                rules.append(
+                    RuleInterpretation(
+                        rule_id="RULE-ACT-007",
+                        domain=self.domain_name,
+                        severity="info",
+                        finding=(
+                            f"Weekday-Concentrated UTC Rhythm: {round(weekday_ratio * 100.0, 1)}% of commits occur on "
+                            "Monday–Friday UTC (reflects UTC timestamps, not contributor local hours)."
+                        ),
+                        evidence={
+                            "weekday_ratio": weekday_ratio,
+                            "weekend_ratio": weekend_ratio,
+                            "total_commits": rhythm_metrics["total_commits"],
+                            "peak_utc_hour": rhythm_metrics["peak_utc_hour"],
+                        },
+                        recommendation=None,
+                    )
+                )
+
+        # RULE-ACT-008: Authoring-to-Landing Commit Latency (sample >= 5 valid intervals)
+        if latency_metrics["status"] in ("limited", "sufficient"):
+            pos_share = latency_metrics["positive_delay_share"]
+            p50 = latency_metrics["p50_latency_hours"]
+            if pos_share is not None and p50 is not None:
+                if pos_share >= 0.50 and p50 >= 24.0:
+                    rules.append(
+                        RuleInterpretation(
+                            rule_id="RULE-ACT-008",
+                            domain=self.domain_name,
+                            severity="info",
+                            finding=(
+                                f"Delayed Commit Landing Latency: Median authoring-to-landing interval is {p50}h across "
+                                f"{round(pos_share * 100.0, 1)}% of commits with committer_date > author_date."
+                            ),
+                            evidence={
+                                "p50_latency_hours": p50,
+                                "p90_latency_hours": latency_metrics["p90_latency_hours"],
+                                "positive_delay_share": pos_share,
+                                "committer_date_coverage_ratio": latency_metrics["committer_date_coverage_ratio"],
+                            },
+                            recommendation=None,
+                        )
+                    )
+                elif pos_share <= 0.10:
+                    rules.append(
+                        RuleInterpretation(
+                            rule_id="RULE-ACT-008",
+                            domain=self.domain_name,
+                            severity="info",
+                            finding=(
+                                "Immediate Commit Landing Pattern: Over 90% of valid commits record identical "
+                                "author_date and committer_date timestamps."
+                            ),
+                            evidence={
+                                "p50_latency_hours": p50,
+                                "positive_delay_share": pos_share,
+                                "committer_date_coverage_ratio": latency_metrics["committer_date_coverage_ratio"],
+                            },
+                            recommendation=None,
+                        )
+                    )
+
+        # RULE-ACT-009: Diff-Aware Code Churn Summary (emitted only when diff coverage >= 50% & >= 5 diffs)
+        if churn_metrics["status"] == "sufficient":
+            rules.append(
+                RuleInterpretation(
+                    rule_id="RULE-ACT-009",
+                    domain=self.domain_name,
+                    severity="info",
+                    finding=(
+                        f"Measured Code Churn Profile: {churn_metrics['gross_code_churn']} total changed lines across "
+                        f"{churn_metrics['commits_with_diff_count']} commits with diffs "
+                        f"({churn_metrics['churn_per_commit']} lines/commit, net delta {churn_metrics['net_code_delta']:+d})."
+                    ),
+                    evidence={
+                        "gross_code_churn": churn_metrics["gross_code_churn"],
+                        "net_code_delta": churn_metrics["net_code_delta"],
+                        "churn_per_commit": churn_metrics["churn_per_commit"],
+                        "diff_coverage_ratio": churn_metrics["diff_coverage_ratio"],
+                    },
                     recommendation=None,
                 )
             )
