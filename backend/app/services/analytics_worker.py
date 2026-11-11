@@ -192,3 +192,41 @@ class AnalyticsWorker:
                 max_iterations is None or iterations < max_iterations
             ):
                 await asyncio.sleep(poll_interval)
+
+
+async def run_standalone_worker(
+    *,
+    db_factory: Optional[Callable[[], Session]] = None,
+    worker_id: Optional[str] = None,
+    poll_interval: float = 1.0,
+    reconcile_interval: float = 60.0,
+    stop_event: Optional[asyncio.Event] = None,
+    max_iterations: Optional[int] = None,
+) -> None:
+    """Run an independent standalone AnalyticsWorker loop using SessionLocal by default."""
+    if db_factory is None:
+        from backend.app.database.session import SessionLocal
+
+        factory = SessionLocal
+    else:
+        factory = db_factory
+
+    worker = AnalyticsWorker(
+        worker_id=worker_id,
+        reconcile_interval_seconds=reconcile_interval,
+    )
+    await worker.run_worker_loop(
+        db_factory=factory,
+        poll_interval=poll_interval,
+        reconcile_interval=reconcile_interval,
+        stop_event=stop_event,
+        max_iterations=max_iterations,
+    )
+
+
+if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
+    try:
+        asyncio.run(run_standalone_worker())
+    except KeyboardInterrupt:
+        logger.info("AnalyticsWorker stopped by interrupt.")

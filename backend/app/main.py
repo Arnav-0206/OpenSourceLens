@@ -6,10 +6,11 @@ semantic search, and resolution velocity analytics.
 
 from __future__ import annotations
 
+import asyncio
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 import logging
-from typing import AsyncGenerator
+from typing import AsyncGenerator, Optional
 
 from fastapi import Depends, FastAPI, status
 from fastapi.middleware.cors import CORSMiddleware
@@ -23,7 +24,7 @@ from backend.app.core.config import settings
 from backend.app.core.error_handlers import register_error_handlers
 from backend.app.database.init_db import check_connection, get_table_status
 from backend.app.database.models import Repository
-from backend.app.database.session import engine, get_db, init_db
+from backend.app.database.session import SessionLocal, engine, get_db, init_db
 from backend.app.schemas.health import (
     DatabaseHealth,
     HealthResponse,
@@ -36,7 +37,7 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
-    """Application lifespan manager: verifies database readiness on startup."""
+    """Application lifespan manager: verifies database readiness and manages optional worker lifecycle."""
     logger.info("Initializing OpenSourceLens API v%s...", settings.VERSION)
     conn_status = check_connection(engine)
     logger.info(
@@ -56,9 +57,43 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         model_manager.prewarm_all()
         logger.info("All model artifacts pre-warmed successfully.")
 
-    yield
-    logger.info("Shutting down OpenSourceLens API...")
-    engine.dispose()
+    worker_stop_event: Optional[asyncio.Event] = None
+    worker_task: Optional[asyncio.Task[None]] = None
+    if settings.ENABLE_ANALYTICS_WORKER:
+        from backend.app.services.analytics_worker import AnalyticsWorker
+
+        worker_stop_event = asyncio.Event()
+        worker = AnalyticsWorker(
+            reconcile_interval_seconds=settings.ANALYTICS_WORKER_RECONCILE_INTERVAL_SECONDS
+        )
+        worker_task = asyncio.create_task(
+            worker.run_worker_loop(
+                db_factory=SessionLocal,
+                poll_interval=settings.ANALYTICS_WORKER_POLL_INTERVAL_SECONDS,
+                reconcile_interval=settings.ANALYTICS_WORKER_RECONCILE_INTERVAL_SECONDS,
+                stop_event=worker_stop_event,
+            )
+        )
+        logger.info("Embedded AnalyticsWorker started (%s).", worker.worker_id)
+
+    try:
+        yield
+    finally:
+        if worker_stop_event is not None and worker_task is not None:
+            logger.info("Stopping embedded AnalyticsWorker...")
+            worker_stop_event.set()
+            try:
+                await asyncio.wait_for(worker_task, timeout=5.0)
+            except asyncio.TimeoutError:
+                worker_task.cancel()
+                try:
+                    await worker_task
+                except asyncio.CancelledError:
+                    pass
+            except asyncio.CancelledError:
+                pass
+        logger.info("Shutting down OpenSourceLens API...")
+        engine.dispose()
 
 
 def create_application() -> FastAPI:

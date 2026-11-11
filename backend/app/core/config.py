@@ -43,6 +43,16 @@ class Settings(BaseModel):
         default_factory=lambda: os.getenv("PREWARM_ON_STARTUP", "false").lower()
         in ("true", "1", "yes")
     )
+    ENABLE_ANALYTICS_WORKER: bool = Field(
+        default_factory=lambda: os.getenv("ENABLE_ANALYTICS_WORKER", "false").lower()
+        in ("true", "1", "yes")
+    )
+    ANALYTICS_WORKER_POLL_INTERVAL_SECONDS: float = Field(
+        default_factory=lambda: float(os.getenv("ANALYTICS_WORKER_POLL_INTERVAL_SECONDS", "1.0"))
+    )
+    ANALYTICS_WORKER_RECONCILE_INTERVAL_SECONDS: float = Field(
+        default_factory=lambda: float(os.getenv("ANALYTICS_WORKER_RECONCILE_INTERVAL_SECONDS", "60.0"))
+    )
 
 
 settings = Settings()

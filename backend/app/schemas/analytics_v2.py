@@ -180,13 +180,27 @@ class AnalysisStatusResponse(BaseModel):
 
     repository: RepositoryFreshnessEnvelope
     has_analysis: bool = Field(..., description="True if at least one AnalysisRun exists for this repository")
+    status: Optional[str] = Field(
+        default=None,
+        description="Effective analysis state: 'missing', 'pending', 'running', 'completed', 'failed', or 'cancelled'",
+    )
     is_stale: bool = Field(
         ...,
         description="True when the latest completed run analyzed an older revision than repo.analytics_source_revision",
     )
+    retry_count: int = Field(0, description="Retries executed on the current/latest AnalysisRun")
+    max_retries: int = Field(3, description="Maximum allowed retries for the current/latest AnalysisRun")
+    failure_category: Optional[str] = Field(
+        default=None,
+        description="Failure category on failed/cancelled runs (e.g., 'non_retryable', 'exhausted_retries', 'stale_revision')",
+    )
     current_run: Optional[AnalysisRunRead] = Field(
         default=None,
         description="Active run if in flight, otherwise most recent AnalysisRun",
+    )
+    attempts: List[AnalysisRunAttemptRead] = Field(
+        default_factory=list,
+        description="Execution attempt audit history for current_run",
     )
     latest_completed_run_id: Optional[int] = Field(
         default=None,
@@ -204,6 +218,17 @@ class AnalysisLatestResponse(BaseModel):
     )
     active_run_id: Optional[int] = Field(default=None, description="In-flight pending or running AnalysisRun ID if any")
     active_run_status: Optional[str] = Field(default=None, description="In-flight pending or running AnalysisRun status if any")
+    run: AnalysisRunRead
+
+
+class AnalysisRunDetailResponse(BaseModel):
+    """Repository-aware response envelope for retrieving a single AnalysisRun by ID."""
+
+    repository: RepositoryFreshnessEnvelope
+    is_stale: bool = Field(
+        ...,
+        description="True when run revision lags repository.analytics_source_revision",
+    )
     run: AnalysisRunRead
 
 
