@@ -541,6 +541,89 @@ class TestRetryStateMachineAndSweeper:
         claimed_empty = queue.claim_job(worker_id="w5", db=in_memory_db)
         assert claimed_empty is None
 
+    def test_non_retryable_failure_terminates_immediately_and_preserves_atomicity(self, in_memory_db):
+        queue = AnalyticsJobQueue()
+        repo = Repository(
+            id=18,
+            repo_name="org/non-retry-test",
+            owner="org",
+            name="non-retry-test",
+            analytics_source_revision=1,
+        )
+        in_memory_db.add(repo)
+        in_memory_db.commit()
+
+        queue.enqueue_analysis(repo_id=18, db=in_memory_db, max_retries=3)
+        run, att1 = queue.claim_job(worker_id="w_nr_1", db=in_memory_db)
+        assert att1.attempt_number == 1
+        assert run.retry_count == 0
+        assert run.lease_version == 1
+
+        queue.record_attempt_failure(
+            run_id=run.id,
+            attempt_id=att1.id,
+            worker_id="w_nr_1",
+            expected_lease_version=run.lease_version,
+            attempt_number=1,
+            error_message="Non-retryable validation schema error",
+            db=in_memory_db,
+            outcome="failed",
+            retryable=False,
+            error_category="non_retryable",
+        )
+
+        in_memory_db.refresh(run)
+        in_memory_db.refresh(att1)
+        assert run.status == "failed"
+        assert run.retry_count == 0
+        assert run.max_retries == 3
+        assert run.worker_id is None
+        assert run.leased_until is None
+        assert run.completed_at is not None
+        assert run.lease_version == 2
+        assert run.error_message == "Non-retryable validation schema error"
+        assert att1.outcome == "failed"
+        assert att1.error_category == "non_retryable"
+        assert att1.error_message == "Non-retryable validation schema error"
+        assert att1.completed_at is not None
+        assert queue.claim_job(worker_id="w_nr_next", db=in_memory_db) is None
+
+        # Verify lease fencing rolls back BOTH AnalysisRunAttempt (including error_category) and AnalysisRun
+        repo_fenced = Repository(
+            id=19,
+            repo_name="org/non-retry-fenced",
+            owner="org",
+            name="non-retry-fenced",
+            analytics_source_revision=1,
+        )
+        in_memory_db.add(repo_fenced)
+        in_memory_db.commit()
+        queue.enqueue_analysis(repo_id=19, db=in_memory_db, max_retries=3)
+        fenced_run, fenced_att = queue.claim_job(worker_id="w_fenced", db=in_memory_db)
+
+        with pytest.raises(GhostWorkerRejectedException):
+            queue.record_attempt_failure(
+                run_id=fenced_run.id,
+                attempt_id=fenced_att.id,
+                worker_id="w_fenced",
+                expected_lease_version=fenced_run.lease_version + 99,
+                attempt_number=1,
+                error_message="Stale worker non-retryable fail",
+                db=in_memory_db,
+                outcome="failed",
+                retryable=False,
+                error_category="non_retryable",
+            )
+
+        in_memory_db.refresh(fenced_run)
+        in_memory_db.refresh(fenced_att)
+        assert fenced_run.status == "running"
+        assert fenced_run.worker_id == "w_fenced"
+        assert fenced_run.completed_at is None
+        assert fenced_att.outcome == "running"
+        assert fenced_att.error_category is None
+        assert fenced_att.completed_at is None
+
     def test_stale_result_detection_enqueues_replacement_run(self, in_memory_db):
         queue = AnalyticsJobQueue()
         repo = Repository(id=15, repo_name="org/stale-test", owner="org", name="stale-test", analytics_source_revision=42)

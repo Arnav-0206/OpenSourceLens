@@ -1034,6 +1034,8 @@ class AnalyticsOrchestrator:
                 error_message=err_msg,
                 db=db,
                 outcome="failed",
+                retryable=is_retryable,
+                error_category=category,
             )
             refreshed = db.scalar(select(AnalysisRun).where(AnalysisRun.id == run_id))
             if refreshed and refreshed.status == "pending":

@@ -568,14 +568,18 @@ class AnalyticsJobQueue:
         error_message: str,
         db: Session,
         outcome: str = "failed",
+        retryable: bool = True,
+        error_category: Optional[str] = None,
     ) -> bool:
         """Finalize an attempt as failed or interrupted and evaluate retry transition.
 
         Transition Rules:
-        - If retry_count < max_retries: retry_count increments, run resets to 'pending'
-          with worker_id=None, leased_until=None.
-        - If retry_count >= max_retries: retry_count increments, run transitions terminally
-          to 'failed' with completed_at=now.
+        - If retryable is False: run transitions immediately and terminally to 'failed'
+          with worker_id=None, leased_until=None, completed_at=now, and retry_count preserved.
+        - If retryable is True and retry_count < max_retries: retry_count increments, run
+          resets to 'pending' with worker_id=None, leased_until=None.
+        - If retryable is True and retry_count >= max_retries: retry_count increments, run
+          transitions terminally to 'failed' with completed_at=now.
         """
         now = datetime.now(timezone.utc)
 
@@ -591,6 +595,7 @@ class AnalyticsJobQueue:
             )
             .values(
                 outcome=outcome,
+                error_category=error_category,
                 error_message=error_message,
                 completed_at=now,
             )
@@ -601,18 +606,24 @@ class AnalyticsJobQueue:
                 f"Cannot fail attempt {attempt_id}: attempt is not in running state or worker mismatch."
             )
 
-        # 2. Check retry bounds on Run
+        # 2. Check retry bounds and failure policy on Run
         run = db.scalar(select(AnalysisRun).where(AnalysisRun.id == run_id))
         if not run:
             db.rollback()
             raise EntityNotFoundException(f"AnalysisRun {run_id} not found.", entity_type="AnalysisRun")
 
-        new_retry_count = run.retry_count + 1
-        if run.retry_count < run.max_retries:
+        if not retryable:
+            new_retry_count = run.retry_count
+            target_status = "failed"
+            completed_at = now
+            term_error = error_message
+        elif run.retry_count < run.max_retries:
+            new_retry_count = run.retry_count + 1
             target_status = "pending"
             completed_at = None
             term_error = None
         else:
+            new_retry_count = run.retry_count + 1
             target_status = "failed"
             completed_at = now
             term_error = error_message

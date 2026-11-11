@@ -963,3 +963,215 @@ class TestUnavailableDomainsFailuresRetriesFencing:
             "PENALTY-RELEASE_EVOLUTION",
         }
 
+    def test_non_retryable_validation_failure_terminates_first_attempt_with_retries_allowed(self, in_memory_db):
+        repo = _seed_rich_repository(in_memory_db, repo_id=9209, collection_mode="full_history")
+        assert repo.last_analyzed_at is None
+        from backend.app.services.analytics import (
+            ContributorIntelligenceCalculator,
+            CrossDomainSynthesisCalculator,
+            IssueIntelligenceCalculator,
+            PullRequestIntelligenceCalculator,
+            ReleaseEvolutionCalculator,
+        )
+
+        class _MalformedPayloadDevCalculator(BaseMetricCalculator):
+            @property
+            def domain_name(self) -> str:
+                return "development_activity"
+
+            def calculate(self, repository_id, db, analysis_reference_time, snapshot_revision):
+                return CalculationResult(
+                    domain="development_activity",
+                    metrics={123: "invalid_non_string_key"},
+                    coverage=MetricCoverageItem(
+                        domain="development_activity",
+                        status="sufficient",
+                        sample_size=10,
+                        min_sample_required=5,
+                    ),
+                    confidence_penalty=0.0,
+                    rules=[],
+                    details={},
+                )
+
+        orchestrator = AnalyticsOrchestrator(
+            calculators={
+                "development_activity": _MalformedPayloadDevCalculator(),
+                "contributor_ecosystem": ContributorIntelligenceCalculator(),
+                "pull_request_intelligence": PullRequestIntelligenceCalculator(),
+                "issue_intelligence": IssueIntelligenceCalculator(),
+                "release_evolution": ReleaseEvolutionCalculator(),
+                "repository_synthesis": CrossDomainSynthesisCalculator(),
+            }
+        )
+
+        # Crucially run with max_retries=3 (normal queue budget, NOT max_retries=0)
+        res = orchestrator.enqueue_and_process(
+            repository_id=repo.id,
+            db=in_memory_db,
+            worker_id="w_nr_validation",
+            max_retries=3,
+        )
+
+        assert res.status == "failed"
+        assert res.published is False
+        assert res.failure_category == "non_retryable"
+        assert res.error_message is not None
+        assert res.error_message.startswith("[NON_RETRYABLE] ValidationError:")
+
+        persisted = in_memory_db.get(AnalysisRun, res.run_id)
+        assert persisted.status == "failed"
+        assert persisted.retry_count == 0
+        assert persisted.max_retries == 3
+        assert persisted.worker_id is None
+        assert persisted.leased_until is None
+        assert persisted.completed_at is not None
+        assert persisted.metrics_payload is None
+        assert persisted.coverage_summary is None
+        assert persisted.confidence_summary is None
+        assert persisted.rule_interpretations is None
+        assert persisted.error_message == res.error_message
+
+        # Attempt telemetry persisted atomically with failure category and details
+        attempts = list(persisted.attempts)
+        assert len(attempts) == 1
+        assert attempts[0].attempt_number == 1
+        assert attempts[0].outcome == "failed"
+        assert attempts[0].error_category == "non_retryable"
+        assert attempts[0].error_message == res.error_message
+        assert attempts[0].completed_at is not None
+
+        # No job remains pending or running in queue, and repo was not marked analyzed
+        active_jobs = in_memory_db.scalars(
+            select(AnalysisRun).where(
+                AnalysisRun.repository_id == repo.id,
+                AnalysisRun.status.in_(["pending", "running"]),
+            )
+        ).all()
+        assert active_jobs == []
+        assert orchestrator.process_next_job(db=in_memory_db, worker_id="w_nr_after") is None
+        in_memory_db.refresh(repo)
+        assert repo.last_analyzed_at is None
+
+    def test_retryable_then_non_retryable_and_retry_exhaustion_preserve_consistent_counts(self, in_memory_db):
+        repo = _seed_rich_repository(in_memory_db, repo_id=9210, collection_mode="full_history")
+        from backend.app.services.analytics import (
+            ContributorIntelligenceCalculator,
+            CrossDomainSynthesisCalculator,
+            DevelopmentActivityCalculator,
+            PullRequestIntelligenceCalculator,
+            ReleaseEvolutionCalculator,
+        )
+
+        class _TransientThenNonRetryableCalc(BaseMetricCalculator):
+            def __init__(self) -> None:
+                self.calls = 0
+
+            @property
+            def domain_name(self) -> str:
+                return "issue_intelligence"
+
+            def calculate(self, repository_id, db, analysis_reference_time, snapshot_revision):
+                self.calls += 1
+                if self.calls == 1:
+                    raise RuntimeError("Temporary database lock timeout")
+                raise InvalidParameterException("Unsupported repository contract", parameter="snapshot_revision")
+
+        orch = AnalyticsOrchestrator(
+            calculators={
+                "development_activity": DevelopmentActivityCalculator(),
+                "contributor_ecosystem": ContributorIntelligenceCalculator(),
+                "pull_request_intelligence": PullRequestIntelligenceCalculator(),
+                "issue_intelligence": _TransientThenNonRetryableCalc(),
+                "release_evolution": ReleaseEvolutionCalculator(),
+                "repository_synthesis": CrossDomainSynthesisCalculator(),
+            }
+        )
+
+        # Attempt #1 hits retryable RuntimeError -> resets pending with retry_count == 1
+        res1 = orch.enqueue_and_process(
+            repository_id=repo.id,
+            db=in_memory_db,
+            worker_id="w_mix_1",
+            max_retries=3,
+        )
+        assert res1.status == "retry_scheduled"
+        assert res1.failure_category == "retryable"
+        assert res1.published is False
+
+        run = in_memory_db.get(AnalysisRun, res1.run_id)
+        assert run.status == "pending"
+        assert run.retry_count == 1
+
+        # Attempt #2 hits non-retryable InvalidParameterException -> immediate terminal failure; retry_count stays 1
+        res2 = orch.process_next_job(db=in_memory_db, worker_id="w_mix_2")
+        assert res2 is not None
+        assert res2.status == "failed"
+        assert res2.failure_category == "non_retryable"
+        assert res2.published is False
+
+        in_memory_db.expire_all()
+        persisted = in_memory_db.get(AnalysisRun, res1.run_id)
+        assert persisted.status == "failed"
+        assert persisted.retry_count == 1
+        assert persisted.worker_id is None
+        assert persisted.leased_until is None
+        assert persisted.metrics_payload is None
+        ordered_attempts = sorted(persisted.attempts, key=lambda a: a.attempt_number)
+        assert [a.outcome for a in ordered_attempts] == ["failed", "failed"]
+        assert [a.error_category for a in ordered_attempts] == ["retryable", "non_retryable"]
+        assert orch.process_next_job(db=in_memory_db, worker_id="w_mix_3") is None
+
+    def test_lease_loss_during_non_retryable_failure_blocks_ghost_mutation(self, in_memory_db):
+        repo = _seed_rich_repository(in_memory_db, repo_id=9211, collection_mode="full_history")
+        queue = AnalyticsJobQueue()
+        queue.enqueue_analysis(repo_id=repo.id, db=in_memory_db, max_retries=3)
+        run, attempt = queue.claim_job(worker_id="w_ghost_nr", db=in_memory_db)
+
+        stale_lease = run.lease_version
+        in_memory_db.expunge(run)
+        in_memory_db.expunge(attempt)
+        run.lease_version = stale_lease
+
+        # Another lease renewal bumps lease_version cleanly from 1 -> 2 before worker fails
+        queue.renew_lease(run_id=run.id, worker_id="w_ghost_nr", expected_lease_version=1, db=in_memory_db)
+
+        class _FailingCalc(BaseMetricCalculator):
+            @property
+            def domain_name(self) -> str:
+                return "development_activity"
+
+            def calculate(self, repository_id, db, analysis_reference_time, snapshot_revision):
+                raise NonRetryableAnalyticsError("Simulated non-retryable error after lease loss")
+
+        from backend.app.services.analytics import (
+            ContributorIntelligenceCalculator,
+            CrossDomainSynthesisCalculator,
+            IssueIntelligenceCalculator,
+            PullRequestIntelligenceCalculator,
+            ReleaseEvolutionCalculator,
+        )
+
+        orch = AnalyticsOrchestrator(
+            job_queue=queue,
+            calculators={
+                "development_activity": _FailingCalc(),
+                "contributor_ecosystem": ContributorIntelligenceCalculator(),
+                "pull_request_intelligence": PullRequestIntelligenceCalculator(),
+                "issue_intelligence": IssueIntelligenceCalculator(),
+                "release_evolution": ReleaseEvolutionCalculator(),
+                "repository_synthesis": CrossDomainSynthesisCalculator(),
+            },
+        )
+
+        with pytest.raises(GhostWorkerRejectedException):
+            orch.process_claimed_run(run=run, attempt=attempt, worker_id="w_ghost_nr", db=in_memory_db)
+
+        fresh_run = in_memory_db.get(AnalysisRun, run.id)
+        fresh_att = in_memory_db.get(AnalysisRunAttempt, attempt.id)
+        assert fresh_run.status == "running"
+        assert fresh_run.lease_version == 2
+        assert fresh_run.metrics_payload is None
+        assert fresh_att.outcome == "running"
+        assert fresh_att.error_category is None
+
