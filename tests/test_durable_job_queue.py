@@ -628,3 +628,92 @@ class TestIngestionWorkerExecution:
 
         asyncio.run(_run())
 
+    def test_complete_job_exposes_top_level_stream_statuses_preserving_entity_status(
+        self, in_memory_db, sample_repo
+    ):
+        """Verify coverage_summary promotes stream keys cleanly without losing entity_status or reserved keys."""
+        queue = DurableJobQueue()
+        job, _ = queue.submit_job(repo_id=sample_repo.id, mode="fast_snapshot", db=in_memory_db)
+        claimed = queue.claim_next_job(worker_id="worker-cov:1", db=in_memory_db)
+        assert claimed is not None
+
+        summary = IngestionSummary(
+            repo_name=sample_repo.repo_name,
+            mode="fast_snapshot",
+            is_partial=True,
+            partial_reason="Budget ceiling reached",
+            total_requests_consumed=10,
+            items_collected={"commits": 50, "pull_requests": 10},
+            entity_status={
+                "commits": "completed",
+                "pull_requests": "truncated",
+                "pr_reviews": "truncated",
+                "pr_inline_comments": "skipped",
+                "issues": "completed",
+                "errors": "ignored_reserved_key_collision",
+            },
+            execution_time_seconds=1.25,
+            errors=[],
+        )
+        queue.complete_job(
+            job_id=job.id,
+            worker_id="worker-cov:1",
+            lease_version=claimed.lease_version,
+            summary=summary,
+            db=in_memory_db,
+        )
+
+        in_memory_db.refresh(job)
+        assert job.status == "completed_partial"
+        assert job.coverage_summary["commits"] == "completed"
+        assert job.coverage_summary["pull_requests"] == "truncated"
+        assert job.coverage_summary["pr_reviews"] == "truncated"
+        assert job.coverage_summary["pr_inline_comments"] == "skipped"
+        assert job.coverage_summary["entity_status"]["commits"] == "completed"
+        assert job.coverage_summary["entity_status"]["pr_inline_comments"] == "skipped"
+        # Reserved envelope keys cannot be overwritten by an entity_status entry
+        assert job.coverage_summary["errors"] == []
+        assert job.coverage_summary["partial_reason"] == "Budget ceiling reached"
+
+    def test_worker_collector_summary_errors_marks_job_failed_not_completed(
+        self, in_memory_db, sample_repo
+    ):
+        """Verify collector returning non-empty summary.errors transitions CollectionRun to 'failed'."""
+        async def _run():
+            queue = DurableJobQueue()
+            job, _ = queue.submit_job(repo_id=sample_repo.id, mode="standard_diagnostic", db=in_memory_db)
+            worker = IngestionWorker(
+                worker_id="worker-err:1",
+                job_queue=queue,
+                heartbeat_interval_seconds=0.1,
+            )
+
+            mock_collector = MagicMock()
+            mock_collector.collect_repository = AsyncMock(
+                return_value=IngestionSummary(
+                    repo_name=sample_repo.repo_name,
+                    mode="standard_diagnostic",
+                    is_partial=False,
+                    resumes_at=None,
+                    total_requests_consumed=3,
+                    items_collected={"commits": 0},
+                    entity_status={"repository": "completed", "commits": "failed"},
+                    execution_time_seconds=0.4,
+                    errors=["Unexpected SQL integrity failure during commit batch"],
+                )
+            )
+
+            processed_id = await worker.process_one_job(db=in_memory_db, collector=mock_collector)
+            assert processed_id == job.id
+
+            in_memory_db.refresh(job)
+            assert job.status == "failed"
+            assert job.error_message == "Unexpected SQL integrity failure during commit batch"
+            assert job.coverage_summary["errors"] == [
+                "Unexpected SQL integrity failure during commit batch"
+            ]
+            assert job.coverage_summary["commits"] == "failed"
+            assert job.coverage_summary["entity_status"]["commits"] == "failed"
+
+        asyncio.run(_run())
+

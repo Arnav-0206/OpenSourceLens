@@ -1,5 +1,6 @@
 """Backend business logic and model services."""
 
+from backend.app.services.analytics_worker import AnalyticsWorker
 from backend.app.services.confidence_matrix import ConfidenceMatrixEvaluator
 from backend.app.services.github_client import AsyncGitHubClient
 from backend.app.services.ingestion_worker import IngestionWorker
@@ -10,6 +11,7 @@ from backend.app.services.repository_eligibility import RepositoryEligibilityChe
 from backend.app.services.validator import GitHubURLValidator
 
 __all__ = [
+    "AnalyticsWorker",
     "AsyncGitHubClient",
     "ConfidenceMatrixEvaluator",
     "DurableJobQueue",

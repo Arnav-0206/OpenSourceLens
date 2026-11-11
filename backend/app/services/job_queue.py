@@ -353,7 +353,9 @@ class DurableJobQueue:
         Raises JobLeaseLostException if the worker's lease was revoked or reassigned.
         """
         now = datetime.now(timezone.utc)
-        if summary.resumes_at is not None:
+        if summary.errors:
+            final_status = "failed"
+        elif summary.resumes_at is not None:
             final_status = "rate_limited"
         elif summary.is_partial:
             final_status = "completed_partial"
@@ -366,8 +368,24 @@ class DurableJobQueue:
             else summary.resumes_at
         )
 
+        raw_entity_status = dict(summary.entity_status or {})
+        reserved_keys = {
+            "entity_status",
+            "partial_reason",
+            "resumes_at",
+            "total_requests",
+            "errors",
+            "execution_time_seconds",
+        }
+        top_level_streams = {
+            stream_key: stream_status
+            for stream_key, stream_status in raw_entity_status.items()
+            if stream_key not in reserved_keys
+        }
+
         coverage_envelope = {
-            "entity_status": summary.entity_status,
+            **top_level_streams,
+            "entity_status": raw_entity_status,
             "partial_reason": summary.partial_reason,
             "resumes_at": resumes_at_val,
             "total_requests": summary.total_requests_consumed,

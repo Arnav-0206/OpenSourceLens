@@ -170,12 +170,23 @@ class IngestionWorker:
                 summary=summary,
                 db=db,
             )
-            logger.info(
-                "Worker %s successfully completed job ID=%d for '%s'",
-                self.worker_id,
-                job_id,
-                repo_name,
-            )
+            if summary.errors:
+                logger.error(
+                    "Worker %s finalized job ID=%d for '%s' as 'failed' due to collector errors: %s",
+                    self.worker_id,
+                    job_id,
+                    repo_name,
+                    "; ".join(summary.errors),
+                )
+            else:
+                logger.info(
+                    "Worker %s successfully finalized job ID=%d for '%s' (partial=%s, resumes_at=%s)",
+                    self.worker_id,
+                    job_id,
+                    repo_name,
+                    summary.is_partial,
+                    summary.resumes_at,
+                )
             return job_id
 
         except JobLeaseLostException:
