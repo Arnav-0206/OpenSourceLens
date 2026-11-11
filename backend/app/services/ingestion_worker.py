@@ -16,6 +16,7 @@ from sqlalchemy.orm import Session
 
 from backend.app.database.models import CollectionRun, Repository
 from backend.app.schemas.ingestion import IngestionSummary
+from backend.app.services.analytics_queue import AnalyticsJobQueue
 from backend.app.services.github_client import AsyncGitHubClient
 from backend.app.services.job_queue import DurableJobQueue, JobLeaseLostException
 from backend.app.services.rate_budgeter import EntityRateBudgeter
@@ -33,6 +34,8 @@ class IngestionWorker:
         job_queue: Optional[DurableJobQueue] = None,
         lease_duration_seconds: int = 600,
         heartbeat_interval_seconds: float = 15.0,
+        analytics_queue: Optional[AnalyticsJobQueue] = None,
+        auto_enqueue_analytics: bool = True,
     ) -> None:
         """Initialize worker with unique identity and lease configuration.
 
@@ -41,11 +44,16 @@ class IngestionWorker:
             job_queue: DurableJobQueue instance for database operations.
             lease_duration_seconds: Duration of the lease in seconds (default: 600s).
             heartbeat_interval_seconds: Frequency of heartbeat lease renewals in seconds.
+            analytics_queue: Optional AnalyticsJobQueue reused for post-ingestion handoff.
+            auto_enqueue_analytics: Whether eligible finalized collections enqueue analytics.
         """
         self.job_queue = job_queue or DurableJobQueue()
+        self.analytics_queue = analytics_queue or AnalyticsJobQueue()
+        self.auto_enqueue_analytics = bool(auto_enqueue_analytics)
         self.worker_id = worker_id or self.job_queue.generate_worker_id("worker")
         self.lease_duration_seconds = lease_duration_seconds
         self.heartbeat_interval_seconds = heartbeat_interval_seconds
+        self.last_analytics_enqueue_result: Optional[Dict[str, Any]] = None
 
     async def process_one_job(
         self,
@@ -82,6 +90,7 @@ class IngestionWorker:
             return None
 
         job_id = job.id
+        repo_id = job.repository_id
         lease_version = job.lease_version
         mode = job.mode
 
@@ -187,7 +196,6 @@ class IngestionWorker:
                     summary.is_partial,
                     summary.resumes_at,
                 )
-            return job_id
 
         except JobLeaseLostException:
             logger.critical(
@@ -228,6 +236,115 @@ class IngestionWorker:
                 pass
             if owns_client and hasattr(active_client, "close"):
                 await active_client.close()
+
+        self._enqueue_post_ingestion_analytics(
+            repo_id=repo_id,
+            repo_name=repo_name,
+            job_id=job_id,
+            summary=summary,
+            db=db,
+        )
+        return job_id
+
+    def _enqueue_post_ingestion_analytics(
+        self,
+        *,
+        repo_id: int,
+        repo_name: str,
+        job_id: int,
+        summary: IngestionSummary,
+        db: Session,
+    ) -> None:
+        """Enqueue analytics after committed completion with strict failure isolation."""
+        if not self.auto_enqueue_analytics:
+            self.last_analytics_enqueue_result = {
+                "job_id": job_id,
+                "repository_id": repo_id,
+                "status": "disabled",
+                "enqueued": False,
+                "analysis_run_id": None,
+                "error": None,
+            }
+            return
+
+        if summary.errors or summary.resumes_at is not None:
+            skip_reason = "collector_errors" if summary.errors else "rate_limited"
+            self.last_analytics_enqueue_result = {
+                "job_id": job_id,
+                "repository_id": repo_id,
+                "status": f"skipped_{skip_reason}",
+                "enqueued": False,
+                "analysis_run_id": None,
+                "error": None,
+            }
+            return
+
+        finalized_status = db.scalar(
+            select(CollectionRun.status).where(CollectionRun.id == job_id)
+        )
+        if finalized_status not in ("completed", "completed_partial"):
+            self.last_analytics_enqueue_result = {
+                "job_id": job_id,
+                "repository_id": repo_id,
+                "status": f"skipped_status_{finalized_status}",
+                "enqueued": False,
+                "analysis_run_id": None,
+                "error": None,
+            }
+            return
+
+        try:
+            run, is_new = self.analytics_queue.enqueue_analysis(
+                repo_id=repo_id,
+                db=db,
+                collection_run_id=job_id,
+            )
+            self.last_analytics_enqueue_result = {
+                "job_id": job_id,
+                "repository_id": repo_id,
+                "status": "enqueued" if is_new else f"reused_{run.status}",
+                "enqueued": is_new,
+                "analysis_run_id": run.id,
+                "requested_source_revision": run.requested_source_revision,
+                "error": None,
+            }
+            logger.info(
+                "Post-ingestion analytics handoff for '%s' (collection_run_id=%d): "
+                "analysis_run_id=%d, is_new=%s, status=%s, requested_rev=%d",
+                repo_name,
+                job_id,
+                run.id,
+                is_new,
+                run.status,
+                run.requested_source_revision,
+            )
+        except Exception as exc:
+            try:
+                if db.in_transaction():
+                    db.rollback()
+            except Exception:
+                logger.exception(
+                    "Rollback failed after analytics enqueue error for collection_run_id=%d",
+                    job_id,
+                )
+            self.last_analytics_enqueue_result = {
+                "job_id": job_id,
+                "repository_id": repo_id,
+                "status": "enqueue_failed",
+                "enqueued": False,
+                "analysis_run_id": None,
+                "error": f"{type(exc).__name__}: {exc}",
+            }
+            logger.exception(
+                "Analytics enqueue failed after completed ingestion for '%s' "
+                "(repository_id=%d, collection_run_id=%d, collection_status=%s); "
+                "committed ingestion data preserved for later reconciliation: %s",
+                repo_name,
+                repo_id,
+                job_id,
+                finalized_status,
+                exc,
+            )
 
     async def run_worker_loop(
         self,
