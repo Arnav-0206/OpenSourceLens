@@ -725,6 +725,115 @@ class TestKaplanMeierSurvivalAndBottlenecks:
         assert size["prs_missing_diff_count"] == 12
         assert size["bins"] is None
 
+    @pytest.mark.parametrize(
+        "small_merged,xl_merged,xl_unmerged,expect_rule",
+        [
+            (1, 1, 0, False),   # Singleton small & singleton XL -> underlying medians preserved, RULE-PR-004 omitted
+            (3, 1, 0, False),   # Adequate small paired with singleton XL -> omitted
+            (1, 3, 0, False),   # Singleton small paired with adequate XL -> omitted
+            (2, 1, 2, False),   # XL has pr_count=3 but merged_count=1 < 2 -> strictly requires merged_count >= 2
+            (2, 2, 0, True),    # Both bins meet merged_count >= 2 -> RULE-PR-004 emitted
+        ],
+    )
+    def test_rule_pr_004_requires_two_merged_prs_per_bin(
+        self, in_memory_db, small_merged, xl_merged, xl_unmerged, expect_rule
+    ):
+        calc = PullRequestIntelligenceCalculator()
+        ref_time = datetime(2026, 11, 11, 0, 0, 0, tzinfo=timezone.utc)
+        in_memory_db.add(Repository(id=8008, repo_name="pr/rule4", owner="pr", name="rule4", analytics_source_revision=1))
+
+        pr_seq = 1
+        c_dt = ref_time - timedelta(days=20)
+
+        # Small merged PRs: 2.0h latency
+        for _ in range(small_merged):
+            in_memory_db.add(
+                PullRequest(
+                    id=80800 + pr_seq,
+                    repository_id=8008,
+                    pr_number=pr_seq,
+                    title=f"Small #{pr_seq}",
+                    state="closed",
+                    author="alice",
+                    created_at=c_dt,
+                    closed_at=c_dt + timedelta(hours=2),
+                    merged_at=c_dt + timedelta(hours=2),
+                    additions=10,
+                    deletions=5,
+                )
+            )
+            pr_seq += 1
+
+        # XL merged PRs: 100.0h latency (>= 3x small)
+        for _ in range(xl_merged):
+            in_memory_db.add(
+                PullRequest(
+                    id=80800 + pr_seq,
+                    repository_id=8008,
+                    pr_number=pr_seq,
+                    title=f"XL Merged #{pr_seq}",
+                    state="closed",
+                    author="alice",
+                    created_at=c_dt,
+                    closed_at=c_dt + timedelta(hours=100),
+                    merged_at=c_dt + timedelta(hours=100),
+                    additions=900,
+                    deletions=300,
+                )
+            )
+            pr_seq += 1
+
+        # XL closed-unmerged PRs (tests merged_count vs pr_count)
+        for _ in range(xl_unmerged):
+            in_memory_db.add(
+                PullRequest(
+                    id=80800 + pr_seq,
+                    repository_id=8008,
+                    pr_number=pr_seq,
+                    title=f"XL Closed #{pr_seq}",
+                    state="closed",
+                    author="alice",
+                    created_at=c_dt,
+                    closed_at=c_dt + timedelta(hours=100),
+                    merged_at=None,
+                    additions=900,
+                    deletions=300,
+                )
+            )
+            pr_seq += 1
+
+        # Pad medium bin so aggregate resolved-with-diff count >= 10
+        existing = small_merged + xl_merged + xl_unmerged
+        for _ in range(max(0, 10 - existing)):
+            in_memory_db.add(
+                PullRequest(
+                    id=80800 + pr_seq,
+                    repository_id=8008,
+                    pr_number=pr_seq,
+                    title=f"Med #{pr_seq}",
+                    state="closed",
+                    author="alice",
+                    created_at=c_dt,
+                    closed_at=c_dt + timedelta(hours=10),
+                    merged_at=c_dt + timedelta(hours=10),
+                    additions=80,
+                    deletions=20,
+                )
+            )
+            pr_seq += 1
+
+        in_memory_db.commit()
+
+        res = calc.calculate(8008, in_memory_db, ref_time, snapshot_revision=1)
+        bins = res.metrics["size_vs_turnaround"]["bins"]
+        assert res.metrics["size_vs_turnaround"]["status"] == "sufficient"
+        # Underlying bin metrics MUST remain unmodified and visible regardless of RULE-PR-004 gate
+        assert bins["small"]["merged_count"] == small_merged
+        assert bins["small"]["median_merge_latency_hours"] == 2.0
+        assert bins["xl"]["merged_count"] == xl_merged
+        assert bins["xl"]["median_merge_latency_hours"] == 100.0
+        assert any(r.rule_id == "RULE-PR-004" for r in res.rules) is expect_rule
+
 
 class TestBenchmarkAndQueueIntegrationC4:
     """Verifies safe offline benchmark DB execution and atomic AnalyticsJobQueue publication."""

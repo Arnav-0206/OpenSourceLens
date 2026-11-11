@@ -1507,9 +1507,18 @@ class PullRequestIntelligenceCalculator(BaseMetricCalculator):
             )
 
         if size_impact["status"] == "sufficient" and size_impact["bins"]:
-            small_med = size_impact["bins"]["small"]["median_merge_latency_hours"]
-            xl_med = size_impact["bins"]["xl"]["median_merge_latency_hours"]
-            if small_med is not None and small_med > 0.0 and xl_med is not None and xl_med >= 3.0 * small_med:
+            small_bin = size_impact["bins"]["small"]
+            xl_bin = size_impact["bins"]["xl"]
+            small_med = small_bin["median_merge_latency_hours"]
+            xl_med = xl_bin["median_merge_latency_hours"]
+            if (
+                small_bin["merged_count"] >= 2
+                and xl_bin["merged_count"] >= 2
+                and small_med is not None
+                and small_med > 0.0
+                and xl_med is not None
+                and xl_med >= 3.0 * small_med
+            ):
                 rules.append(
                     RuleInterpretation(
                         rule_id="RULE-PR-004",
@@ -1522,6 +1531,8 @@ class PullRequestIntelligenceCalculator(BaseMetricCalculator):
                         evidence={
                             "small_median_hours": small_med,
                             "xl_median_hours": xl_med,
+                            "small_merged_count": small_bin["merged_count"],
+                            "xl_merged_count": xl_bin["merged_count"],
                             "diff_coverage_ratio": size_impact["diff_coverage_ratio"],
                         },
                         recommendation="Encouraging smaller, focused pull requests may help lower review turnaround.",
