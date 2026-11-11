@@ -25,6 +25,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from backend.app.database.base import Base
 from backend.app.database.models import (
+    CollectionRun,
     Commit,
     Issue,
     PullRequest,
@@ -45,6 +46,8 @@ from backend.app.services.analytics import (
     ReleaseEvolutionCalculator,
 )
 from backend.app.services.analytics.cross_domain import (
+    _lag1_autocorrelation,
+    _lag1_autocorrelation_with_pairs,
     apply_benjamini_hochberg_fdr,
     evaluate_paired_spearman_permutation,
 )
@@ -546,6 +549,394 @@ class TestCrossDomainStatisticsAndCorrelationsC6:
         assert p1["q_value"] is None
         assert p1["max_abs_ar1"] > 0.40
         assert any(r.rule_id == "RULE-SYN-003" for r in res_trend.rules)
+
+    def test_pair01_strict_monthly_diff_coverage_and_zero_churn(self, in_memory_db):
+        """Verify PAIR-01 requires 100% monthly diff coverage, drops 75%/0% months, and keeps genuine 0 churn."""
+        calc = CrossDomainSynthesisCalculator()
+        ref_time = datetime(2026, 3, 20, 0, 0, 0, tzinfo=timezone.utc)
+        months = [(2025, m) for m in range(1, 13)] + [(2026, 1), (2026, 2)]
+
+        # Repo 2004: 12 months with 100% diff coverage (incl. genuine zero churn in 2025-02),
+        # 2025-11 with 75% coverage (3/4), and 2025-12 with 0% coverage (0/4).
+        in_memory_db.add(Repository(id=2004, repo_name="syn/strictdiff", owner="syn", name="strictdiff", analytics_source_revision=1))
+        for m_idx, (yr, mo) in enumerate(months):
+            m_dt = datetime(yr, mo, 10, 12, 0, tzinfo=timezone.utc)
+            ym_str = f"{yr:04d}-{mo:02d}"
+            for c_i in range(4):
+                if ym_str == "2025-02":
+                    adds, dels = 0, 0  # Genuine 0-line commits at 100% coverage
+                elif ym_str == "2025-11":
+                    adds, dels = (None, None) if c_i == 3 else (40, 10)  # 75% monthly coverage
+                elif ym_str == "2025-12":
+                    adds, dels = None, None  # 0% monthly coverage
+                else:
+                    adds, dels = 25 * (m_idx + 1), 5
+                in_memory_db.add(
+                    Commit(
+                        repository_id=2004,
+                        sha=f"sd_{yr}_{mo}_{c_i}",
+                        author_id=101,
+                        author_date=m_dt + timedelta(hours=c_i),
+                        additions=adds,
+                        deletions=dels,
+                    )
+                )
+            for i_i in range((m_idx % 5) + 1):
+                in_memory_db.add(
+                    Issue(
+                        id=90000 + m_idx * 10 + i_i,
+                        repository_id=2004,
+                        repo_name="syn/strictdiff",
+                        issue_number=9000 + m_idx * 10 + i_i,
+                        title=f"SD Iss {yr}-{mo}-{i_i}",
+                        state="open",
+                        author="u",
+                        created_at=m_dt + timedelta(hours=i_i),
+                    )
+                )
+
+        # Repo 2005: missing diffs everywhere + gap month in 2025-02 -> churn must NEVER become 0.0!
+        in_memory_db.add(Repository(id=2005, repo_name="syn/nodiff", owner="syn", name="nodiff", analytics_source_revision=1))
+        for yr, mo in [(2025, 1), (2025, 3)]:
+            in_memory_db.add(
+                Commit(
+                    repository_id=2005,
+                    sha=f"nd_{yr}_{mo}",
+                    author_id=101,
+                    author_date=datetime(yr, mo, 5, 12, 0, tzinfo=timezone.utc),
+                    additions=None,
+                    deletions=None,
+                )
+            )
+        in_memory_db.commit()
+
+        series = CrossDomainSynthesisCalculator._build_monthly_aligned_series(2004, in_memory_db, ref_time)
+        churn_map = series["monthly_code_churn"]
+        diag = series["pair01_diagnostics"]
+
+        assert churn_map[(2025, 2)] == 0.0
+        assert churn_map[(2025, 11)] is None
+        assert churn_map[(2025, 12)] is None
+        assert diag["monthly_diff_coverage_ratio"]["2025-01"] == 1.0
+        assert diag["monthly_diff_coverage_ratio"]["2025-02"] == 1.0
+        assert diag["monthly_diff_coverage_ratio"]["2025-11"] == 0.75
+        assert diag["monthly_diff_coverage_ratio"]["2025-12"] == 0.0
+        assert diag["complete_diff_months_count"] == 12
+        assert diag["incomplete_diff_months_excluded_count"] == 2
+
+        res = calc.calculate(2004, in_memory_db, ref_time, snapshot_revision=1)
+        pair1 = {p["pair_id"]: p for p in res.metrics["cross_domain_correlations"]["pairs"]}["PAIR-01"]
+        assert pair1["k_months"] == 12
+        assert "2025-02" in pair1["overlapping_months"]
+        assert "2025-11" not in pair1["overlapping_months"]
+        assert "2025-12" not in pair1["overlapping_months"]
+        assert pair1["series_diagnostics"]["monthly_diff_coverage_ratio"]["2025-11"] == 0.75
+        assert pair1["series_diagnostics"]["monthly_diff_coverage_ratio"]["2025-12"] == 0.0
+
+        # Missing diff data everywhere (even across interior 0-commit gap month 2025-02) stays None
+        series_missing = CrossDomainSynthesisCalculator._build_monthly_aligned_series(2005, in_memory_db, ref_time)
+        assert series_missing["monthly_code_churn"][(2025, 1)] is None
+        assert series_missing["monthly_code_churn"][(2025, 2)] is None
+        assert series_missing["monthly_code_churn"][(2025, 3)] is None
+
+    def test_pair02_review_stream_coverage_guard_modes_and_truncation(self, in_memory_db):
+        """Verify PAIR-02 gating across full_history, standard_diagnostic, fast_snapshot, skipped & truncated reviews."""
+        calc = CrossDomainSynthesisCalculator()
+        ref_time = datetime(2026, 3, 20, 0, 0, 0, tzinfo=timezone.utc)
+        months = [(2025 + (m // 12), (m % 12) + 1) for m in range(14)]
+        c_pattern = [6, 11, 9, 2, 3, 10, 13, 7, 1, 4, 12, 5, 8, 14]
+
+        def _seed_pr_repo(repo_id: int, run_kwargs: dict) -> None:
+            in_memory_db.add(Repository(id=repo_id, repo_name=f"syn/p2_{repo_id}", owner="syn", name=f"p2_{repo_id}", analytics_source_revision=1))
+            in_memory_db.add(CollectionRun(repository_id=repo_id, **run_kwargs))
+            for idx, (yr, mo) in enumerate(months):
+                m_dt = datetime(yr, mo, 5, 12, 0, tzinfo=timezone.utc)
+                n_val = c_pattern[idx]
+                slow_h = float(n_val * 4)
+                # Populate varying commits/issues too so PAIR-01 / PAIR-03 interact with BH FDR cleanly
+                for k_i in range(n_val):
+                    in_memory_db.add(
+                        Commit(
+                            repository_id=repo_id,
+                            sha=f"p2c_{repo_id}_{idx}_{k_i}",
+                            author_id=101,
+                            author_date=m_dt + timedelta(hours=k_i),
+                            additions=50 * (k_i + 1),
+                            deletions=5,
+                        )
+                    )
+                    in_memory_db.add(
+                        Issue(
+                            id=repo_id * 10000 + idx * 20 + k_i,
+                            repository_id=repo_id,
+                            repo_name=f"syn/p2_{repo_id}",
+                            issue_number=idx * 20 + k_i + 1,
+                            title=f"Iss {idx}_{k_i}",
+                            state="open",
+                            author="u",
+                            created_at=m_dt + timedelta(hours=k_i),
+                        )
+                    )
+                for p_i in range(2):
+                    pr_pk = repo_id * 1000 + idx * 2 + p_i + 100
+                    is_abandoned = (n_val >= 10) and (p_i == 0)
+                    in_memory_db.add(
+                        PullRequest(
+                            id=pr_pk,
+                            repository_id=repo_id,
+                            pr_number=idx * 2 + p_i + 1,
+                            title=f"PR {pr_pk}",
+                            state="closed",
+                            author="author_p2",
+                            author_id=201,
+                            created_at=m_dt,
+                            closed_at=m_dt + timedelta(days=1),
+                            merged_at=None if is_abandoned else (m_dt + timedelta(days=1)),
+                        )
+                    )
+                    in_memory_db.add(
+                        PullRequestReview(
+                            pull_request_id=pr_pk,
+                            review_id=pr_pk * 10 + 1,
+                            author="maintainer",
+                            author_id=202,
+                            state="APPROVED",
+                            submitted_at=m_dt + timedelta(hours=slow_h),
+                        )
+                    )
+
+        # A. Complete full_history -> representative, tested!
+        _seed_pr_repo(
+            2007,
+            {
+                "mode": "full_history",
+                "status": "completed",
+                "is_partial": False,
+                "coverage_summary": {
+                    "pull_requests": "completed",
+                    "pr_reviews": "completed",
+                    "pr_inline_comments": "completed",
+                    "issue_comments": "completed",
+                },
+            },
+        )
+        # B. Complete standard_diagnostic -> compatible (tested), explicitly bounded / non-representative
+        _seed_pr_repo(
+            2008,
+            {
+                "mode": "standard_diagnostic",
+                "status": "completed",
+                "is_partial": False,
+                "coverage_summary": {
+                    "pull_requests": "completed",
+                    "pr_reviews": "completed",
+                    "pr_inline_comments": "completed",
+                    "issue_comments": "completed",
+                },
+            },
+        )
+        # C. fast_snapshot (pr_inline_comments skipped by mode) -> inferential suppressed, descriptive preserved!
+        _seed_pr_repo(
+            2009,
+            {
+                "mode": "fast_snapshot",
+                "status": "completed",
+                "is_partial": False,
+                "coverage_summary": {
+                    "pull_requests": "completed",
+                    "pr_reviews": "completed",
+                    "pr_inline_comments": "skipped",
+                    "issue_comments": "completed",
+                },
+            },
+        )
+        # D. standard_diagnostic with skipped pr_reviews -> inferential suppressed, descriptive preserved!
+        _seed_pr_repo(
+            2010,
+            {
+                "mode": "standard_diagnostic",
+                "status": "completed",
+                "is_partial": False,
+                "coverage_summary": {
+                    "pull_requests": "completed",
+                    "pr_reviews": "skipped",
+                    "pr_inline_comments": "completed",
+                    "issue_comments": "completed",
+                },
+            },
+        )
+        # E. standard_diagnostic with truncated pr_reviews & is_partial=True -> inferential suppressed, descriptive preserved!
+        _seed_pr_repo(
+            2011,
+            {
+                "mode": "standard_diagnostic",
+                "status": "completed",
+                "is_partial": True,
+                "coverage_summary": {
+                    "pull_requests": "completed",
+                    "pr_reviews": "truncated",
+                    "pr_inline_comments": "completed",
+                    "issue_comments": "completed",
+                },
+            },
+        )
+        in_memory_db.commit()
+
+        def _get_pair(repo_id: int, pid: str) -> dict:
+            res = calc.calculate(repo_id, in_memory_db, ref_time, snapshot_revision=1)
+            return {p["pair_id"]: p for p in res.metrics["cross_domain_correlations"]["pairs"]}[pid]
+
+        p2_full = _get_pair(2007, "PAIR-02")
+        assert p2_full["status"] == "tested"
+        assert p2_full["p_value"] is not None
+        assert p2_full["q_value"] is not None
+        assert p2_full["collection_coverage"]["coverage_status"] == "complete"
+        assert p2_full["collection_coverage"]["is_representative"] is True
+
+        p2_diag = _get_pair(2008, "PAIR-02")
+        assert p2_diag["status"] == "tested"
+        assert p2_diag["p_value"] is not None
+        assert p2_diag["collection_coverage"]["coverage_status"] == "bounded_mode_completed"
+        assert p2_diag["collection_coverage"]["is_bounded_mode"] is True
+        assert p2_diag["collection_coverage"]["is_representative"] is False
+
+        p2_fast = _get_pair(2009, "PAIR-02")
+        assert p2_fast["status"] == "incomplete_review_coverage"
+        assert p2_fast["spearman_r"] > 0.5
+        assert p2_fast["p_value"] is None
+        assert p2_fast["q_value"] is None
+        assert p2_fast["significant_fdr_05"] is False
+        assert p2_fast["collection_coverage"]["is_representative"] is False
+        assert "pr_inline_comments" in p2_fast["collection_coverage"]["skipped_streams"]
+
+        p2_skip = _get_pair(2010, "PAIR-02")
+        assert p2_skip["status"] == "incomplete_review_coverage"
+        assert p2_skip["spearman_r"] > 0.5
+        assert p2_skip["p_value"] is None
+        assert "pr_reviews" in p2_skip["collection_coverage"]["skipped_streams"]
+
+        p2_trunc = _get_pair(2011, "PAIR-02")
+        assert p2_trunc["status"] == "incomplete_review_coverage"
+        assert p2_trunc["spearman_r"] > 0.5
+        assert p2_trunc["p_value"] is None
+        assert p2_trunc["collection_coverage"]["is_partial_run"] is True
+        assert "pr_reviews" in p2_trunc["collection_coverage"]["truncated_streams"]
+        # Suppressed PAIR-02 must not break BH FDR q_values for valid PAIR-01 / PAIR-03
+        p1_trunc = _get_pair(2011, "PAIR-01")
+        p3_trunc = _get_pair(2011, "PAIR-03")
+        assert p1_trunc["status"] == "tested" and p1_trunc["q_value"] is not None
+        assert p3_trunc["status"] == "tested" and p3_trunc["q_value"] is not None
+
+    def test_ar1_consecutive_calendar_months_only_and_gap_handling(self):
+        """Verify missing calendar months break AR(1) lag pairs while consecutive months (incl. Dec->Jan) stay paired."""
+        # 1. Prompt example: Jan-Feb and May-Jun are valid consecutive pairs; Feb-May MUST NOT pair!
+        gap_months = [(2025, 1), (2025, 2), (2025, 5), (2025, 6)]
+        gap_vals = [1.0, 10.0, 2.0, 20.0]
+        r_consec, pair_cnt = _lag1_autocorrelation_with_pairs(gap_vals, months=gap_months)
+        assert pair_cnt == 2
+        assert round(r_consec, 4) == 1.0  # Contrasts with naive compressed (~ -0.77)
+        assert round(_lag1_autocorrelation(gap_vals, months=gap_months), 4) == 1.0
+
+        # 2. All-odd isolated months over 12 observations -> zero consecutive pairs -> r_AR1 == 0.0
+        odd_months = [(2025 + (m // 12), (m % 12) + 1) for m in range(0, 24, 2)]
+        odd_series = {ym: float(idx + 1) for idx, ym in enumerate(odd_months)}
+        res_isolated = evaluate_paired_spearman_permutation(
+            77, 1, "PAIR-ODD", "x", "X", "y", "Y", odd_series, odd_series, permutations=1000
+        )
+        assert res_isolated["k_months"] == 12
+        assert res_isolated["ar1_lag_pairs_count"] == 0
+        assert res_isolated["ar1_x"] == 0.0
+        assert res_isolated["status"] == "tested"
+        assert res_isolated["p_value"] is not None
+
+        # 3. Real year-boundary Dec->Jan paired + gaps broken: naive compressed r_AR1=0.4304 (>0.40),
+        # true consecutive-calendar-month r_AR1=-0.0802 (<=0.40), so permutation testing runs cleanly!
+        block_months = [
+            (2025, 1), (2025, 2),
+            (2025, 4), (2025, 5),
+            (2025, 7), (2025, 8),
+            (2025, 10), (2025, 11),
+            (2026, 1), (2026, 2),
+            (2026, 4), (2026, 5),
+        ]
+        vals_gap_trap = [2.0, 9.0, 9.0, 11.0, 11.0, 3.0, 3.0, 1.0, 1.0, 8.0, 8.0, 6.0]
+        sx = dict(zip(block_months, vals_gap_trap))
+        sy = {ym: v * 2.0 for ym, v in sx.items()}
+        res_gap_trap = evaluate_paired_spearman_permutation(
+            78, 1, "PAIR-GAP", "x", "X", "y", "Y", sx, sy, permutations=1000
+        )
+        assert res_gap_trap["k_months"] == 12
+        assert res_gap_trap["ar1_lag_pairs_count"] == 6
+        assert abs(res_gap_trap["max_abs_ar1"]) <= 0.40
+        assert res_gap_trap["serial_dependence_guardrail_tripped"] is False
+        assert res_gap_trap["status"] == "tested"
+        assert res_gap_trap["p_value"] is not None
+
+        # 4. Year boundary (2025, 12) -> (2026, 1) in a continuous 12-month ramp preserves AR(1) > 0.40 suppression
+        cont_months = [(2025, m) for m in range(7, 13)] + [(2026, m) for m in range(1, 7)]
+        cont_ramp = {ym: float(idx + 1) for idx, ym in enumerate(cont_months)}
+        res_cont = evaluate_paired_spearman_permutation(
+            79, 1, "PAIR-CONT", "x", "X", "y", "Y", cont_ramp, cont_ramp, permutations=1000
+        )
+        assert res_cont["ar1_lag_pairs_count"] == 11
+        assert res_cont["status"] == "serial_dependence_detected"
+        assert res_cont["p_value"] is None
+
+    def test_determinism_after_reliability_correction(self, in_memory_db):
+        """Verify repeated CrossDomainSynthesisCalculator runs produce bit-identical metrics and rules."""
+        calc = CrossDomainSynthesisCalculator()
+        ref_time = datetime(2026, 3, 20, 0, 0, 0, tzinfo=timezone.utc)
+        in_memory_db.add(Repository(id=2012, repo_name="syn/det", owner="syn", name="det", analytics_source_revision=3))
+        in_memory_db.add(
+            CollectionRun(
+                repository_id=2012,
+                mode="standard_diagnostic",
+                status="completed",
+                is_partial=False,
+                coverage_summary={
+                    "pull_requests": "completed",
+                    "pr_reviews": "completed",
+                    "pr_inline_comments": "completed",
+                    "issue_comments": "completed",
+                },
+            )
+        )
+        months = [(2025 + (m // 12), (m % 12) + 1) for m in range(14)]
+        c_pattern = [6, 11, 9, 2, 3, 10, 13, 7, 1, 4, 12, 5, 8, 14]
+        for idx, (yr, mo) in enumerate(months):
+            m_dt = datetime(yr, mo, 8, 12, 0, tzinfo=timezone.utc)
+            n_val = c_pattern[idx]
+            for c_i in range(2):
+                # Month idx == 6 gets partial diff coverage (1/2) -> deterministic gap in PAIR-01!
+                in_memory_db.add(
+                    Commit(
+                        repository_id=2012,
+                        sha=f"detc_{idx}_{c_i}",
+                        author_id=101,
+                        author_date=m_dt + timedelta(hours=c_i),
+                        additions=None if (idx == 6 and c_i == 1) else 30 * n_val,
+                        deletions=None if (idx == 6 and c_i == 1) else 5,
+                    )
+                )
+            for i_i in range(n_val):
+                in_memory_db.add(
+                    Issue(
+                        id=2012000 + idx * 20 + i_i,
+                        repository_id=2012,
+                        repo_name="syn/det",
+                        issue_number=idx * 20 + i_i + 1,
+                        title=f"DetIss {idx}_{i_i}",
+                        state="open",
+                        author="u",
+                        created_at=m_dt + timedelta(hours=i_i),
+                    )
+                )
+        in_memory_db.commit()
+
+        run1 = calc.calculate(2012, in_memory_db, ref_time, snapshot_revision=3)
+        run2 = calc.calculate(2012, in_memory_db, ref_time, snapshot_revision=3)
+        assert run1.metrics == run2.metrics
+        assert [r.model_dump() for r in run1.rules] == [r.model_dump() for r in run2.rules]
 
 
 class TestBenchmarkPayloadAndQueueIntegrationC6:

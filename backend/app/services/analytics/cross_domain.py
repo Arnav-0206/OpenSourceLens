@@ -33,6 +33,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from backend.app.database.models import (
+    CollectionRun,
     Commit,
     Contributor,
     Issue,
@@ -56,6 +57,7 @@ from backend.app.services.analytics.issues import IssueIntelligenceCalculator
 from backend.app.services.analytics.pull_requests import (
     FORMAL_REVIEW_STATES,
     PullRequestIntelligenceCalculator,
+    _extract_stream_status,
 )
 from backend.app.services.analytics.releases import ReleaseEvolutionCalculator
 from backend.app.services.analytics.rule_engine import (
@@ -86,19 +88,57 @@ def _month_range_sequence(
     return out
 
 
-def _lag1_autocorrelation(values: List[float]) -> float:
-    """Compute finite Pearson lag-1 autocorrelation coefficient with zero-variance guard."""
-    if len(values) < 3:
-        return 0.0
-    x0 = np.asarray(values[:-1], dtype=np.float64)
-    x1 = np.asarray(values[1:], dtype=np.float64)
+def _month_index(ym: Tuple[int, int]) -> int:
+    """Convert (year, month) tuple to monotonic calendar month ordinal."""
+    return ym[0] * 12 + (ym[1] - 1)
+
+
+def _lag1_autocorrelation_with_pairs(
+    values: List[float],
+    months: Optional[List[Tuple[int, int]]] = None,
+) -> Tuple[float, int]:
+    """Compute Pearson lag-1 autocorrelation strictly over genuinely consecutive calendar months."""
+    if len(values) < 2:
+        return 0.0, 0
+
+    x0_vals: List[float] = []
+    x1_vals: List[float] = []
+    if months is None:
+        x0_vals = list(values[:-1])
+        x1_vals = list(values[1:])
+    else:
+        if len(months) != len(values):
+            raise ValueError("months and values must have identical length")
+        ordered = sorted(zip(months, values), key=lambda item: item[0])
+        for idx in range(len(ordered) - 1):
+            ym_prev, v_prev = ordered[idx]
+            ym_curr, v_curr = ordered[idx + 1]
+            # Missing calendar months break the lag-1 relationship (only delta == 1 month qualifies)
+            if _month_index(ym_curr) - _month_index(ym_prev) == 1:
+                x0_vals.append(v_prev)
+                x1_vals.append(v_curr)
+
+    if len(x0_vals) < 2:
+        return 0.0, len(x0_vals)
+
+    x0 = np.asarray(x0_vals, dtype=np.float64)
+    x1 = np.asarray(x1_vals, dtype=np.float64)
     c0 = x0 - np.mean(x0)
     c1 = x1 - np.mean(x1)
     denom = float(np.sqrt(np.dot(c0, c0) * np.dot(c1, c1)))
     if denom <= 1e-12:
-        return 0.0
+        return 0.0, len(x0_vals)
     val = float(np.dot(c0, c1) / denom)
-    return val if math.isfinite(val) else 0.0
+    return (val if math.isfinite(val) else 0.0), len(x0_vals)
+
+
+def _lag1_autocorrelation(
+    values: List[float],
+    months: Optional[List[Tuple[int, int]]] = None,
+) -> float:
+    """Compute finite Pearson lag-1 autocorrelation across consecutive calendar months."""
+    val, _ = _lag1_autocorrelation_with_pairs(values=values, months=months)
+    return val
 
 
 def _normalized_ranks(values: List[float]) -> Optional[np.ndarray]:
@@ -123,6 +163,8 @@ def evaluate_paired_spearman_permutation(
     series_y: Dict[Tuple[int, int], Optional[float]],
     permutations: int = PERMUTATION_COUNT,
     methodology_version: str = CURRENT_METHODOLOGY_VERSION,
+    coverage_guard: Optional[Dict[str, Any]] = None,
+    series_diagnostics: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """Evaluate monthly paired Spearman correlation with Monte Carlo permutations & AR(1) guardrail."""
     overlapping_months = sorted(
@@ -147,6 +189,10 @@ def evaluate_paired_spearman_permutation(
         "association_type": "Descriptive Monotonic Association (Non-Causal)",
         "confidence_intervals_deferred": True,
     }
+    if coverage_guard is not None:
+        base_meta["collection_coverage"] = coverage_guard
+    if series_diagnostics is not None:
+        base_meta["series_diagnostics"] = series_diagnostics
 
     if k < MIN_OVERLAPPING_MONTHS:
         return {
@@ -158,6 +204,7 @@ def evaluate_paired_spearman_permutation(
             "significant_fdr_05": False,
             "ar1_x": None,
             "ar1_y": None,
+            "ar1_lag_pairs_count": 0,
             "max_abs_ar1": None,
             "serial_dependence_guardrail_tripped": False,
             "permutation_seed": None,
@@ -176,6 +223,7 @@ def evaluate_paired_spearman_permutation(
             "significant_fdr_05": False,
             "ar1_x": None,
             "ar1_y": None,
+            "ar1_lag_pairs_count": 0,
             "max_abs_ar1": None,
             "serial_dependence_guardrail_tripped": False,
             "permutation_seed": None,
@@ -185,11 +233,32 @@ def evaluate_paired_spearman_permutation(
     r_obs = float(np.dot(u_hat, v_hat))
     r_obs = max(-1.0, min(1.0, r_obs))
 
-    ar1_x = _lag1_autocorrelation(x_vals)
-    ar1_y = _lag1_autocorrelation(y_vals)
+    ar1_x, lag_pairs_count = _lag1_autocorrelation_with_pairs(x_vals, months=overlapping_months)
+    ar1_y, _ = _lag1_autocorrelation_with_pairs(y_vals, months=overlapping_months)
     max_abs_ar1 = max(abs(ar1_x), abs(ar1_y))
+    ar1_tripped = bool(max_abs_ar1 > AR1_GUARDRAIL_THRESHOLD)
 
-    if max_abs_ar1 > AR1_GUARDRAIL_THRESHOLD:
+    if coverage_guard is not None and coverage_guard.get("suppress_inferential") is True:
+        return {
+            **base_meta,
+            "status": "incomplete_review_coverage",
+            "spearman_r": round(r_obs, 4),
+            "p_value": None,
+            "q_value": None,
+            "significant_fdr_05": False,
+            "ar1_x": round(ar1_x, 4),
+            "ar1_y": round(ar1_y, 4),
+            "ar1_lag_pairs_count": lag_pairs_count,
+            "max_abs_ar1": round(max_abs_ar1, 4),
+            "serial_dependence_guardrail_tripped": ar1_tripped,
+            "permutation_seed": None,
+            "note": (
+                f"incomplete_review_coverage: Inferential testing suppressed ({coverage_guard['reason']}). "
+                "Descriptive Spearman r_obs reflects incomplete observed review streams only and is NOT representative."
+            ),
+        }
+
+    if ar1_tripped:
         return {
             **base_meta,
             "status": "serial_dependence_detected",
@@ -199,12 +268,13 @@ def evaluate_paired_spearman_permutation(
             "significant_fdr_05": False,
             "ar1_x": round(ar1_x, 4),
             "ar1_y": round(ar1_y, 4),
+            "ar1_lag_pairs_count": lag_pairs_count,
             "max_abs_ar1": round(max_abs_ar1, 4),
             "serial_dependence_guardrail_tripped": True,
             "permutation_seed": None,
             "note": (
-                "serial_dependence_guardrail_tripped: Moderate-to-high autocorrelation (|r_AR1| > 0.40) detected; "
-                "permutation p-value suppressed. Report r_obs strictly as Descriptive Monotonic Association."
+                "serial_dependence_guardrail_tripped: Moderate-to-high autocorrelation (|r_AR1| > 0.40) detected across "
+                "consecutive calendar months; permutation p-value suppressed. Report r_obs strictly as Descriptive Monotonic Association."
             ),
         }
 
@@ -221,6 +291,10 @@ def evaluate_paired_spearman_permutation(
     exceed_count = int(np.sum(np.abs(perm_rs) >= (abs(r_obs) - 1e-12)))
     p_val = (exceed_count + 1) / float(permutations + 1)
 
+    bounded_disclaimer = ""
+    if coverage_guard is not None and not coverage_guard.get("is_representative", True):
+        bounded_disclaimer = f" Collection scope note: {coverage_guard['reason']}"
+
     return {
         **base_meta,
         "status": "tested",
@@ -230,12 +304,13 @@ def evaluate_paired_spearman_permutation(
         "significant_fdr_05": False,
         "ar1_x": round(ar1_x, 4),
         "ar1_y": round(ar1_y, 4),
+        "ar1_lag_pairs_count": lag_pairs_count,
         "max_abs_ar1": round(max_abs_ar1, 4),
         "serial_dependence_guardrail_tripped": False,
         "permutation_seed": seed,
         "note": (
             "Descriptive monotonic association only (empirical two-tailed Monte Carlo permutation p-value "
-            "with plus-one correction); does NOT imply causal mechanism."
+            f"with plus-one correction); does NOT imply causal mechanism.{bounded_disclaimer}"
         ),
     }
 
@@ -339,6 +414,7 @@ class CrossDomainSynthesisCalculator(BaseMetricCalculator):
                 label_y="Monthly Issue Creations",
                 series_x=monthly_series["monthly_code_churn"],
                 series_y=monthly_series["monthly_issue_creations"],
+                series_diagnostics=monthly_series["pair01_diagnostics"],
             ),
             evaluate_paired_spearman_permutation(
                 repository_id=repository_id,
@@ -350,6 +426,7 @@ class CrossDomainSynthesisCalculator(BaseMetricCalculator):
                 label_y="Monthly PR Abandonment Rate",
                 series_x=monthly_series["monthly_median_ttf_resp_hours"],
                 series_y=monthly_series["monthly_pr_abandonment_rate"],
+                coverage_guard=monthly_series["pair02_coverage"],
             ),
             evaluate_paired_spearman_permutation(
                 repository_id=repository_id,
@@ -366,12 +443,17 @@ class CrossDomainSynthesisCalculator(BaseMetricCalculator):
         apply_benjamini_hochberg_fdr(pairs, alpha=BH_FDR_ALPHA)
 
         tested_count = sum(1 for p in pairs if p["status"] == "tested")
+        if tested_count > 0:
+            corr_status = "tested"
+        elif any(p["status"] == "serial_dependence_detected" for p in pairs):
+            corr_status = "serial_dependence_suppressed"
+        elif any(p["status"] == "incomplete_review_coverage" for p in pairs):
+            corr_status = "incomplete_coverage_suppressed"
+        else:
+            corr_status = "insufficient_temporal_periods"
+
         correlations: Dict[str, Any] = {
-            "status": "tested" if tested_count > 0 else (
-                "serial_dependence_suppressed"
-                if any(p["status"] == "serial_dependence_detected" for p in pairs)
-                else "insufficient_temporal_periods"
-            ),
+            "status": corr_status,
             "methodology": "Spearman rank correlation with SHA-256 seeded Monte Carlo permutation (B=10,000), BH FDR (alpha=0.05), and |r_AR1|>0.40 guardrail",
             "min_periods_required": MIN_OVERLAPPING_MONTHS,
             "fdr_alpha": BH_FDR_ALPHA,
@@ -448,12 +530,168 @@ class CrossDomainSynthesisCalculator(BaseMetricCalculator):
         )
 
     @staticmethod
+    def _assess_pair02_collection_coverage(
+        latest_run: Optional[CollectionRun],
+        pr_count: int,
+        reviews_count: int,
+        inline_count: int,
+        issue_comments_count: int,
+    ) -> Dict[str, Any]:
+        """Inspect CollectionRun mode, partial status, and PR response stream coverage for PAIR-02."""
+        uncollected_statuses = {"skipped", "failed", "pending"}
+        truncated_statuses = {"truncated", "partial", "rate_limited"}
+        bounded_modes = {"fast_snapshot", "standard_diagnostic"}
+
+        if latest_run is None:
+            return {
+                "coverage_status": "unverified_no_collection_run",
+                "collection_mode": "unknown_unverified",
+                "collection_status": None,
+                "is_partial_run": True,
+                "is_bounded_mode": True,
+                "is_representative": False,
+                "suppress_inferential": False,
+                "stream_statuses": {
+                    "pull_requests": None,
+                    "pr_reviews": None,
+                    "pr_inline_comments": None,
+                    "issue_comments": None,
+                },
+                "skipped_streams": [],
+                "truncated_streams": [],
+                "unverified_streams": [
+                    "pull_requests",
+                    "pr_reviews",
+                    "pr_inline_comments",
+                    "issue_comments",
+                ],
+                "observed_stream_counts": {
+                    "pull_requests": pr_count,
+                    "pr_reviews": reviews_count,
+                    "pr_inline_comments": inline_count,
+                    "issue_comments": issue_comments_count,
+                },
+                "reason": (
+                    "No CollectionRun metadata found; PR response stream completeness is unverified "
+                    "and reflects stored database records only."
+                ),
+            }
+
+        mode = (latest_run.mode or "unknown").lower().strip()
+        run_status = (latest_run.status or "unknown").lower().strip()
+        cov = latest_run.coverage_summary if isinstance(latest_run.coverage_summary, dict) else {}
+
+        pr_status = _extract_stream_status(cov, "pull_requests")
+        rev_status = _extract_stream_status(cov, "pr_reviews") or _extract_stream_status(cov, "pull_request_reviews")
+        inline_status = _extract_stream_status(cov, "pr_inline_comments") or _extract_stream_status(cov, "pull_request_review_comments")
+        ic_status = _extract_stream_status(cov, "issue_comments")
+
+        stream_specs = [
+            ("pull_requests", pr_status, ("pull_requests",)),
+            ("pr_reviews", rev_status, ("pr_reviews", "pull_request_reviews")),
+            ("pr_inline_comments", inline_status, ("pr_inline_comments", "pull_request_review_comments")),
+            ("issue_comments", ic_status, ("issue_comments",)),
+        ]
+        stream_map = {name: st for name, st, _ in stream_specs}
+
+        def _entry_is_partial(keys: Tuple[str, ...]) -> bool:
+            for key in keys:
+                raw = cov.get(key)
+                if isinstance(raw, dict) and raw.get("is_partial") is True:
+                    return True
+            return False
+
+        skipped_streams: List[str] = []
+        truncated_streams: List[str] = []
+        unverified_streams: List[str] = []
+
+        for s_name, st, keys in stream_specs:
+            if (
+                s_name == "pr_inline_comments"
+                and (st == "skipped" or (mode == "fast_snapshot" and st is None))
+                and inline_count == 0
+            ):
+                skipped_streams.append(s_name)
+                continue
+            if st in uncollected_statuses:
+                skipped_streams.append(s_name)
+            elif st in truncated_statuses or _entry_is_partial(keys):
+                truncated_streams.append(s_name)
+            elif st is None:
+                unverified_streams.append(s_name)
+
+        run_is_partial = bool(latest_run.is_partial) or (run_status != "completed")
+        is_bounded_mode = (mode in bounded_modes) or (mode != "full_history")
+
+        # Suppress inferential testing when CollectionRun is partial/non-completed or when any
+        # PR/response stream feeding PAIR-02 was skipped, uncollected, failed, or truncated.
+        suppress_inferential = (
+            run_is_partial
+            or bool(skipped_streams)
+            or bool(truncated_streams)
+        )
+
+        if suppress_inferential:
+            coverage_status = "incomplete_review_coverage"
+            is_representative = False
+            reasons: List[str] = []
+            if run_status != "completed":
+                reasons.append(f"collection status='{run_status}'")
+            if bool(latest_run.is_partial):
+                reasons.append("CollectionRun.is_partial=True")
+            if skipped_streams:
+                reasons.append(f"skipped/uncollected stream(s): {', '.join(skipped_streams)}")
+            if truncated_streams:
+                reasons.append(f"truncated/partial stream(s): {', '.join(truncated_streams)}")
+            reason = f"Incomplete PR response stream coverage under mode '{mode}' ({'; '.join(reasons)})."
+        elif unverified_streams:
+            coverage_status = "partial_stream_metadata"
+            is_representative = False
+            reason = (
+                f"Mode '{mode}' completed without explicit status for stream(s): {', '.join(unverified_streams)}; "
+                "PR response representativeness is unverified."
+            )
+        elif mode == "standard_diagnostic" or is_bounded_mode:
+            coverage_status = "bounded_mode_completed"
+            is_representative = False
+            reason = (
+                f"Collection mode '{mode}' completed all required PR response streams without skipping or truncation, "
+                "but reflects a bounded recent sample rather than full repository history."
+            )
+        else:
+            coverage_status = "complete"
+            is_representative = True
+            reason = "Verified completed full_history run with complete PR, formal review, inline comment, and issue comment streams."
+
+        return {
+            "coverage_status": coverage_status,
+            "collection_mode": mode,
+            "collection_status": run_status,
+            "is_partial_run": run_is_partial,
+            "is_bounded_mode": is_bounded_mode,
+            "is_representative": is_representative,
+            "suppress_inferential": suppress_inferential,
+            "stream_statuses": stream_map,
+            "skipped_streams": skipped_streams,
+            "truncated_streams": truncated_streams,
+            "unverified_streams": unverified_streams,
+            "observed_stream_counts": {
+                "pull_requests": pr_count,
+                "pr_reviews": reviews_count,
+                "pr_inline_comments": inline_count,
+                "issue_comments": issue_comments_count,
+            },
+            "reason": reason,
+        }
+
+    @classmethod
     def _build_monthly_aligned_series(
+        cls,
         repository_id: int,
         db: Session,
         ref_time: datetime,
-    ) -> Dict[str, Dict[Tuple[int, int], Optional[float]]]:
-        """Extract monthly aligned domain series strictly <= ref_time respecting NULL diff coverage."""
+    ) -> Dict[str, Any]:
+        """Extract monthly aligned domain series strictly <= ref_time with strict diff and review coverage."""
         commits_rows = db.execute(
             select(
                 Commit.sha,
@@ -491,7 +729,14 @@ class CrossDomainSynthesisCalculator(BaseMetricCalculator):
         bot_ids: Set[int] = {r.github_id for r in contrib_bots if r.github_id is not None}
         bot_logins: Set[str] = {r.login.strip().lower() for r in contrib_bots if r.login}
 
-        # 1. Commits monthly counts & NULL-aware monthly code churn
+        latest_collection_run = db.scalar(
+            select(CollectionRun)
+            .where(CollectionRun.repository_id == repository_id)
+            .order_by(CollectionRun.started_at.desc(), CollectionRun.id.desc())
+            .limit(1)
+        )
+
+        # 1. Commits monthly counts & strict 100%-coverage monthly code churn
         seen_shas: Set[str] = set()
         commits_per_m: Dict[Tuple[int, int], int] = defaultdict(int)
         diffs_per_m: Dict[Tuple[int, int], int] = defaultdict(int)
@@ -518,19 +763,44 @@ class CrossDomainSynthesisCalculator(BaseMetricCalculator):
 
         monthly_commit_velocity: Dict[Tuple[int, int], Optional[float]] = {}
         monthly_code_churn: Dict[Tuple[int, int], Optional[float]] = {}
+        monthly_diff_coverage_ratio: Dict[str, Optional[float]] = {}
+        strict_full_months = 0
+        incomplete_diff_months = 0
+        zero_commit_months = 0
+
         if commit_months:
             min_cm, max_cm = min(commit_months), max(commit_months)
-            overall_diff_cov = total_diffs / float(total_commits) if total_commits > 0 else 0.0
             for ym in _month_range_sequence(min_cm, max_cm):
+                ym_label = f"{ym[0]:04d}-{ym[1]:02d}"
                 c_cnt = commits_per_m.get(ym, 0)
+                m_diffs = diffs_per_m.get(ym, 0)
                 monthly_commit_velocity[ym] = float(c_cnt)
-                if total_diffs == 0:
-                    monthly_code_churn[ym] = None
-                elif c_cnt == 0:
-                    monthly_code_churn[ym] = 0.0 if overall_diff_cov >= 0.50 else None
+
+                if c_cnt == 0:
+                    monthly_diff_coverage_ratio[ym_label] = None
+                    zero_commit_months += 1
+                    # Preserve genuine zero churn on empty months only if repository diff stats are populated;
+                    # never coerce uncollected commit diffs into 0.0.
+                    monthly_code_churn[ym] = 0.0 if total_diffs > 0 else None
                 else:
-                    m_diff_cov = diffs_per_m.get(ym, 0) / float(c_cnt)
-                    monthly_code_churn[ym] = float(churn_per_m[ym]) if m_diff_cov >= 0.50 else None
+                    cov_ratio = round(m_diffs / float(c_cnt), 4)
+                    monthly_diff_coverage_ratio[ym_label] = cov_ratio
+                    if m_diffs == c_cnt:
+                        # Strict completeness: ALL eligible commits in this month have valid additions & deletions.
+                        monthly_code_churn[ym] = float(churn_per_m[ym])
+                        strict_full_months += 1
+                    else:
+                        monthly_code_churn[ym] = None
+                        incomplete_diff_months += 1
+
+        pair01_diagnostics: Dict[str, Any] = {
+            "strict_monthly_diff_completeness_required": True,
+            "overall_commit_diff_coverage_ratio": round(total_diffs / float(total_commits), 4) if total_commits > 0 else None,
+            "complete_diff_months_count": strict_full_months,
+            "incomplete_diff_months_excluded_count": incomplete_diff_months,
+            "zero_commit_months_count": zero_commit_months,
+            "monthly_diff_coverage_ratio": monthly_diff_coverage_ratio,
+        }
 
         # 2. Monthly Issue Creations
         seen_iss: Set[int] = set()
@@ -597,6 +867,9 @@ class CrossDomainSynthesisCalculator(BaseMetricCalculator):
 
         # Query external human PR response timestamps <= ref_time if PRs exist
         pr_first_resp_h: Dict[int, float] = {}
+        reviews: List[Any] = []
+        inlines: List[Any] = []
+        issue_comms: List[Any] = []
         if pr_map:
             pr_ids = list(pr_map.keys())
             reviews = db.execute(
@@ -653,6 +926,14 @@ class CrossDomainSynthesisCalculator(BaseMetricCalculator):
                 if pr_id not in pr_first_resp_h or hours < pr_first_resp_h[pr_id]:
                     pr_first_resp_h[pr_id] = hours
 
+        pair02_coverage = cls._assess_pair02_collection_coverage(
+            latest_run=latest_collection_run,
+            pr_count=len(pr_map),
+            reviews_count=len(reviews),
+            inline_count=len(inlines),
+            issue_comments_count=len(issue_comms),
+        )
+
         resp_hours_by_m: Dict[Tuple[int, int], List[float]] = defaultdict(list)
         for pr_id, hrs in pr_first_resp_h.items():
             resp_hours_by_m[pr_map[pr_id]["ym"]].append(hrs)
@@ -675,6 +956,8 @@ class CrossDomainSynthesisCalculator(BaseMetricCalculator):
             "monthly_pr_abandonment_rate": monthly_pr_abandonment_rate,
             "monthly_commit_velocity": monthly_commit_velocity,
             "monthly_pr_merge_volume": monthly_pr_merge_volume,
+            "pair01_diagnostics": pair01_diagnostics,
+            "pair02_coverage": pair02_coverage,
         }
 
     @staticmethod
