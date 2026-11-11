@@ -53,76 +53,55 @@ This roadmap defines the complete project execution plan, structured into two co
 
 ---
 
-## 🚀 Track B: Realigned Universal Platform Evolution (Phases 11-R–16-R)
+## 🚀 Track B: Realigned Universal Platform Evolution (Actual Implementation Status)
 
-### Phase 11-R — Universal Ingestion Engine & Schema Migration 🔜
+> [!NOTE]
+> The early pre-implementation draft sections (11-R–16-R below) were superseded in execution by **Phase A**, **Phase B (Dynamic GitHub Ingestion)**, and **Phase C (C.1–C.8.3 Six-Domain Analytics Engine, Worker & V2 API)**. See the completed ledger below and [OPENSOURCELENS_BACKEND_AUDIT.md](./audits/OPENSOURCELENS_BACKEND_AUDIT.md).
+
+### Implemented Track B Milestones
+
+| Milestone | Scope Implemented | Status | Documentation |
+|---|---|---|---|
+| **Phase A** | Obsolete 4-repo frontend hardcoding cleanup (`ed93489`); baseline preserved at `checkpoint/pre-cleanup-baseline` (`7fb1c67`) | ✅ Complete | [phase_a_completion_report.md](./phase_a_completion_report.md) |
+| **Phase B** | URL validation, eligibility checker, rate-budgeted `AsyncGitHubClient`, multi-entity `RepositoryCollector` + revision tracking, `DurableJobQueue`, `IngestionWorker`, `/api/ingest/*` & `/api/v1/ingest/*`, Migration `002` | ✅ Complete | [ingestion.md](./ingestion.md), [database.md](./database.md) |
+| **Phase C.1** | `analysis_runs`, `analysis_run_attempts`, `AnalyticsJobQueue`, snapshot isolation protocol, Migration `003` | ✅ Complete | [database.md](./database.md) |
+| **Phase C.2** | Development Activity Intelligence (`velocity`, `consistency`, `rolling_statistics`, `anomalies`, `max_ssb` change-points, UTC rhythms, diff-aware churn, commit landing latency) | ✅ Complete | [analytics.md §2](./analytics.md#2-domain-1-development-activity-development_activity) |
+| **Phase C.3** | Contributor Intelligence (`github_id` actor hygiene, Gini, 11-point Lorenz deciles, Shannon entropy, BF50/BF80, full-history retention gate) | ✅ Complete | [analytics.md §3](./analytics.md#3-domain-2-contributor-ecosystem-contributor_ecosystem) |
+| **Phase C.4** | Pull Request Intelligence (`TTFResp`, `TTFR_formal`, `TTFR_inline`, outcomes, merge latency, Kaplan-Meier survival, diff size bins, bottlenecks) | ✅ Complete | [analytics.md §4](./analytics.md#4-domain-3-pull-request-intelligence-pull_request_intelligence) |
+| **Phase C.5** | Issue & Maintenance Intelligence (monthly flow, backlog stock separation, SLA percentiles, KM survival, 5-bin backlog aging, discussion Spearman, category hygiene) | ✅ Complete | [analytics.md §5](./analytics.md#5-domain-4-issue--maintenance-intelligence-issue_intelligence) |
+| **Phase C.6** | Release Evolution (cadence/CV, 14d/60d pre-release surges, SemVer) & Cross-Domain Synthesis (diagnostic scorecard, paired Spearman + `B=10,000` permutation, AR(1) & review coverage guards, BH FDR) | ✅ Complete | [analytics.md §6–7](./analytics.md#6-domain-5-release-evolution-release_evolution) |
+| **Phase C.7** | `AnalyticsOrchestrator` snapshot consistency, `AnalysisPayload` validation, confidence aggregation, deterministic `consolidate_rules`, non-retryable terminal queue enforcement (`6d88338`) | ✅ Complete | [analytics.md §1](./analytics.md#1-orchestration-validation--publication-flow) |
+| **Phase C.8.1–C.8.3** | `AnalyticsWorker` + CLI & lifespan integration, post-ingestion analytics enqueue wiring, V2 endpoints (`/recompute`, `/status`, `/latest`, `/history`, `/runs/{id}`, `/domains/{key}`) (`9f394e6`) | ✅ Complete | [api.md](./api.md), [workers-and-deployment.md](./workers-and-deployment.md) |
+| **Doc Refresh & Audit** | Architecture, DB, Ingestion, Analytics, API, Workers docs + comprehensive backend audit | ✅ Complete | [OPENSOURCELENS_BACKEND_AUDIT.md](./audits/OPENSOURCELENS_BACKEND_AUDIT.md) |
+
+### Remaining Work & Planned Phases (Not Yet Implemented)
+
+1. **Schema & Operational Fixes:** Reconcile Migration `001` column drift against Phase A ORM models, add `IngestionWorker` CLI entrypoint and opt-in lifespan/runner wiring, fix `_VALID_RUN_STATUSES` `"stale"` filter & legacy route case-insensitive resolution, and add `rate_limited` job resumption scheduling.
+2. **Dynamic ML Decoupling:** Vectorize newly ingested issues into queryable embeddings (instead of static `models/related_issues/embeddings.npz`) and decouple resolution advisory prediction from benchmark repo encodings.
+3. **Frontend V2 Integration (Track B UI):** Connect [`frontend/`](../frontend/) (currently Phase 10 legacy) to `/api/v1/ingest/*` and `/api/v1/analytics/{owner}/{name}/*` V2 views with interactive multi-domain charts and diagnostics.
+4. **Live Verification & Deployment:** Execute live multi-worker PostgreSQL concurrency tests, run `RUN_LIVE_GITHUB_TESTS=1` end-to-end tests against real unseen public GitHub repos, and containerize FastAPI, workers, PostgreSQL, and Next.js.
+
+---
+
+<details>
+<summary>Original Track B Pre-Implementation Planning Reference (Historical Phases 11-R–16-R)</summary>
+
+### Phase 11-R — Universal Ingestion Engine & Schema Migration (Historical Draft)
 **Goal:** Enable OpenSourceLens to ingest commits, contributors, pull requests, and issues dynamically for any valid public repository entered by a user.
 
-| Step | Title | Description | Target Deliverable |
+| Step | Title | Description | Original Planned Deliverable |
 |---|---|---|---|
-| **11-R.1** | Repository URL Validator | Parse GitHub URLs, extract `{owner}/{repo}`, and verify public existence via API | `backend/app/services/validator.py` |
-| **11-R.2** | Multi-Entity Collection Pipeline | Implement lightweight collectors for commits, contributors, PRs, and releases | `ml/data_collection/dynamic_collector.py` |
-| **11-R.3** | Tiered Rate-Limit Budgeter | Implement quota allocation (Fast Snapshot vs Standard Diagnostic) to respect rate limits | `backend/app/services/budgeter.py` |
-| **11-R.4** | Relational Schema Migration | Add `commits`, `contributors`, and `pull_requests` tables via SQLAlchemy migration | `backend/app/database/models.py` |
-| **11-R.5** | Dynamic Ingestion API Endpoint | Expose `POST /api/repos/analyze` with async task tracking and progress reporting | `backend/app/api/ingestion_routes.py` |
+| **11-R.1** | Repository URL Validator | Parse GitHub URLs, extract `{owner}/{repo}`, and verify public existence via API | `backend/app/services/validator.py` *(implemented)* |
+| **11-R.2** | Multi-Entity Collection Pipeline | Collect commits, contributors, PRs, reviews, issues, comments, and releases | Planned `ml/data_collection/dynamic_collector.py` *(implemented in `backend/app/services/repository_collector.py`)* |
+| **11-R.3** | Tiered Rate-Limit Budgeter | Quota allocation (`fast_snapshot` vs `standard_diagnostic`) | Planned `budgeter.py` *(implemented in `rate_budgeter.py`)* |
+| **11-R.4** | Relational Schema Migration | Add `commits`, `contributors`, `pull_requests`, queues | `backend/alembic/versions/002_*`, `003_*` *(implemented)* |
+| **11-R.5** | Dynamic Ingestion API Endpoint | Preview, submit, and status tracking | Planned `POST /api/repos/analyze` *(implemented at `/api/ingest/*` & `/api/v1/ingest/*`)* |
 
----
+### Phase 12-R–16-R Summary (Original Draft Names vs. Reality)
+- **12-R Engines:** Implemented in `backend/app/services/analytics/` (`development_activity.py`, `contributors.py`, `pull_requests.py`, `issues.py`, `releases.py`, `cross_domain.py`, `orchestrator.py`) instead of `activity_service.py` / `pr_service.py` / etc. Dynamic semantic vector caching and resolution advisory decoupling remain pending.
+- **13-R Frontend Workspace:** Pending migration from Phase 10 legacy pages.
+- **14-R Live Generalization & E2E:** Unit/mocked integration suites pass offline; live unseen-repo GitHub generalization runs remain pending.
+- **15-R Deployment Packaging:** Only `postgres:16-alpine` exists in `docker-compose.yml`; service containers and live PostgreSQL worker tests remain pending.
+- **16-R Academic Evaluation & Defense:** Pending live multi-repo benchmark expansion.
 
-### Phase 12-R — Multi-Domain Intelligence Engines
-**Goal:** Implement the statistical, analytical, and NLP engines across the six core intelligence domains.
-
-| Step | Title | Description | Target Deliverable |
-|---|---|---|---|
-| **12-R.1** | Development Activity Engine | Time-series commit/release aggregation, rolling trends, and anomaly detection | `backend/app/services/activity_service.py` |
-| **12-R.2** | Contributor Ecosystem Engine | Gini coefficient, Lorenz curve calculation, Shannon entropy, core vs peripheral | `backend/app/services/contributor_service.py` |
-| **12-R.3** | Pull Request Intelligence Engine | Review latency, time-to-merge distributions, and review bottleneck detection | `backend/app/services/pr_service.py` |
-| **12-R.4** | Dynamic Semantic Vector Caching | Vectorize newly ingested issues on-demand with `all-MiniLM-L6-v2` and cache arrays | `backend/app/services/embedding_service.py` |
-| **12-R.5** | Domain-Agnostic Resolution Advisory | Decouple resolution advisory from repo-specific one-hot dummies to universal signals | `backend/app/services/resolution_service.py` |
-| **12-R.6** | Cross-Domain Intelligence Synthesizer | Correlate multi-domain signals into automated, evidence-backed findings report | `backend/app/services/intelligence_service.py` |
-
----
-
-### Phase 13-R — Dynamic Frontend Workspace
-**Goal:** Deliver an interactive, general-purpose repository intelligence workspace in Next.js.
-
-| Step | Title | Description | Target Deliverable |
-|---|---|---|---|
-| **13-R.1** | Universal Repository Search Bar | Homepage search bar with URL validation, ingestion progress modal, and error states | `frontend/src/components/RepositorySearchBar.tsx` |
-| **13-R.2** | Multi-Domain Tabbed Workspace | Redesign `/repos/[owner]/[name]` into 6 tabbed views (Overview, Activity, Contributors, PRs, Issues, Synthesis) | `frontend/src/app/repos/[owner]/[name]/page.tsx` |
-| **13-R.3** | Advanced Analytical Visualizations | Recharts components for Lorenz curve, activity trendlines, and velocity gauges | `frontend/src/components/charts/` |
-| **13-R.4** | Evidence-Backed Findings Card | Diagnostic summary card presenting automated intelligence observations | `frontend/src/components/FindingsReportCard.tsx` |
-| **13-R.5** | Benchmark Explorer Mode | Preserved comparison view for the four initial baseline repositories | `frontend/src/app/benchmarks/page.tsx` |
-
----
-
-### Phase 14-R — Generalization Testing & Performance Validation
-**Goal:** Rigorously validate model inference and pipeline resilience on unseen public repositories.
-
-| Step | Title | Description | Target Deliverable |
-|---|---|---|---|
-| **14-R.1** | Cross-Repository Generalization Suite | Evaluate DistilBERT and semantic retrieval on novel external repositories | `tests/test_generalization.py` |
-| **14-R.2** | Rate-Limit Resilience Verification | Test API behavior under exhausted rate limits and backoff recovery | `tests/test_rate_limits.py` |
-| **14-R.3** | End-to-End Workflow Integration Test | End-to-end integration test: URL submission → Ingestion → Analytics → Rendering | `tests/test_e2e_workflow.py` |
-
----
-
-### Phase 15-R — Deployment & Production Packaging
-**Goal:** Package and deploy the complete platform.
-
-| Step | Title | Description | Target Deliverable |
-|---|---|---|---|
-| **15-R.1** | Docker Containerization | Multi-stage Dockerfiles for FastAPI backend and Next.js frontend | `Dockerfile.backend`, `Dockerfile.frontend` |
-| **15-R.2** | PostgreSQL Deployment Configuration | Production database configuration and connection pooling setup | `backend/app/database/connection.py` |
-| **15-R.3** | Model Artifact Serving Strategy | Optimization of DistilBERT and MiniLM caching for production hosting | `docker-compose.yml` |
-| **15-R.4** | Production Smoke Testing | Verification of production deployment on cloud environment | Diagnostic report |
-
----
-
-### Phase 16-R — Academic Research Paper & Final Defense
-**Goal:** Complete academic documentation, research paper, and presentation.
-
-| Step | Title | Description | Target Deliverable |
-|---|---|---|---|
-| **16-R.1** | Final Empirical Findings | Comprehensive comparative metrics across benchmark and dynamic repositories | `docs/final_evaluation_report.md` |
-| **16-R.2** | Conference Research Paper | Full academic paper on repository intelligence and cross-repo NLP | `docs/conference_paper.pdf` |
-| **16-R.3** | Project Defense Presentation | Final presentation slides and live demonstration walkthrough | `docs/presentation_slides.pptx` |
+</details>

@@ -1,5 +1,8 @@
 # OpenSourceLens — Database Schema Specification
 
+> [!NOTE]
+> **Historical Planning Document (Pre-Phase B/C):** This early design spec omits implemented Phase B/C tables (`collection_runs`, `analysis_runs`, `analysis_run_attempts`, `pull_request_reviews`, `pull_request_review_comments`, `releases`, `issue_comments`, `contributor_activities`) and lists draft columns (`ingestion_status`, `repo_name` on commits/PRs, etc.) that were not added. For the actual 17-table SQLAlchemy schema and Alembic migrations, see [docs/database.md](./database.md).
+
 ## 1. Executive Summary & Design Principles
 
 The OpenSourceLens relational database schema serves as the primary persistence and retrieval layer connecting offline data science workflows (Track A) and online dynamic repository intelligence (Track B) with the high-performance FastAPI backend and Next.js frontend.
