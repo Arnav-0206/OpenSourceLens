@@ -1,107 +1,129 @@
 # OpenSourceLens — Master Execution Roadmap
 
-This roadmap defines the complete project execution plan, structured into two core evolutionary tracks:
-1. **Phases 0–11: Benchmark Lab Foundation (Completed)** — Exhaustive offline data collection, exploratory data analysis, classical ML baseline development, transformer fine-tuning, dense vector semantic retrieval, database architecture, and initial web UI integration across four diverse benchmark repositories (`microsoft/vscode`, `pytorch/pytorch`, `kubernetes/kubernetes`, `huggingface/transformers`).
-2. **Phases 11-R–16-R: Universal Repository Intelligence Platform (Realigned Execution Plan)** — Architectural extension to dynamically ingest, analyze, and generate multi-domain intelligence for **any eligible public GitHub repository** entered by a user.
+**Product Vision:** See [docs/product-vision.md](./product-vision.md). OpenSourceLens is a universal **GitHub Repository Intelligence and Analytics Platform** that harvests rich public GitHub API data for **any eligible public repository** and turns it into statistical, ML/NLP, and visual intelligence—excluding static source-code/AST analysis, CI/CD logs, dependency/security scanning, and chatbots.
+
+This roadmap is organized **cleanup-first, then feature-by-feature in demoable stages**, so each completed milestone delivers a concrete, presentable capability.
 
 ---
 
-## 🏛️ Track A: Benchmark Lab Foundation (Completed)
+## 0. Current Baseline (Already Implemented — Retain & Build On)
 
-### Phase 0 — Project Definition & Planning ✅
-- **0.1** Freeze the problem & Universal Vision (`docs/0.1-project-definition.md`)
-- **0.2** Define Core Features & Analytical Domains (`docs/0.2-project-features.md`)
-- **0.3** Multi-Entity Data Schema Definition (`docs/0.3-data-definition.md`)
-- **0.4** Benchmark Corpus Selection & Generalization Strategy (`docs/0.4-repository-selection.md`)
-- **0.5** Data Science & ML Problem Formalization (`docs/0.5-ml-problem-definition.md`)
-- **0.6** Dual-Track Methodology Specification (`docs/0.6-methodology.md`)
-- **0.7** System Architecture Design (`docs/0.7-architecture.md`)
-- **0.8** Project Proposal Specification (`docs/0.8-stage-1-proposal.md`)
+The backend core from recent phases is complete on SQLite (PostgreSQL execution unverified live):
 
-### Phase 1 — Benchmark Data Source & Collection Pipeline ✅
-- **1.1–1.10** Built modular collectors (`repository_collector.py`, `issue_collector.py`, `comment_collector.py`, `event_collector.py`), pagination engine (`paginator.py`), resilient GitHub client with exponential backoff (`github_client.py`), and raw data storage (`data/raw/`).
-
-### Phase 2 — Data Cleaning & Dataset Construction ✅
-- **2.1–2.10** Built raw data loaders, markdown/code/URL text strippers, timestamp processors, canonical label normalizers (`bug`, `feature`, `other`), feature extractors, and processed dataset storage (`data/processed/`).
-
-### Phase 3 — Exploratory Data Analysis (EDA) ✅
-- **3.1–3.11** Performed distribution analysis, label balance inspection, time-series creation/closure analysis, cross-repository velocity comparisons, comment patterns, and Kaplan-Meier survival curves (`ml/eda/FINDINGS.md`).
-
-### Phase 4 — Classical Machine Learning Baseline ✅
-- **4.1–4.7** Established TF-IDF feature extraction (10,000 max features, 1-2 n-grams), trained Logistic Regression and Linear SVM baselines, achieving 75.6%–77.1% accuracy.
-
-### Phase 5 — NLP Enhancement ✅
-- **5.1–5.5** Implemented sublinear TF scaling, noise regex filtering, and combined title+body representations, establishing an enhanced classical pipeline.
-
-### Phase 6 — Deep Learning & Transformer Fine-Tuning ✅
-- **6.1–6.8** Fine-tuned `distilbert-base-uncased` (66.9M parameters) on curated issue sequences, achieving **81.3% test accuracy** and **0.79 macro-F1**, outperforming classical baselines across all minority classes. Saved model artifacts in `models/distilbert_finetuned/`.
-
-### Phase 7 — Related-Issue Semantic Retrieval ✅
-- **7.1–7.7** Implemented dense vector embeddings via Sentence Transformers (`all-MiniLM-L6-v2`), generated 384-dimensional unit-normalized embeddings, calibrated cosine similarity thresholds ($\ge 0.70$ related, $\ge 0.85$ duplicate), and built retrieval pipeline.
-
-### Phase 8 — Resolution Analysis & Velocity Prediction ✅
-- **8.1–8.7** Analyzed continuous turnaround distributions, implemented Random Forest velocity classification across SLA tiers, evaluated feature importance, and produced the formal feasibility report (`docs/resolution_prediction_feasibility_report.md`).
-
-### Phase 9 — Relational Database & Backend API ✅
-- **9.1–9.12** Designed dual-dialect schema (PostgreSQL + SQLite WAL), built SQLAlchemy 2.0 ORM models, created FastAPI REST endpoints, and verified with 73 unit tests.
-
-### Phase 10 — Frontend UI (Next.js 15) ✅
-- **10.1–10.12** Created Next.js 15 App Router interface with Tailwind CSS, Recharts visualizations, issue explorer with multi-facet filters, and interactive AI workspace.
-
-### Phase 11 — Full Integration & Verification ✅
-- **11.1–11.9** Connected frontend ↔ backend ↔ database ↔ ML models. Verified with 145 backend integration tests and zero-error Next.js production compilation.
+| Layer | Implemented Foundation | Key Locations |
+|---|---|---|
+| **Dynamic Ingestion (Phase B)** | URL validation, public/non-empty eligibility gating, preview & submit APIs (`/api/v1/ingest/*`), rate-budgeted `AsyncGitHubClient` (`fast_snapshot` / `standard_diagnostic`), multi-entity `RepositoryCollector`, atomic `analytics_source_revision` bumping, `DurableJobQueue`, `IngestionWorker` with `15s` lease heartbeat | `backend/app/services/{validator,repository_eligibility,confidence_matrix,github_client,rate_budgeter,repository_collector,job_queue,ingestion_worker}.py`, `backend/app/api/v1/endpoints/ingest.py` |
+| **Six-Domain Statistical Engine (Phase C.1–C.7)** | Snapshot-isolated calculators (`methodology_version = "2026.1"`): Development Activity, Contributor Ecosystem, Pull Request Intelligence, Issue Intelligence, Release Evolution, Cross-Domain Synthesis (`B=10,000` Spearman permutations, `\|r_AR1\| > 0.40` guard, BH FDR), deterministic rule consolidation, strict `NULL` vs. `0.0` honesty | `backend/app/services/analytics/*.py`, `backend/app/schemas/analytics_v2.py` |
+| **Orchestration, Worker & V2 API (C.7–C.8.3)** | `AnalyticsJobQueue`, `AnalyticsOrchestrator`, `AnalyticsWorker` (`__main__` + opt-in lifespan), post-ingestion auto-enqueue, and Analytics V2 endpoints (`/api/v1/analytics/{owner}/{name}/{recompute,status,latest,history,runs/{id},domains/{key}}`) | `backend/app/services/{analytics_queue,analytics_worker}.py`, `backend/app/api/v1/endpoints/analytics.py` |
+| **Documentation Refresh** | Product vision, system architecture, ingestion, analytics specs, DB/migrations, API reference, workers guide, and backend audit | [README.md](../README.md), [product-vision.md](./product-vision.md), [audits/OPENSOURCELENS_BACKEND_AUDIT.md](./audits/OPENSOURCELENS_BACKEND_AUDIT.md) |
 
 ---
 
-## 🚀 Track B: Realigned Universal Platform Evolution (Actual Implementation Status)
+## Stage 1 — Repository & Source-Code Cleanup (Execute First)
 
-> [!NOTE]
-> The early pre-implementation draft sections (11-R–16-R below) were superseded in execution by **Phase A**, **Phase B (Dynamic GitHub Ingestion)**, and **Phase C (C.1–C.8.3 Six-Domain Analytics Engine, Worker & V2 API)**. See the completed ledger below and [OPENSOURCELENS_BACKEND_AUDIT.md](./audits/OPENSOURCELENS_BACKEND_AUDIT.md).
+**Goal:** Remove dead prototypes, benchmark-coupled legacy code, duplicated collectors, and obsolete Phase 10/11 scaffolding *before* adding new features, while safely preserving shared runtime utilities (`IssueTextCleaner`, `all-MiniLM-L6-v2` embedder, and active DB migrations).
 
-### Implemented Track B Milestones
+> [!IMPORTANT]
+> Per project rules, **no files or folders listed below are deleted until reviewed and explicitly approved** in a code-cleanup plan step.
 
-| Milestone | Scope Implemented | Status | Documentation |
-|---|---|---|---|
-| **Phase A** | Obsolete 4-repo frontend hardcoding cleanup (`ed93489`); baseline preserved at `checkpoint/pre-cleanup-baseline` (`7fb1c67`) | ✅ Complete | [phase_a_completion_report.md](./phase_a_completion_report.md) |
-| **Phase B** | URL validation, eligibility checker, rate-budgeted `AsyncGitHubClient`, multi-entity `RepositoryCollector` + revision tracking, `DurableJobQueue`, `IngestionWorker`, `/api/ingest/*` & `/api/v1/ingest/*`, Migration `002` | ✅ Complete | [ingestion.md](./ingestion.md), [database.md](./database.md) |
-| **Phase C.1** | `analysis_runs`, `analysis_run_attempts`, `AnalyticsJobQueue`, snapshot isolation protocol, Migration `003` | ✅ Complete | [database.md](./database.md) |
-| **Phase C.2** | Development Activity Intelligence (`velocity`, `consistency`, `rolling_statistics`, `anomalies`, `max_ssb` change-points, UTC rhythms, diff-aware churn, commit landing latency) | ✅ Complete | [analytics.md §2](./analytics.md#2-domain-1-development-activity-development_activity) |
-| **Phase C.3** | Contributor Intelligence (`github_id` actor hygiene, Gini, 11-point Lorenz deciles, Shannon entropy, BF50/BF80, full-history retention gate) | ✅ Complete | [analytics.md §3](./analytics.md#3-domain-2-contributor-ecosystem-contributor_ecosystem) |
-| **Phase C.4** | Pull Request Intelligence (`TTFResp`, `TTFR_formal`, `TTFR_inline`, outcomes, merge latency, Kaplan-Meier survival, diff size bins, bottlenecks) | ✅ Complete | [analytics.md §4](./analytics.md#4-domain-3-pull-request-intelligence-pull_request_intelligence) |
-| **Phase C.5** | Issue & Maintenance Intelligence (monthly flow, backlog stock separation, SLA percentiles, KM survival, 5-bin backlog aging, discussion Spearman, category hygiene) | ✅ Complete | [analytics.md §5](./analytics.md#5-domain-4-issue--maintenance-intelligence-issue_intelligence) |
-| **Phase C.6** | Release Evolution (cadence/CV, 14d/60d pre-release surges, SemVer) & Cross-Domain Synthesis (diagnostic scorecard, paired Spearman + `B=10,000` permutation, AR(1) & review coverage guards, BH FDR) | ✅ Complete | [analytics.md §6–7](./analytics.md#6-domain-5-release-evolution-release_evolution) |
-| **Phase C.7** | `AnalyticsOrchestrator` snapshot consistency, `AnalysisPayload` validation, confidence aggregation, deterministic `consolidate_rules`, non-retryable terminal queue enforcement (`6d88338`) | ✅ Complete | [analytics.md §1](./analytics.md#1-orchestration-validation--publication-flow) |
-| **Phase C.8.1–C.8.3** | `AnalyticsWorker` + CLI & lifespan integration, post-ingestion analytics enqueue wiring, V2 endpoints (`/recompute`, `/status`, `/latest`, `/history`, `/runs/{id}`, `/domains/{key}`) (`9f394e6`) | ✅ Complete | [api.md](./api.md), [workers-and-deployment.md](./workers-and-deployment.md) |
-| **Doc Refresh & Audit** | Architecture, DB, Ingestion, Analytics, API, Workers docs + comprehensive backend audit | ✅ Complete | [OPENSOURCELENS_BACKEND_AUDIT.md](./audits/OPENSOURCELENS_BACKEND_AUDIT.md) |
+### 1.1 Dependency Extraction (Safety Prerequisite Before Deleting `ml/`)
+- Extract `IssueTextCleaner` (currently imported by `backend/app/services/repository_collector.py` and `classification_service.py` from `ml/preprocessing/text_cleaner.py`) into a clean backend module (`backend/app/services/nlp/text_cleaner.py`).
+- Extract/retain the clean `all-MiniLM-L6-v2` embedding encoder helper cleanly for per-repo indexing in Stage 5, independent of `models/related_issues/embeddings.npz`.
 
-### Remaining Work & Planned Phases (Not Yet Implemented)
+### 1.2 Exact Targets Slated for Removal or Retirement
 
-1. **Schema & Operational Fixes:** Reconcile Migration `001` column drift against Phase A ORM models, add `IngestionWorker` CLI entrypoint and opt-in lifespan/runner wiring, fix `_VALID_RUN_STATUSES` `"stale"` filter & legacy route case-insensitive resolution, and add `rate_limited` job resumption scheduling.
-2. **Dynamic ML Decoupling:** Vectorize newly ingested issues into queryable embeddings (instead of static `models/related_issues/embeddings.npz`) and decouple resolution advisory prediction from benchmark repo encodings.
-3. **Frontend V2 Integration (Track B UI):** Connect [`frontend/`](../frontend/) (currently Phase 10 legacy) to `/api/v1/ingest/*` and `/api/v1/analytics/{owner}/{name}/*` V2 views with interactive multi-domain charts and diagnostics.
-4. **Live Verification & Deployment:** Execute live multi-worker PostgreSQL concurrency tests, run `RUN_LIVE_GITHUB_TESTS=1` end-to-end tests against real unseen public GitHub repos, and containerize FastAPI, workers, PostgreSQL, and Next.js.
+| Category | Specific Paths & Components to Remove | Reason |
+|---|---|---|
+| **Prototype App & Ad-Hoc Scripts** | `demo_app.py` (root Streamlit prototype); `scripts/verify_*.py` (`9` Phase 10/11 verification scripts); `scripts/` folder once emptied | Superseded by FastAPI + Next.js + `pytest` suite. |
+| **Duplicate Legacy Ingestion & Schema Gen** | `ml/data_collection/*`; `ml/repository_analyzer.py`; `backend/app/database/ingest.py`; `backend/app/database/schema.sql`; `backend/app/database/schema_generator.py` | Replaced by Phase B `RepositoryCollector` + SQLAlchemy ORM + Alembic migrations. |
+| **Invalid / Benchmark-Locked ML (`ResolutionPredictor`)** | `ml/resolution_analysis/*`; `backend/app/services/resolution_service.py`; `backend/app/api/v1/endpoints/resolution.py`; `backend/app/schemas/resolution.py`; `models/resolution_classifier_champion.joblib`; `models/resolution_regressor_champion.joblib`; `models/resolution_scaler_params.json` | Phase 8 proved continuous within-repo prediction fails (`R^2 = -0.04..+0.18`), and the RF model uses hardcoded 4-repo dummy variables invalid on unseen repos. Replaced by factual Kaplan-Meier survival & quantiles. |
+| **Static 4-Repo Similarity Coupling** | `related_issues_cache` lookup path + static `models/related_issues/embeddings.npz` / `metadata.*` dependency in `backend/app/services/related_service.py` (keep `/api/v1/related*` route shells only if immediately replaced in Stage 5, or remove cleanly now and re-introduce clean V2 endpoints in Stage 5) | Locked to `2,328` static benchmark issues; cannot index newly submitted repositories. |
+| **Obsolete Offline Track A Scripts & Legacy Tests** | `ml/eda/*`, `ml/preprocessing/*` (after extracting `IssueTextCleaner`), `ml/nlp/*`, `ml/classification/*`, `ml/deep_learning/*`, `ml/related_issues/*`; redundant pre-Phase B `tests/test_*` suites targeting deleted `demo_app.py`, `ml.data_collection`, `ml.eda.*`, `ml.resolution_*`, `database.ingest`, `schema_generator` | Track A lab scripts already fulfilled their purpose; keeping them creates false dual pipelines. *(Note: Confirm explicitly whether to retain `data/raw/`, `data/processed/`, and `models/distilbert_finetuned/` as offline training baselines for Stage 5 retraining or archive them outside active runtime.)* |
+| **Legacy Phase A APIs & DB Summary Paths** | `backend/app/api/v1/endpoints/repos.py` (`/api/v1/repos*`), `backend/app/schemas/repository.py` (legacy summary schemas), and Phase A routes in `backend/app/api/v1/endpoints/analytics.py` (`/overview`, `/comparison`, legacy `/{owner}/{name}`, `/trends`) backed by `repository_analytics` | Case-sensitive legacy APIs serving stale 4-repo Phase A snapshots alongside Analytics V2. |
+| **Phase 10 Hardcoded Frontend Scaffolding** | Hardcoded `REPO_REGISTRY`, `FALLBACK_ISSUE_CORPUS`, legacy `/analytics` (4-repo comparison page), `/analyzer` (Phase A static ML playground), and legacy `/repos` mock components under `frontend/src/` | Built around 4 static repos and Phase A APIs; clear slate for the Stage 4 universal workspace. |
+
+### 1.3 What You Can Present After Stage 1
+- **Clean Architecture & Zero Dead Code:** Lean, single-source-of-truth codebase with no conflicting collectors, no 4-repo dummy leakage, clean FastAPI Swagger `/docs` showing only universal endpoints, and a fast, all-green `pytest` run on active backend components.
 
 ---
 
-<details>
-<summary>Original Track B Pre-Implementation Planning Reference (Historical Phases 11-R–16-R)</summary>
+## Stage 2 — Backend Stabilization & First Live Any-Repo E2E Verification
 
-### Phase 11-R — Universal Ingestion Engine & Schema Migration (Historical Draft)
-**Goal:** Enable OpenSourceLens to ingest commits, contributors, pull requests, and issues dynamically for any valid public repository entered by a user.
+**Goal:** Eliminate the operational blockers identified in [OPENSOURCELENS_BACKEND_AUDIT.md](./audits/OPENSOURCELENS_BACKEND_AUDIT.md) and prove the backend pipeline works end-to-end on real unseen public GitHub repositories.
 
-| Step | Title | Description | Original Planned Deliverable |
-|---|---|---|---|
-| **11-R.1** | Repository URL Validator | Parse GitHub URLs, extract `{owner}/{repo}`, and verify public existence via API | `backend/app/services/validator.py` *(implemented)* |
-| **11-R.2** | Multi-Entity Collection Pipeline | Collect commits, contributors, PRs, reviews, issues, comments, and releases | Planned `ml/data_collection/dynamic_collector.py` *(implemented in `backend/app/services/repository_collector.py`)* |
-| **11-R.3** | Tiered Rate-Limit Budgeter | Quota allocation (`fast_snapshot` vs `standard_diagnostic`) | Planned `budgeter.py` *(implemented in `rate_budgeter.py`)* |
-| **11-R.4** | Relational Schema Migration | Add `commits`, `contributors`, `pull_requests`, queues | `backend/alembic/versions/002_*`, `003_*` *(implemented)* |
-| **11-R.5** | Dynamic Ingestion API Endpoint | Preview, submit, and status tracking | Planned `POST /api/repos/analyze` *(implemented at `/api/ingest/*` & `/api/v1/ingest/*`)* |
+1. **Fresh-DB Migration Fix:** Reconcile Migration `001` vs. ORM drift (`issue_labels`, `repository_analytics`, `predictions`, plus `pull_requests` unique constraint parity) via a clean Alembic fix/migration so `alembic upgrade head` works on an empty SQLite or PostgreSQL database.
+2. **Worker CLI & Config Hygiene:** Add `if __name__ == "__main__":` CLI + optional lifespan hook to `IngestionWorker`, add automated wake/re-enqueue handling for `rate_limited` jobs after `resumes_at`, and align `.env.example` + `requirements.txt` (including runtime analytics/ML dependencies and optional PostgreSQL driver guidance).
+3. **Live Unseen-Repo Validation:** Execute `RUN_LIVE_GITHUB_TESTS=1` end-to-end across small, medium, and large unseen public repositories (`POST preview` -> `POST submit` -> `IngestionWorker` -> auto-enqueue -> `AnalyticsWorker` -> `GET /api/v1/analytics/{owner}/{name}/latest`).
 
-### Phase 12-R–16-R Summary (Original Draft Names vs. Reality)
-- **12-R Engines:** Implemented in `backend/app/services/analytics/` (`development_activity.py`, `contributors.py`, `pull_requests.py`, `issues.py`, `releases.py`, `cross_domain.py`, `orchestrator.py`) instead of `activity_service.py` / `pr_service.py` / etc. Dynamic semantic vector caching and resolution advisory decoupling remain pending.
-- **13-R Frontend Workspace:** Pending migration from Phase 10 legacy pages.
-- **14-R Live Generalization & E2E:** Unit/mocked integration suites pass offline; live unseen-repo GitHub generalization runs remain pending.
-- **15-R Deployment Packaging:** Only `postgres:16-alpine` exists in `docker-compose.yml`; service containers and live PostgreSQL worker tests remain pending.
-- **16-R Academic Evaluation & Defense:** Pending live multi-repo benchmark expansion.
+### What You Can Present After Stage 2
+- **Working Backend Engine Demo:** Submit **any live GitHub repo URL** via Swagger UI or API, watch live rate-budgeted ingestion and automatic 6-domain analytics complete cleanly on a freshly initialized database, and show real diagnostic output on unseen repositories.
 
-</details>
+---
+
+## Stage 3 — Richer GitHub Entity Depth & GitHub Discussions Integration *(Feature Slice 1)*
+
+**Goal:** Close the GitHub API collection gaps identified in [product-vision.md](./product-vision.md) so the platform truly extracts deep repository context rather than shallow samples.
+
+1. **Pull Request & Commit Depth Expansion:**
+   - Enrich `PullRequest` model & collector (`Migration 004`) to capture `body`, `head_branch`, `base_branch`, `is_draft`, `labels`, `requested_reviewers`, and fetch per-PR detail (`additions`, `deletions`, `changed_files`) so size-vs-turnaround analysis (`small..xl`) populates on live runs.
+   - Increase/make configurable `commit_details` diff budgets and enrich issue fields (`assignees`, `reactions_count`, configurable pagination depth).
+2. **Release Tags & Notes Support:**
+   - Harvest GitHub `/tags` as fallback when formal `/releases` are unused, and persist release/tag metadata for richer evolution analysis.
+3. **GitHub Discussions & Community Context:**
+   - Add GitHub GraphQL (or Discussions REST/GraphQL client) collection for repository **Discussions** (`discussions`, `discussion_comments` tables: category, title, body, author, is_answered, upvotes/reactions, timestamps, comments).
+   - Add Community/Discussions profile metrics (volume, category mix, Q&A answered rate, engagement, recurring themes hook) to the analytics payload (`methodology_version` bump, e.g. `"2026.2"`).
+
+### What You Can Present After Stage 3
+- **Deep GitHub Data Showcase:** Show that for any submitted repository, OpenSourceLens now captures PR diff sizes, branches, drafts, reviewers, issue reactions/assignees, git tag history, **and live GitHub Discussions insights**—far richer than basic GitHub repo counters.
+
+---
+
+## Stage 4 — Interactive Single-Repository Workspace UI *(Feature Slice 2: Visual Core)*
+
+**Goal:** Deliver the intuitive, interactive Next.js web application where any contributor, maintainer, or visitor can analyze a repository visually without touching API tools.
+
+1. **Universal Entry & Live Job Flow (`/`, `/explore`):**
+   - Clean GitHub URL / `owner/repo` submission bar -> instant pre-flight eligibility & budget preview (`fast_snapshot` vs. `standard_diagnostic`) -> live step-by-step ingestion & analytics progress bar (`status` polling + transparent coverage/truncation banners).
+2. **Repository Intelligence Workspace (`/repo/[owner]/[name]`):**
+   - **Overview & Consolidated Report Tab:** Repo & Community Discussions summary, Multi-Domain Diagnostic Scorecard, transparent data-coverage badges (never hiding `NULL` or bounded windows), and plain-English rule findings sorted by severity.
+   - **Development Activity & Releases Tab:** Weekly commit velocity with 4w/12w SMA & EWMA curves, anomaly & change-point markers, `7x24` UTC activity heatmap, churn coverage, commit landing latency quantiles, SemVer adoption, and pre-release surge timelines.
+   - **Contributors & Collaboration Tab:** Identity-clean contributor leaderboard, role filter (commits/PRs/reviews/issues/comments), Gini inequality + interactive Lorenz curve, `BF50`/`BF80` concentration alerts, and bot/unattributed isolation metrics.
+   - **Pull Requests & Code Review Tab:** `TTFResp` vs. `TTFR_formal` vs. `TTFR_inline` latency comparison, merge/abandonment outcome donut, PR Kaplan-Meier survival curve, diff-size turnaround chart, and reviewer bottleneck concentration.
+
+### What You Can Present After Stage 4
+- **Full End-to-End Product Demo:** Live browser walkthrough from pasting a GitHub URL to exploring interactive charts for Development Activity, Contributors, PR Reviews, Releases, and Discussions—fully understandable to any contributor or maintainer.
+
+---
+
+## Stage 5 — Generalizable ML/NLP & Issue/Discussion AI Explorer *(Feature Slice 3: Applied Intelligence)*
+
+**Goal:** Connect true repo-agnostic ML & Deep Learning directly into post-ingestion processing and surface actionable backlog/community discovery in the UI.
+
+1. **Generalizable 5-Class Text Categorization:**
+   - Upgrade/re-evaluate transformer + calibrated linear baseline for 5 actionable categories (`bug`, `feature`, `documentation`, `question`, `other`) using **cross-repository (Leave-One-Repo-Out) validation** and low-confidence abstention (`uncertain`), automatically scoring unlabeled issues/discussions post-ingestion without altering raw GitHub labels.
+2. **Per-Repository Semantic Duplicate & Related-Thread Retrieval:**
+   - Compute `all-MiniLM-L6-v2` embeddings dynamically for every newly ingested repository's issues & discussions (`issue_embeddings` / per-repo vector store), replacing benchmark `embeddings.npz` coupling and powering `GET/POST /api/v1/analytics/{owner}/{name}/similar`.
+3. **Unsupervised Topic & Theme Discovery:**
+   - Cluster per-repository dense embeddings and generate interpretable topic clusters + representative keywords across the repository's issues and discussions automatically (no pre-defined repo labels required).
+4. **Issues, Backlog & AI Explorer UI Tab:**
+   - Add Issue SLA quantiles, Kaplan-Meier issue survival (`S(30d)`/`S(60d)`/`S(90d)`), 5-bin open backlog aging (`fresh`..`dormant`), AI category filter, **Interactive Similar/Duplicate Issue Finder**, and **Recurring Topics Explorer** with drill-down to actual issues/discussions.
+
+### What You Can Present After Stage 5
+- **AI-Powered Backlog Intelligence Demo:** Paste any unseen repo URL and demonstrate: (1) auto-categorized unlabeled issues with confidence scores, (2) live semantic duplicate discovery scoped purely to that repo, and (3) automatically uncovered top recurring bug/feature/discussion themes.
+
+---
+
+## Stage 6 — Cross-Domain Discovery Explorer, Reports & Production Deployment *(Feature Slice 4: Complete Release)*
+
+**Goal:** Complete the analytical storytelling layer, validate multi-worker scale on PostgreSQL, and package the entire platform for reliable deployment.
+
+1. **Cross-Domain Explorer & Exportable Reports:**
+   - Interactive monthly cross-domain chart view (`PAIR-01..03` churn vs. issues, review response vs. PR abandonment, commit pace vs. merges) with clear non-causal interpretation, autocorrelation (`\|r_AR1\|`) & FDR guards, and one-click exportable repository intelligence report (Markdown / JSON).
+2. **Production Hardening & PostgreSQL Validation:**
+   - Full Docker Compose stack (`db` PostgreSQL 16, FastAPI API, `IngestionWorker`, `AnalyticsWorker`, Next.js frontend).
+   - Multi-worker PostgreSQL stress verification (`FOR UPDATE SKIP LOCKED`, concurrent claims, lease expiration recovery, mid-run revision superseding), `AnalyticsWorker` long-run heartbeat, and public API rate-limiting/protection.
+3. **Cross-Repo Validation & Final Documentation:**
+   - End-to-end validation benchmark across diverse unseen public GitHub repositories (small library, active framework, large ecosystem) and final evaluation summary.
+
+### What You Can Present After Stage 6
+- **Production-Ready Platform Delivery:** Complete Dockerized live deployment, statistically guarded cross-domain discovery charts, downloadable repo audit reports, and verified unseen-repository performance across diverse project sizes.
