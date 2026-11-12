@@ -2,6 +2,8 @@
 
 OpenSourceLens dynamically collects commits, contributors, pull requests, PR reviews, inline review comments, pure issues, conversation comments, and releases from **any eligible public GitHub repository** via GitHub REST API v3.
 
+> **Product Scope & Collection Depth Gaps:** Per [product-vision.md](./product-vision.md), OpenSourceLens targets rich public GitHub API intelligence rather than shallow counters. Current Phase B collection has three known depth gaps scheduled for expansion: (1) `/pulls` list calls do not populate per-PR `additions`, `deletions`, `changed_files`, `body`, `head`/`base` branches, `draft` flag, or requested reviewers; (2) `commit_details` diffs are capped at `0` (`fast_snapshot`) or `5` (`standard_diagnostic`); and (3) issue `reactions_count`/assignees, repository tags fallback, and **GitHub Discussions** (GraphQL/REST) are not yet harvested.
+
 ---
 
 ## 1. Complete Ingestion-to-Analytics Lifecycle

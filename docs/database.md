@@ -2,6 +2,8 @@
 
 OpenSourceLens persists repository metadata, ingested GitHub entities, durable job queues, analytical snapshots, and Phase A ML audit logs in a relational schema defined with **SQLAlchemy 2.0** ([`backend/app/database/models.py`](../backend/app/database/models.py)) and managed across both **SQLite** (local/testing) and **PostgreSQL** (configured Docker target).
 
+> **Scope & Cleanup Note:** See [product-vision.md](./product-vision.md) for target data expansion (GitHub Discussions tables, richer PR/issue/commit attributes, dynamic per-repo embeddings) and legacy Phase A persistence slated for later cleanup (`repository_analytics`, static `related_issues_cache`, [`ingest.py`](../backend/app/database/ingest.py), [`schema.sql`](../backend/app/database/schema.sql), [`schema_generator.py`](../backend/app/database/schema_generator.py)).
+
 ---
 
 ## 1. Engine & Session Configuration
@@ -94,7 +96,7 @@ erDiagram
 - **Claiming:** On PostgreSQL, `claim_job()` / `claim_next_job()` issues `SELECT ... FOR UPDATE SKIP LOCKED`. On SQLite, it executes inside `BEGIN IMMEDIATE` or dialect-safe locking (single-writer semantics).
 - **Optimistic Lease-Version Fencing:** Every claim increments `lease_version += 1`, sets `worker_id`, and sets `leased_until = now + lease_duration_seconds` (`600s` default in both workers).
 - Every heartbeat renewal, publication, failure recording, or stale abortion verifies `(id, worker_id, lease_version, status == 'running')` via a conditional `UPDATE ... WHERE ...` rowcount check. If `rowcount == 0`, a ghost worker is rejected (`JobLeaseLostException` / `GhostWorkerRejectedException`).
-- **Mid-Run Source Revision Protection:** During `AnalyticsOrchestrator.process_claimed_run()`, after computation finishes and right before `publish_and_finalize()`, if the repository's `analytics_source_revision` advanced beyond the run's pinned snapshot revision (and `retry_count`/`max_retries` or queue policy triggers superseding), the older snapshot run is aborted as `status="stale"` (`StaleAnalysisRevisionException`) and a replacement run is queued rather than overwriting newer repository truth.
+- **Mid-Run Source Revision Protection:** During `AnalyticsOrchestrator.process_claimed_run()`, after computation finishes and right before `publish_and_finalize()`, if the repository's `analytics_source_revision` advanced beyond the run's pinned snapshot revision (and a newer completed run already superseded it), `_abort_superseded_stale_run()` aborts the older snapshot run with `status="cancelled"` (and attempt `outcome="interrupted"`) and allows replacement work rather than overwriting newer repository truth.
 
 ---
 

@@ -2,6 +2,8 @@
 
 OpenSourceLens serves REST JSON endpoints via FastAPI ([`backend/app/main.py`](../backend/app/main.py), [`backend/app/api/v1/api.py`](../backend/app/api/v1/api.py)). Interactive Swagger and ReDoc specs are automatically available at `/docs` and `/redoc` (OpenAPI schema at `/openapi.json`).
 
+> **Scope & Legacy Endpoint Note:** For product context, see [product-vision.md](./product-vision.md). Sections **3.2** (Dynamic Ingestion) and **3.3** (Modern Analytics V2) power the universal any-repository architecture. Sections **3.4** (Legacy Phase A Repositories/Analytics) and **3.5** (benchmark-coupled `RelatedIssueService` and `ResolutionService` routes) are legacy interfaces retained temporarily until code cleanup and per-repository ML decoupling.
+
 ---
 
 ## 1. Error Envelope Standard
@@ -75,7 +77,7 @@ Implemented in [`backend/app/api/v1/endpoints/analytics.py`](../backend/app/api/
   - **Response (`200`, `AnalysisLatestResponse`):** `{ repository, is_stale, active_run_id, active_run_status, run }`.
   - **Errors:** `404` if repository unknown or has no completed run for that methodology.
 - **`GET /api/v1/analytics/{owner}/{name}/history?limit=20&offset=0&status=...`**
-  - **Query Params:** `limit` (`1..100`, default `20`), `offset` (`>= 0`, default `0`), optional `status` filter (`cancelled`, `completed`, `failed`, `pending`, `running` — note `"stale"` is not currently in `_VALID_RUN_STATUSES`).
+  - **Query Params:** `limit` (`1..100`, default `20`), `offset` (`>= 0`, default `0`), optional `status` filter (`cancelled`, `completed`, `failed`, `pending`, `running` in `_VALID_RUN_STATUSES`; staleness is computed dynamically via `is_stale`, and superseded mid-run aborts are persisted as `cancelled`).
   - **Response (`200`, `AnalysisHistoryResponse`):** `{ repository, total, limit, offset, items: [AnalysisRunRead] }`.
 - **`GET /api/v1/analytics/{owner}/{name}/runs/{run_id}`** and **`GET /api/v1/analytics/runs/{run_id}`**
   - **Response (`200`, `AnalysisRunDetailResponse`):** `{ repository, is_stale, run }`. Repository-scoped route enforces `run.repository_id == repo.id`; global route looks up any `run_id`.

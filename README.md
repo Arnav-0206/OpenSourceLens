@@ -1,38 +1,68 @@
-# OpenSourceLens — Data Science-Powered GitHub Repository Intelligence Platform
+# OpenSourceLens
 
-**OpenSourceLens** is a Data Science and backend engineering platform that collects publicly available telemetry from **any eligible public GitHub repository** (`owner/repo` or GitHub URL) and computes multi-domain statistical analytics, machine learning diagnostics, and evidence-backed findings beyond raw GitHub vanity counts.
+**Deep, evidence-backed intelligence for any public GitHub repository.**
 
----
+Submit a public GitHub URL or `owner/repo` slug, and OpenSourceLens collects rich underlying engineering and community data exposed by GitHub's public APIs—commits, contributors, issues, comments, pull requests, code reviews, releases, and (planned) discussions—and analyzes it using **statistical Data Science, Machine Learning, and Deep Learning**.
 
-## 1. Problem Statement & Intended Audience
+Instead of repeating surface-level GitHub counters (stars, forks, raw totals), OpenSourceLens helps **contributors**, **maintainers**, and **anyone evaluating a repository** understand how a project actually behaves beneath the surface.
 
-Raw GitHub repository pages surface surface-level counters (stars, open issues, total commits), which do not answer operational engineering questions:
-- Is development velocity accelerating, steady, volatile, or undergoing a structural change-point?
-- Is commit participation concentrated in a fragile bus factor (`BF50`/`BF80`, Gini inequality)?
-- How fast do external human reviewers respond to pull requests (`TTFResp` vs. `TTFR_formal`), and where are merge bottlenecks?
-- What is the age profile and survival curve of the open issue backlog, separate from PRs?
-- Do changes in churn, review responsiveness, or commit pace empirically covary across months?
-
-**Intended Audience:** Open-source maintainers evaluating triage and review health, contributors assessing project responsiveness before investing effort, engineering leads conducting dependency risk due diligence, and software engineering researchers studying empirical repository dynamics.
+> **Start here:** Read [docs/product-vision.md](./docs/product-vision.md) for the complete, jargon-free explanation of what OpenSourceLens covers, what is out of scope, what already runs today, and what legacy prototype files are slated for removal.
 
 ---
 
-## 2. Key Capabilities
+## What OpenSourceLens Helps You Understand
 
-- **Dynamic GitHub Ingestion Engine (Phase B):** Strict URL validation, pre-flight repository eligibility checks (public accessibility, non-empty code gate, fork/archived awareness), tiered API request budgeting (`fast_snapshot`: 10 requests, `standard_diagnostic`: 50 requests), RFC 5988 pagination, rate-limit backoff/halting, and atomic source revision tracking.
-- **Durable Job Queues & Workers:** SQL-backed `DurableJobQueue` (`collection_runs`) and `AnalyticsJobQueue` (`analysis_runs` / `analysis_run_attempts`) with monotonic `lease_version` fencing, stale-run protection, and automatic post-ingestion analytics enqueueing.
-- **Six-Domain Analytics Engine (`methodology_version = "2026.1"`, Phase C.1–C.7):**
-  1. **Development Activity:** Rolling 4w/12w/52w velocities, completed-week consistency & CV, 4w/12w rolling SMA & EWMA, adaptive robust-MAD/z-score/Poisson anomaly detection, `max_ssb` permutation change-points, 7x24 UTC rhythms, diff-aware code churn, and commit landing latency.
-  2. **Contributor Ecosystem:** Immutable `github_id` actor hygiene, bot/unattributed isolation, Gini coefficient, 11-point Lorenz deciles, Shannon entropy, BF50/BF80, and full-history-gated monthly retention cohorts.
-  3. **Pull Request Intelligence:** Separated `TTFResp` / `TTFR_formal` / `TTFR_inline` responsiveness, merge/abandonment outcomes, merge latency quantiles, Kaplan-Meier survival (`S(7d)`, `S(30d)`), diff-aware size bins, and reviewer load concentration.
-  4. **Issue & Maintenance Intelligence:** Monthly inflow/outflow, backlog stock separation from GitHub's combined `open_issues_count`, timestamp-derived SLA percentiles, Kaplan-Meier survival (`S(30d)`, `S(60d)`, `S(90d)`), 5-bin backlog aging, discussion correlation, and separate `"unlabeled"` vs. `"other"` categories.
-  5. **Release Evolution:** Inter-release cadence regularity (`CV_release`), 14d/60d pre-release commit surges (with 74d depth & zero-baseline guards), and SemVer 2.0.0 adoption.
-  6. **Cross-Domain Synthesis:** Objective Multi-Domain Diagnostic Scorecard (no arbitrary 0–100 composite score), embedded Release Evolution, paired monthly Spearman tests (`B = 10,000` SHA-256 deterministic permutations), AR(1) autocorrelation suppression (`|r_AR1| > 0.40`), PR review coverage guards, Benjamini-Hochberg FDR (`alpha = 0.05`), and consolidated deterministic rules (`consolidate_rules`).
-- **Phase A ML/NLP Advisory Services (Offline Benchmark Models):** DistilBERT / TF-IDF (Logistic Regression, Linear SVM) issue classification (`bug`, `feature`, `other`), `all-MiniLM-L6-v2` semantic similarity against cached benchmark embeddings, and advisory Random Forest 4-tier resolution velocity prediction (`< 1 Day`, `1-7 Days`, `7-30 Days`, `30+ Days`).
+- **If you want to contribute:** *How quickly do human maintainers actually respond to pull requests? Which issues stay open for months versus closing within days? Have other contributors already filed duplicate or closely related issues?*
+- **If you maintain a repository:** *Is development momentum speeding up or slowing down? Does the project depend too heavily on one or two contributors (`BF50` / Gini concentration)? Which topics keep recurring across open issues?*
+- **If you are evaluating a project:** *Are releases predictable (`CV_release`, SemVer compliance) or sporadic? Do spikes in churn or commit velocity align with incoming bug reports or PR review delays?*
 
 ---
 
-## 3. Architecture Overview
+## Scope Boundaries (In Scope vs. Out of Scope)
+
+| In Scope | Explicitly Out of Scope |
+|---|---|
+| Any eligible **public** GitHub repository (`owner/repo` or URL) | Static source-code inspection, AST parsing, or code-complexity auditing |
+| Rich public **GitHub API** telemetry: issues, comments, labels, assignees, reactions, PRs, PR reviews, inline review comments, branches/diffs, commits, contributors, releases, and **GitHub Discussions** (planned) | GitHub Actions / CI-CD workflow log analytics |
+| Statistical analytics, survival curves, inequality/bus factor, generalizable issue/PR classification, per-repo duplicate similarity, and topic discovery | Dependency graph / SBOM / security vulnerability scanning |
+| Interactive analytical dashboards, visual charts, and consolidated reports | Conversational AI / RAG chatbot interfaces |
+
+The four repositories bundled in `data/` (`microsoft/vscode`, `pytorch/pytorch`, `kubernetes/kubernetes`, `huggingface/transformers`) are strictly **offline benchmark datasets** used for research and model validation—never product boundaries.
+
+---
+
+## Core Intelligence Areas & How DS / ML / DL Fit In
+
+OpenSourceLens separates **objective statistical measurement** from **applied Machine Learning / Deep Learning** so insights stay honest, reproducible, and free of inflated scores:
+
+1. **Repository Context & Community Profile** *(Planned Expansion)* — Public repo metadata, tags fallback, and **GitHub Discussions** (volume, categories, answered Q&A rates, recurring community topics).
+2. **Development Activity & Commit History** — Rolling 4w/12w/52w commit velocities, completed-week consistency & CV, rolling anomalies (robust MAD / z-score / Poisson), `max_ssb` permutation change-points, `7x24` UTC rhythms, diff-aware code churn, and commit landing latency.
+3. **Contributors & Collaboration Ecosystem** — Identity-clean contributor mapping (`github_id` + unlinked email fallback, bots separated), multi-role counts (commits, PRs, reviews, issues, comments), Gini inequality, 11-point Lorenz deciles, Shannon entropy, bus factors (`BF50` / `BF80`), and history-gated cohort retention.
+4. **Pull Request & Code-Review Lifecycle** — Separated response metrics (`TTFResp`, formal `TTFR_formal`, inline `TTFR_inline`), merge vs. abandonment rates, merge latency quantiles, Kaplan-Meier PR survival, diff-size turnaround buckets, reviewer load concentration, plus planned PR descriptions/branches/draft/diff depth.
+5. **Issue & Backlog Intelligence** — Monthly inflow/outflow, pure issue backlog separation, timestamp-derived SLA percentiles, right-censored Kaplan-Meier survival (`S(30d)`/`S(60d)`/`S(90d)`), 5-bin backlog aging, discussion intensity, canonical categorization (NLP), plus planned per-repo semantic duplicate retrieval and unsupervised topic discovery.
+6. **Release & Project Evolution** — Inter-release cadence predictability (`CV_release`), SemVer 2.0.0 adoption, pre-release commit surges (`14d` vs. prior `60d`), and release dormancy (+ planned tags/release notes).
+7. **Cross-Domain Discovery & Consolidated Report** — Multi-domain diagnostic scorecard, deterministic consolidated findings, and monthly cross-domain Spearman permutation tests (`B = 10,000`, `|r_AR1| > 0.40` autocorrelation guard, Benjamini-Hochberg FDR `alpha = 0.05`).
+
+> **Why no composite "health score" or exact countdown timer?** OpenSourceLens intentionally avoids arbitrary `0–100` grades and exact issue-hour countdown predictions (offline Phase 8 evaluation showed within-repo $R^2$ ranges from `-0.04` to `+0.18` because maintainer availability happens after creation). Missing or partial streams are flagged explicitly instead of coerced to `0`.
+
+---
+
+## Honest Project State: Implemented vs. Next vs. Slated for Cleanup
+
+- **Implemented Backend (`backend/`):**
+  - **Phase B Dynamic Ingestion:** GitHub URL validation, public/non-empty eligibility gating, request budget modes (`fast_snapshot` 10 reqs / `standard_diagnostic` 50 reqs), RFC 5988 pagination, lease-fenced `DurableJobQueue`, `IngestionWorker`, and automatic post-ingestion analytics enqueueing.
+  - **Phase C Analytics Engine (`methodology_version = "2026.1"`):** Six-domain statistical calculators (`DevelopmentActivity`, `ContributorIntelligence`, `PullRequestIntelligence`, `IssueIntelligence`, `ReleaseEvolution`, `CrossDomainSynthesis`), snapshot-isolated `AnalyticsOrchestrator`, `AnalyticsWorker`, and Analytics V2 endpoints (`/api/v1/analytics/{owner}/{name}/...`).
+- **Pending Product Gaps:**
+  - Harvesting **GitHub Discussions**, PR diff stats/branches/bodies/requested reviewers from `/pulls` details, deeper commit diffs, issue reactions/assignees, and repo tags fallback.
+  - Decoupling ML/NLP from benchmark artifacts (`embeddings.npz` static lookup and 4-repo dummy encodings in `ResolutionPredictor`) so semantic duplicate search, 5-class categorization, and topic discovery run dynamically per ingested repository.
+  - Wiring the Next.js frontend ([`frontend/`](./frontend/)) to the dynamic ingestion + Analytics V2 endpoints.
+  - Operational fixes tracked in [the backend audit](./docs/audits/OPENSOURCELENS_BACKEND_AUDIT.md) (Migration `001` fresh-DB drift, `IngestionWorker` CLI entrypoint, `rate_limited` auto-resumption, live PostgreSQL multi-worker verification).
+- **Legacy Prototype Components Slated for Later Code Removal:**
+  - `demo_app.py` (old Streamlit prototype), legacy `scripts/verify_*.py` scripts, `backend/app/database/{ingest.py,schema.sql,schema_generator.py}`, legacy Phase A `/api/v1/repos*` & legacy `/api/v1/analytics/*` snapshots, static `embeddings.npz` coupling, benchmark-dummy RF velocity encodings, and Phase 10 hardcoded UI fallbacks (`REPO_REGISTRY`, `FALLBACK_ISSUE_CORPUS`). *(These remain untouched in code until the dedicated code-cleanup step.)*
+
+---
+
+## End-to-End Architecture
 
 ```mermaid
 flowchart LR
@@ -43,153 +73,100 @@ flowchart LR
     W1 -->|Auto-enqueue on clean completion| Q2["AnalyticsJobQueue (analysis_runs)"]
     API -->|POST recompute| Q2
     Q2 --> W2["AnalyticsWorker (CLI / Opt-in Lifespan)"]
-    W2 --> Orch["AnalyticsOrchestrator (C.2–C.6 + Payload Validation)"]
+    W2 --> Orch["AnalyticsOrchestrator (C.2–C.6 + Validation)"]
     Orch -->|Fenced publication| DB
     API -->|GET status, latest, history, domains| DB
 ```
 
-For full component details, read:
-- [docs/architecture.md](./docs/architecture.md)
-- [docs/database.md](./docs/database.md)
-- [docs/ingestion.md](./docs/ingestion.md)
-- [docs/analytics.md](./docs/analytics.md)
-- [docs/api.md](./docs/api.md)
-- [docs/workers-and-deployment.md](./docs/workers-and-deployment.md)
-- [docs/audits/OPENSOURCELENS_BACKEND_AUDIT.md](./docs/audits/OPENSOURCELENS_BACKEND_AUDIT.md)
+---
 
-*(Correction note: wait to fix link `./docs/workers-and-deployment.md` below!)*
+## Documentation Guide
+
+| Document | Audience & Purpose |
+|---|---|
+| [docs/product-vision.md](./docs/product-vision.md) | Clear product vision, scope boundaries, 7 analytical areas, DS/ML fit, and legacy cleanup register |
+| [docs/architecture.md](./docs/architecture.md) | System architecture, component flow, queues, orchestrator, and legacy ML services |
+| [docs/ingestion.md](./docs/ingestion.md) | 12-stage GitHub collection lifecycle, request budgets, rate-limit handling, and depth gaps |
+| [docs/analytics.md](./docs/analytics.md) | Mathematical formulas, statistical guards, sample gates, and rule IDs across all 6 backend domains |
+| [docs/database.md](./docs/database.md) | SQLAlchemy 2.0 ORM tables, source revisions, lease fencing, and Migration `001` warning |
+| [docs/api.md](./docs/api.md) | Complete HTTP contract for ingestion, Analytics V2, and legacy Phase A endpoints |
+| [docs/workers-and-deployment.md](./docs/workers-and-deployment.md) | Environment variables, worker execution, lease recovery, and SQLite vs. PostgreSQL notes |
+| [docs/audits/OPENSOURCELENS_BACKEND_AUDIT.md](./docs/audits/OPENSOURCELENS_BACKEND_AUDIT.md) | Detailed technical audit of the backend, gaps, and verification priorities |
+| [docs/roadmap.md](./docs/roadmap.md) | Milestone history (pending separate update after doc alignment) |
 
 ---
 
-## 4. Actual Technology Stack
-
-- **Backend API & Workers:** Python `3.14` (`.venv`, target `3.10+`), FastAPI (`0.162.0`), Uvicorn (`0.54.0`), Pydantic (`2.14.2`), HTTPX (`0.28.1`).
-- **Database & Migrations:** SQLAlchemy (`2.1.6`), Alembic (`1.20.1`), SQLite WAL mode (local/test default), PostgreSQL `16-alpine` (Docker config in `docker-compose.yml`; requires optional `psycopg2-binary`).
-- **Data Science, Statistics & ML:** NumPy (`2.5.4`), Pandas (`3.0.6`), SciPy (`1.18.1`), scikit-learn (`1.9.1`), PyTorch (`2.14.1`), Hugging Face Transformers (`5.20.2`), Sentence-Transformers (`6.2.0`), Joblib (`1.6.0`).
-- **Frontend UI (Phase 10 Legacy Prototype):** Next.js `15.1.7`, React `19.0.0`, TypeScript, Tailwind CSS, Recharts `3.10.1`.
-- **Testing:** pytest (`9.2.0`).
-
----
-
-## 5. Repository Structure
+## Repository Layout
 
 ```text
 OpenSourceLens/
-├── alembic.ini                 # Alembic config (run with `python -m alembic`)
-├── docker-compose.yml          # PostgreSQL 16-alpine service definition only
-├── requirements.txt            # Root HTTP/tabular dependencies
-├── demo_app.py                 # Standalone legacy Streamlit prototype
+├── alembic.ini                 # Alembic config (invoke via `python -m alembic`)
+├── docker-compose.yml          # PostgreSQL 16-alpine DB container config
+├── requirements.txt            # Root Python HTTP/tabular dependencies
+├── demo_app.py                 # Legacy Streamlit prototype (scheduled for removal)
 ├── backend/
-│   ├── requirements.txt        # FastAPI, SQLAlchemy, Alembic, Pydantic (psycopg2 commented out)
+│   ├── requirements.txt        # FastAPI, SQLAlchemy, Alembic, Pydantic
 │   ├── alembic/                # Migrations 001, 002, 003
 │   └── app/
-│       ├── main.py             # FastAPI factory, lifespan, / and /health routes
-│       ├── api/v1/             # Router mounting & endpoints (ingest, repos, analytics, ML, models)
-│       ├── core/               # Settings, custom exceptions, uniform error handlers
-│       ├── database/           # SQLAlchemy 2.0 ORM (17 tables), session, init_db, benchmark ingest
-│       ├── schemas/            # Pydantic v2 contracts (analytics_v2, ingestion, analytics, etc.)
-│       └── services/           # Collector, GitHub client, budgeter, queues, workers, ML, analytics/
-├── docs/                       # Current technical docs, historical Track A specs, backend audit
-├── frontend/                   # Next.js 15 Phase 10 UI (not yet wired to Phase B/C endpoints)
-├── ml/                         # Offline Track A data collection, EDA, NLP, transformer & RF training
-├── models/                     # Saved DistilBERT, MiniLM embeddings.npz, TF-IDF LR/SVM, RF models
+│       ├── main.py             # FastAPI factory, lifespan, /, /health
+│       ├── api/v1/             # API routers (ingest, Analytics V2, legacy Phase A)
+│       ├── core/               # Settings, exceptions, uniform error envelopes
+│       ├── database/           # SQLAlchemy 2.0 ORM (17 tables), session, init_db
+│       ├── schemas/            # Pydantic v2 contracts
+│       └── services/           # Collector, GitHub client, budgeter, queues, workers, analytics/
+├── docs/                       # Product vision & technical specifications
+├── frontend/                   # Next.js 15 Phase 10 UI prototype (not yet wired to V2 API)
+├── ml/                         # Offline benchmark research, EDA, NLP, DistilBERT & RF scripts
+├── models/                     # Offline benchmark artifacts (DistilBERT, static embeddings.npz, RF)
 ├── data/
-│   ├── opensource_lens.db      # Offline benchmark SQLite DB (4 benchmark repos, 2,328 issues)
-│   └── raw/, processed/, backups/
-├── scripts/                    # 9 verification scripts (verify_*_pipeline.py, verify_connection.py, etc.)
+│   ├── opensource_lens.db      # Offline 4-repo SQLite benchmark DB (2,328 issues; 0 Phase B/C runs)
+│   └── raw/, processed/
+├── scripts/                    # Legacy verification scripts (scheduled for cleanup)
 └── tests/                      # 1,079 collected pytest unit and integration tests
 ```
 
 ---
 
-## 6. Local Setup, Environment & Database Migrations
+## Local Setup & Running Backend Services
 
-### 6.1 Python Environment
+### 1. Python Environment
 ```powershell
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
 pip install -r backend\requirements.txt
 ```
-Additional ML runtime dependencies (`torch`, `transformers`, `sentence-transformers`, `scikit-learn`, `scipy`, `pytest`, `httpx`) are required for model endpoints, analytics statistics (`scipy`/`numpy`), and tests; all are present in the project `.venv`.
+Analytics statistics and ML endpoints also rely on packages installed in the project virtualenv (`numpy`, `scipy`, `torch`, `transformers`, `sentence-transformers`, `scikit-learn`, `pytest`, `httpx`).
 
-### 6.2 Environment Configuration
-Copy `.env.example` to `.env` (never commit `.env` or tokens):
-- `DATABASE_URL`: Optional SQLAlchemy URL (defaults to `data/opensource_lens.db`).
-- `GITHUB_TOKEN`: Recommended GitHub Personal Access Token (raises REST limit from `60/hr` unauthenticated to `5,000/hr` authenticated; public read access requires no private scopes).
+### 2. Environment Variables
+Copy `.env.example` to `.env` (never commit `.env` or secrets):
+- `DATABASE_URL`: SQLAlchemy URL (defaults to local SQLite `data/opensource_lens.db`).
+- `GITHUB_TOKEN`: GitHub Personal Access Token (raises public REST rate limit from `60 req/hr` to `5,000 req/hr`).
 - `BACKEND_CORS_ORIGINS`: Allowed frontend origins (default `["http://localhost:3000", "http://127.0.0.1:3000"]`).
-- `PREWARM_ON_STARTUP`: Load Phase A ML weights on API startup (`false` by default).
-- Worker controls (omitted from `.env.example`, read in `backend/app/core/config.py`):
-  - `ENABLE_ANALYTICS_WORKER` (`false` by default)
-  - `ANALYTICS_WORKER_POLL_INTERVAL_SECONDS` (`1.0` default)
-  - `ANALYTICS_WORKER_RECONCILE_INTERVAL_SECONDS` (`60.0` default)
+- `PREWARM_ON_STARTUP`: Preload Phase A ML models on startup (`false` default).
+- Worker controls read by `backend/app/core/config.py`: `ENABLE_ANALYTICS_WORKER` (`false`), `ANALYTICS_WORKER_POLL_INTERVAL_SECONDS` (`1.0`), `ANALYTICS_WORKER_RECONCILE_INTERVAL_SECONDS` (`60.0`). See [docs/workers-and-deployment.md](./docs/workers-and-deployment.md).
 
-See [docs/workers-and-deployment.md](./docs/workers-and-deployment.md) for details and `.env.example` drift notes.
-
-### 6.3 Database Setup & Migrations
-The repository includes an offline pre-populated SQLite DB (`data/opensource_lens.db`) at Alembic revision `003_add_phase_c_analytics_infrastructure`:
+### 3. Migrations & Services
 ```powershell
+# Inspect current migration state
 .\.venv\Scripts\python.exe -m alembic -c alembic.ini current
-.\.venv\Scripts\python.exe -m alembic -c alembic.ini upgrade head
-```
-*(Important: If provisioning a brand-new empty database, note the Migration `001` vs. ORM column drift documented in [docs/database.md](./docs/database.md#4-alembic-migrations--known-schema-drift-warning).)*
 
----
-
-## 7. Starting the Services
-
-### 7.1 FastAPI Backend Server
-```powershell
+# Start FastAPI server (Swagger UI at http://127.0.0.1:8000/docs)
 .\.venv\Scripts\python.exe -m uvicorn backend.app.main:app --host 127.0.0.1 --port 8000 --reload
-```
-API docs will be available at `http://127.0.0.1:8000/docs`.
 
-### 7.2 Analytics Worker
-Run as a standalone background process (recommended alongside multi-worker API deployments):
-```powershell
+# Start AnalyticsWorker (standalone process)
 .\.venv\Scripts\python.exe -m backend.app.services.analytics_worker
-```
-Or embed in a single-process FastAPI instance by setting `ENABLE_ANALYTICS_WORKER=true` in `.env`.
 
-### 7.3 Ingestion Worker
-`IngestionWorker` does not yet provide a `__main__` CLI entrypoint. Run it cleanly in a background terminal with:
-```powershell
+# Start IngestionWorker (no __main__ CLI yet)
 .\.venv\Scripts\python.exe -c "import asyncio; from backend.app.database.session import SessionLocal; from backend.app.services.ingestion_worker import IngestionWorker; asyncio.run(IngestionWorker().run_worker_loop(SessionLocal))"
 ```
+*(Note: Provisioning a brand-new empty DB via `alembic upgrade head` currently hits Phase A column drift in Migration `001` documented in [docs/database.md](./docs/database.md#4-alembic-migrations--known-schema-drift-warning).)*
 
----
-
-## 8. API Endpoint Overview
-
-- **System:** `GET /`, `GET /health`, `GET /api/v1/ping`
-- **Dynamic Ingestion:** `POST /api/v1/ingest/preview`, `POST /api/v1/ingest/submit`, `GET /api/v1/ingest/status/{job_id}` (also aliased under `/api/ingest/*`)
-- **Modern Analytics V2:** `POST /api/v1/analytics/{owner}/{name}/recompute`, `GET /api/v1/analytics/{owner}/{name}/status`, `GET /api/v1/analytics/{owner}/{name}/latest`, `GET /api/v1/analytics/{owner}/{name}/history`, `GET /api/v1/analytics/{owner}/{name}/runs/{run_id}`, `GET /api/v1/analytics/runs/{run_id}`, `GET /api/v1/analytics/{owner}/{name}/domains/{domain_key}`
-- **Legacy Repositories & Phase A Analytics:** `GET /api/v1/repos`, `GET /api/v1/repos/{owner}/{name}`, `GET /api/v1/repos/{owner}/{name}/issues`, `GET /api/v1/repos/{owner}/{name}/issues/{number}`, `GET /api/v1/analytics/overview`, `GET /api/v1/analytics/comparison`, `GET /api/v1/analytics/{owner}/{name}`, `GET /api/v1/analytics/{owner}/{name}/trends`
-- **Phase A ML & Models:** `POST /api/v1/classify`, `POST /api/v1/related`, `GET /api/v1/related/{issue_id}`, `POST /api/v1/resolution/predict`, `GET /api/v1/resolution/stats/{owner}/{name}`, `GET /api/v1/models`, `GET /api/v1/models/{model_id}`, `POST /api/v1/models/prewarm`
-
-See [docs/api.md](./docs/api.md) for full schemas, parameters, and status codes.
-
----
-
-## 9. Testing & Verification
-
-Discover all `pytest` tests (`1,079` collected across unit, pipeline, ingestion, analytics, and API suites):
+### 4. Tests
 ```powershell
+# Discover full suite (1,079 tests collected)
 .\.venv\Scripts\python.exe -m pytest --collect-only -q
-```
-Run the Phase B, Phase C, and FastAPI backend suites (3 live-network tests skip unless `RUN_LIVE_GITHUB_TESTS=1`):
-```powershell
+
+# Run backend ingestion, analytics engine, worker, and API suites (live GitHub tests opt-in via RUN_LIVE_GITHUB_TESTS=1)
 .\.venv\Scripts\python.exe -m pytest tests/test_alembic_migrations.py tests/test_github_url_validator.py tests/test_repository_eligibility.py tests/test_github_client.py tests/test_rate_budgeter.py tests/test_async_repository_collector.py tests/test_collector_mutation_tracking.py tests/test_durable_job_queue.py tests/test_e2e_ingestion_lifecycle.py tests/test_api_ingest.py tests/test_analytics_foundation.py tests/test_analytics_queue.py tests/test_development_activity.py tests/test_contributor_intelligence.py tests/test_pull_request_intelligence.py tests/test_issue_intelligence.py tests/test_release_and_cross_domain_intelligence.py tests/test_analytics_orchestrator.py tests/test_analytics_worker.py tests/test_post_ingestion_analytics_wiring.py tests/test_api_analytics_v2.py tests/test_api_analytics.py tests/test_api_app.py tests/test_api_error_handling.py tests/test_api_repos.py tests/test_api_models.py tests/test_api_classification.py tests/test_api_related.py tests/test_api_resolution.py -q
 ```
-Phase 11 standalone diagnostics reside in `scripts/` (e.g., `scripts/verify_database_pipeline.py`, `scripts/verify_connection.py`, `scripts/verify_e2e_journey.py`).
-
----
-
-## 10. Current Status, Known Limitations & Next Work
-
-- **Backend Status:** Phase B (Dynamic Ingestion) and Phase C.1–C.8.3 (6-domain Analytics Engine, `AnalyticsOrchestrator`, `AnalyticsWorker`, and Analytics V2 API) are implemented and unit/integration tested on SQLite.
-- **Frontend Status (Incomplete):** [`frontend/`](./frontend/) remains at its Phase 10 prototype state — it consumes legacy `/api/v1/repos` and Phase A `/api/v1/analytics` endpoints and does not yet expose dynamic GitHub URL submission or V2 multi-domain intelligence views.
-- **Offline Benchmark DB Limitation:** `data/opensource_lens.db` currently holds `4` benchmark repos and `2,328` issues with `0` commits, `0` pull requests, `0` releases, and `0` Phase C `analysis_runs`.
-- **Key Open Technical Debt:** Migration `001` vs. ORM Phase A column drift; missing standalone CLI / lifespan startup for `IngestionWorker`; no scheduler to auto-resume `rate_limited` jobs after `resumes_at`; `stale` omitted from `/history?status=` filter validation; static benchmark embedding store (`embeddings.npz`) not yet indexing dynamically ingested issues; unverified live multi-worker PostgreSQL execution; and no API authentication/rate limiting.
-
-See [docs/audits/OPENSOURCELENS_BACKEND_AUDIT.md](./docs/audits/OPENSOURCELENS_BACKEND_AUDIT.md) and [docs/roadmap.md](./docs/roadmap.md) for the complete technical audit and prioritized next steps.

@@ -1,6 +1,6 @@
 # OpenSourceLens — Workers & Deployment Guide
 
-This guide documents background worker execution, environment configuration, lease recovery, and dialect deployment differences. It explicitly separates **locally tested behavior** from **unverified production behavior**.
+This guide documents background worker execution, environment configuration, lease recovery, and dialect deployment differences. It explicitly separates **locally tested behavior** from **unverified production behavior**. For product scope, see [product-vision.md](./product-vision.md).
 
 ---
 

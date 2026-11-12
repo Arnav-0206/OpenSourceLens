@@ -2,6 +2,8 @@
 
 OpenSourceLens implements a six-domain statistical analytics engine (`methodology_version = "2026.1"`) built on [`BaseMetricCalculator`](../backend/app/services/analytics/base.py#L32-L66) and coordinated by [`AnalyticsOrchestrator`](../backend/app/services/analytics/orchestrator.py#L256-L1140).
 
+> **Scope Alignment Note:** For the full 7-area product scope (including planned **GitHub Discussions** intelligence, generalizable NLP triage, per-repo duplicate detection, and topic discovery, as well as out-of-scope exclusions), see [product-vision.md](./product-vision.md). This document specifies the exact statistical formulas currently implemented in the backend engine.
+
 All domain calculators obey two core invariants:
 1. **Snapshot & Reference-Time Freezing:** Every domain reads inside a single snapshot transaction against the worker's pinned `analytics_source_revision` and frozen UTC `analysis_reference_time` (`ref_time`). Any rows timestamped after `ref_time` are excluded.
 2. **No Fabricated Zeros / No Silent Coercion:** Missing commit diffs, missing `committer_date` timestamps, uncollected review streams, and small samples report explicit statuses (`insufficient`, `empty`, `diff_metrics_not_collected`, `unavailable_requires_full_history_ingestion`, etc.) rather than coercing `None` to `0.0`.
@@ -27,7 +29,7 @@ All domain calculators obey two core invariants:
      - `medium`: `0.60 <= score < 0.80`
      - `high`: `score >= 0.80`
 6. **Rule Consolidation (`consolidate_rules`):** Deduplicates on `(rule_id, domain, finding)` across Domains 1–6 and sorts deterministically by severity (`critical < warning < positive < info`), `domain`, `rule_id`, `finding`.
-7. **Revision & Lease-Fenced Publication:** Before committing, `process_claimed_run()` checks if `Repository.analytics_source_revision` advanced beyond the pinned snapshot revision. If stale, it marks the run `status="stale"` (`_abort_superseded_stale_run`) and re-queues current revision work instead of publishing obsolete metrics. Otherwise `publish_and_finalize()` atomically persists `metrics_payload`, `coverage_summary`, `confidence_summary`, `rule_interpretations`, `source_content_digest`, updates `repositories.last_analyzed_at`, and records an immutable attempt.
+7. **Revision & Lease-Fenced Publication:** Before committing, `process_claimed_run()` checks if `Repository.analytics_source_revision` advanced beyond the pinned snapshot revision. If superseded, `_abort_superseded_stale_run()` marks the run `status="cancelled"` (with attempt `outcome="interrupted"`) and re-queues current revision work instead of publishing obsolete metrics. Otherwise `publish_and_finalize()` atomically persists `metrics_payload`, `coverage_summary`, `confidence_summary`, `rule_interpretations`, `source_content_digest`, updates `repositories.last_analyzed_at`, and records an immutable attempt.
 
 ---
 

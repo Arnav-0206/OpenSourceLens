@@ -2,31 +2,21 @@
 
 ## Project Identity
 
-**OpenSourceLens** is a **Data Science-powered GitHub Repository Intelligence Platform**. 
-It collects publicly available data for **any eligible public GitHub repository** and applies data engineering, statistical analysis, machine learning, and natural language processing to discover meaningful patterns, trends, bottlenecks, and insights about open-source software projects.
+**OpenSourceLens** is a universal **GitHub Repository Intelligence and Analytics Platform**.
+It collects rich publicly accessible telemetry for **any eligible public GitHub repository** (`owner/repo` or GitHub URL) from GitHub's APIs and applies Data Science, statistical analysis, Machine Learning, and Deep Learning to uncover meaningful patterns, trends, bottlenecks, and insights that GitHub's standard interface does not surface.
 
-The platform goes beyond raw surface-level statistics (such as total commit counts or contributor counts) to derive actionable intelligence:
-- **Development Activity:** Activity consistency, velocity changes, anomaly detection, and trend analysis.
-- **Contributor Ecosystem:** Contributor retention, cohort analysis, contribution concentration (Gini coefficient/entropy), and participation patterns.
-- **Pull Request Intelligence:** Review turnaround, merge latency, PR lifecycle bottlenecks, and review dynamics.
-- **Issue Intelligence:** Multi-category NLP classification, semantic duplicate discovery, backlog aging, and resolution velocity.
-- **Repository-Level Synthesis:** Cross-domain metrics synthesis, health diagnostics, and evidence-backed findings.
-
-The web dashboard is the interactive presentation layer; the core of the project is the **Data Science and Machine Learning workflow**.
+See [docs/product-vision.md](./docs/product-vision.md) for the canonical product definition and scope boundaries. Briefly:
+- **In Scope:** Repository & community context (including planned **GitHub Discussions**), commit & development activity, contributor ecosystem, pull requests & code reviews, issues & backlog intelligence (including generalizable NLP categorization, per-repo semantic duplicate discovery, and topic discovery), release evolution, cross-domain synthesis, and an interactive analytical dashboard.
+- **Explicitly Out of Scope:** Source-code/AST inspection or complexity auditing, GitHub Actions CI/CD pipeline analytics, dependency/SBOM vulnerability scanning, and conversational AI/chatbot interfaces.
+- **Presentation Layer:** The web dashboard is the interactive presentation layer; the core is the statistical Data Science and generalizable ML/NLP workflow.
 
 ---
 
 ## Benchmark Repositories vs. Product Scope
 
 ### Crucial Distinction
-- **Product Scope:** The application must accept and analyze **ANY eligible public GitHub repository** specified by a user (via URL or `owner/repo`). The primary product experience is a **Single-Repository Intelligence Workspace**.
-- **Benchmark / Sample Datasets:** The four initial repositories:
-  1. `microsoft/vscode` (Developer Tools & IDE)
-  2. `pytorch/pytorch` (Machine Learning Framework)
-  3. `kubernetes/kubernetes` (Cloud Infrastructure)
-  4. `huggingface/transformers` (NLP & Generative AI)
-  
-  These repositories serve as **offline benchmark datasets**, experimentation baselines, and cross-domain validation sets. They do **NOT** define the operational boundary of the platform. All production pipelines, analytical models, and user interfaces must be designed for **generalization to unseen repositories**.
+- **Product Scope:** The application must accept and analyze **ANY eligible public GitHub repository** specified by a user (via URL or `owner/repo`). The primary product experience is an interactive **Single-Repository Intelligence Workspace**.
+- **Benchmark / Sample Datasets:** The four initial repositories (`microsoft/vscode`, `pytorch/pytorch`, `kubernetes/kubernetes`, `huggingface/transformers`) serve strictly as **offline benchmark datasets**, experimentation baselines, and cross-domain validation sets. They do **NOT** define the operational boundary of the platform. All production pipelines, analytical models, and user interfaces must generalize to unseen repositories (benchmark-coupled legacy prototype files—such as `demo_app.py`, static `embeddings.npz` lookup, 4-repo dummy encoders, legacy Phase A endpoints, and Phase 10 hardcoded UI registries—are slated for cleanup).
 
 ---
 
@@ -89,38 +79,21 @@ If sources disagree, identify the conflict, explain why it matters, and ask the 
 
 ---
 
-## Core Analytical Domains
+## Core Analytical Domains (Target Vision & Implemented Engine)
 
-| # | Domain | Core Techniques | Key Deliverables |
+| # | Domain / Area | Core Techniques & Data | Backend Implementation Status |
 |---|---|---|---|
-| 1 | **Dynamic Ingestion** | GitHub REST API, rate-limit budgeting, pagination | On-demand repository ingestion, raw payload storage, schema extraction |
-| 2 | **Development Activity** | Time-series decomposition, rolling averages, change-point detection | Commit velocity trends, activity consistency score, release frequency |
-| 3 | **Contributor Ecosystem** | Gini inequality, cohort analysis, churn modeling | Contributor retention curves, bus factor / concentration metric, newcomer activity |
-| 4 | **Pull Request Intelligence** | Survival analysis (Kaplan-Meier), IQR horizons | Time-to-first-review, merge duration percentiles, PR bottleneck detection |
-| 5 | **Issue Intelligence** | Fine-tuned DistilBERT, Sentence-Transformers, RF velocity | Transferrable issue categorization, semantic duplicate detection, resolution horizons |
-| 6 | **Repository Synthesis** | Multi-metric aggregation, heuristic synthesis | Automated evidence-backed repository intelligence report |
+| 1 | **Dynamic Ingestion & Repo Context** | URL validation, eligibility gating, rate-limit budgeting, pagination, rich GitHub entity harvesting (+ planned **GitHub Discussions**) | Phase B REST ingestion implemented; Discussions, PR diffs/body/branches, and issue assignees/reactions pending |
+| 2 | **Development Activity** | Velocity trends, completed-week consistency, rolling anomalies, permutation change-points, UTC rhythms, diff churn, landing latency | Phase C.2 implemented (`DevelopmentActivityCalculator`) |
+| 3 | **Contributor Ecosystem** | Identity resolution, bot isolation, Gini inequality, Lorenz deciles, Shannon entropy, `BF50`/`BF80`, multi-role counts, gated cohorts | Phase C.3 implemented (`ContributorIntelligenceCalculator`) |
+| 4 | **Pull Request Intelligence** | `TTFResp` / `TTFR_formal` / `TTFR_inline`, outcomes, merge latency quantiles, Kaplan-Meier survival, diff-size bins, reviewer bottlenecks | Phase C.4 implemented (`PullRequestIntelligenceCalculator`) |
+| 5 | **Issue & Backlog Intelligence** | Monthly flow, pure stock isolation, SLA quantiles, Kaplan-Meier survival, aging, discussion intensity + planned **per-repo duplicate retrieval, topic discovery, OOD classification** | Phase C.5 statistical engine implemented; Phase A ML services not yet generalized/wired |
+| 6 | **Release Evolution** | SemVer 2.0.0 adoption, cadence regularity (`CV_release`), pre-release commit surges, dormancy (+ planned git tags fallback & notes) | Phase C.6 implemented (`ReleaseEvolutionCalculator`) |
+| 7 | **Repository Synthesis** | Multi-domain diagnostic scorecard, consolidated rule findings, calendar-month Spearman permutation tests with `\|r_AR1\|` & BH FDR guards | Phase C.6–C.7 implemented (`CrossDomainSynthesisCalculator`) |
 
 ---
 
-## Roadmap Status
+## Current Status & Roadmap Reference
 
-| Phase | Title | Focus | Status |
-|---|---|---|---|
-| 0 | Project Definition & Planning | Architecture, problem formulation, benchmark definition | ✅ Complete |
-| 1 | Benchmark Data Collection Pipeline | Harvest initial 4-repository sample dataset (2,328 issues) | ✅ Complete |
-| 2 | Data Cleaning & Dataset Construction | Label normalization, text sanitization, stratified splits | ✅ Complete |
-| 3 | Exploratory Data Analysis | Vocabulary, class balance, Kaplan-Meier resolution curves | ✅ Complete |
-| 4 | Classical Machine Learning Baseline | TF-IDF + Logistic Regression & Linear SVM baselines | ✅ Complete |
-| 5 | NLP Enhancement | Sublinear TF-IDF, n-grams, regex cleaning | ✅ Complete |
-| 6 | Deep Learning & Transformer Model | Fine-tuned DistilBERT champion (81.3% test accuracy) | ✅ Complete |
-| 7 | Related Issue Detection | Dense sentence embeddings & cosine similarity retrieval | ✅ Complete |
-| 8 | Resolution Analysis & Prediction | Empirical SLA distributions & Random Forest velocity | ✅ Complete |
-| 9 | Database & Backend | SQLite (WAL) / PostgreSQL schema, FastAPI endpoints | ✅ Complete |
-| 10 | Frontend UI Prototype | Initial Next.js dashboard & AI workspace components | ✅ Complete |
-| 11 | Initial Benchmark Integration | Connected local UI $\leftrightarrow$ API $\leftrightarrow$ DB $\leftrightarrow$ Models on sample data | ✅ Complete |
-| **11-R** | **Product Scope Realignment** | **Architecture & documentation correction for dynamic any-repo platform** | 🔄 **Current Focus** |
-| 12-R | Dynamic Ingestion & Eligibility Engine | URL validation, on-demand GitHub ingestion, rate budgeting | Pending |
-| 13-R | Expanded Analytics Pipelines | Development activity, contributor ecosystem, PR lifecycle | Pending |
-| 14-R | Model Generalization & Decoupling | Decouple models from 4-repo dummies; test on unseen repos | Pending |
-| 15-R | Dynamic Single-Repo Workspace UI | URL input bar, progress telemetry, multi-domain intelligence views | Pending |
-| 16-R | Deployment & Final Evaluation | Production hosting, research paper, and project defense | Pending |
+- **Implemented Backend Foundation:** Phase B (Dynamic GitHub Ingestion) and Phase C.1–C.8.3 (6-Domain Statistical Engine, Orchestration, `AnalyticsWorker`, and Analytics V2 API) are implemented in `backend/`.
+- **Active Alignment Track:** Documentation and product scope are anchored in [docs/product-vision.md](./docs/product-vision.md). Legacy prototype cleanup, ingestion richness, generalizable ML/NLP, and the interactive dashboard follow next. For milestone history and upcoming revisions, see [docs/roadmap.md](./docs/roadmap.md) (to be revised in a dedicated step).

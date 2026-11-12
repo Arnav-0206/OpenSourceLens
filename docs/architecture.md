@@ -1,8 +1,8 @@
 # OpenSourceLens — System Architecture
 
-OpenSourceLens is a Data Science-powered GitHub Repository Intelligence Platform. The backend is a multi-stage asynchronous pipeline built on **FastAPI**, **SQLAlchemy 2.0**, **Alembic**, **scikit-learn / PyTorch / Sentence-Transformers**, and a six-domain statistical analytics engine (`methodology_version = "2026.1"`).
+OpenSourceLens is a universal **GitHub Repository Intelligence and Analytics Platform** (see [product-vision.md](./product-vision.md)). The backend is a multi-stage asynchronous pipeline built on **FastAPI**, **SQLAlchemy 2.0**, **Alembic**, **scikit-learn / PyTorch / Sentence-Transformers**, and a six-domain statistical analytics engine (`methodology_version = "2026.1"`).
 
-> **Note on current system state:** The **Phase B** ingestion subsystem and **Phase C (C.1–C.8.3)** six-domain analytics subsystem are implemented in the backend (`backend/`). The Next.js frontend in [`frontend/`](../frontend/) remains at its Phase 10 baseline and still targets legacy Phase A repository/ML endpoints rather than the ingestion or Analytics V2 APIs. See [OPENSOURCELENS_BACKEND_AUDIT.md](./audits/OPENSOURCELENS_BACKEND_AUDIT.md) for the complete gap analysis.
+> **Note on current system state:** The **Phase B** ingestion subsystem and **Phase C (C.1–C.8.3)** six-domain statistical analytics subsystem are implemented in the backend (`backend/`). The Next.js frontend in [`frontend/`](../frontend/) remains at its Phase 10 baseline and still targets legacy Phase A repository/ML endpoints rather than dynamic ingestion or Analytics V2, and **GitHub Discussions** plus deeper PR/issue fields and per-repo NLP/DL services from [product-vision.md](./product-vision.md) are planned additions. Legacy Phase A prototype paths remain temporarily in code until scheduled cleanup. See [OPENSOURCELENS_BACKEND_AUDIT.md](./audits/OPENSOURCELENS_BACKEND_AUDIT.md) for the backend gap analysis.
 
 ---
 
@@ -83,7 +83,7 @@ See [ingestion.md](./ingestion.md) for the full 12-stage lifecycle, collection m
 OpenSourceLens uses two SQL-backed durable job queues with monotonic `lease_version` fencing:
 
 - **Ingestion Queue (`DurableJobQueue` + `IngestionWorker`):** Manages `collection_runs` rows (`pending`, `running`, `completed`, `completed_partial`, `rate_limited`, `failed`). `IngestionWorker` renews leases every `15s` inside `process_one_job()` and, upon clean completion (`completed` or `completed_partial` with empty `summary.errors` and `resumes_at is None`), triggers `_enqueue_post_ingestion_analytics()`.
-- **Analytics Queue (`AnalyticsJobQueue` + `AnalyticsWorker`):** Manages `analysis_runs` and append-only `analysis_run_attempts` rows (`pending`, `running`, `completed`, `failed`, `stale`). Supports active-run partial unique index deduplication, stale-revision superseding, lease expiration recovery via `reconcile_analytics_jobs()`, and non-retryable terminal failure handling.
+- **Analytics Queue (`AnalyticsJobQueue` + `AnalyticsWorker`):** Manages `analysis_runs` and append-only `analysis_run_attempts` rows (`pending`, `running`, `completed`, `failed`, `cancelled`). Supports active-run partial unique index deduplication, stale-revision superseding (marking superseded runs `status="cancelled"` with attempt `outcome="interrupted"`), lease expiration recovery via `reconcile_analytics_jobs()`, and non-retryable terminal failure handling.
 
 See [workers-and-deployment.md](./workers-and-deployment.md) and [database.md](./database.md) for lease rules, SQLite vs. PostgreSQL concurrency, and execution modes.
 
@@ -107,13 +107,13 @@ See [analytics.md](./analytics.md) for exact formulas, thresholds, statistical g
 
 ---
 
-## 6. Phase A Pre-Trained Machine Learning Services
+## 6. Legacy Phase A Pre-Trained Machine Learning Services (Scheduled for Decoupling)
 
-Separate from the Phase C statistical calculators, the API exposes offline-trained ML/NLP artifacts built on the 4-repository benchmark corpus (2,328 issues) via [`ModelManager`](../backend/app/services/model_manager.py#L27-L210):
+Separate from the Phase C statistical calculators, the API still exposes offline-trained ML/NLP artifacts built on the 4-repository benchmark corpus (2,328 issues) via [`ModelManager`](../backend/app/services/model_manager.py#L27-L210):
 
-- **Issue Categorization (`ClassificationService`):** Fine-tuned DistilBERT (`models/distilbert_finetuned`, 3 classes: `bug`, `feature`, `other`), TF-IDF Logistic Regression, and TF-IDF Linear SVM.
-- **Semantic Related-Issue Search (`RelatedIssueService`):** Queries precomputed relational cache edges (`related_issues_cache`, 11,640 edges) or runs `all-MiniLM-L6-v2` cosine similarity against the static `models/related_issues/embeddings.npz` benchmark store (`2,328` issues — does **not** index newly ingested repositories yet).
-- **Resolution Velocity Advisory (`ResolutionService`):** Random Forest 4-tier classifier (`< 1 Day`, `1-7 Days`, `7-30 Days`, `30+ Days`) using `t=0` features and benchmark-trained encodings, returning adjacent `±1` tier error bounds and mandatory advisory disclaimers.
+- **Issue Categorization (`ClassificationService`):** Fine-tuned DistilBERT (`models/distilbert_finetuned`, 3 classes: `bug`, `feature`, `other`), TF-IDF Logistic Regression, and TF-IDF Linear SVM. Not yet wired into automated post-ingestion batch scoring or 5-class (`bug`/`feature`/`documentation`/`question`/`other`) OOD evaluation.
+- **Semantic Related-Issue Search (`RelatedIssueService`):** Queries precomputed relational cache edges (`related_issues_cache`, 11,640 edges) or runs `all-MiniLM-L6-v2` cosine similarity against the static `models/related_issues/embeddings.npz` benchmark store (`2,328` issues). **Does not index newly ingested repositories yet** and must be replaced with per-repository dynamic indexing per [product-vision.md](./product-vision.md).
+- **Resolution Velocity Advisory (`ResolutionService`):** Random Forest 4-tier classifier (`< 1 Day`, `1-7 Days`, `7-30 Days`, `30+ Days`) using `t=0` features and benchmark-repo dummy encodings (`kubernetes`, `vscode`, `pytorch`), making it scientifically invalid for arbitrary repositories and slated for removal or repo-agnostic redesign.
 
 ---
 
