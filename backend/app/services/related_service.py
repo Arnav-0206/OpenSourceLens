@@ -24,7 +24,7 @@ from backend.app.schemas.related import (
     RelatedIssuesResponse,
     RelatedSearchRequest,
 )
-from ml.preprocessing.text_cleaner import IssueTextCleaner
+from backend.app.services.nlp.text_cleaner import IssueTextCleaner
 
 logger = logging.getLogger(__name__)
 
@@ -56,7 +56,7 @@ class RelatedIssueService:
     def _get_embedder(self) -> Any:
         """Lazy load SentenceTransformer embedder on CPU."""
         if self._embedder is None:
-            from ml.related_issues.embedder import IssueEmbedder
+            from backend.app.services.nlp.embedder import IssueEmbedder
 
             logger.info("Initializing IssueEmbedder (all-MiniLM-L6-v2)...")
             self._embedder = IssueEmbedder(

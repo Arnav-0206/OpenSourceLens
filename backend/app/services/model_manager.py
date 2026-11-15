@@ -92,7 +92,10 @@ class ModelManager:
                 "task_type": "resolution_prediction",
                 "version": "1.0.0 (Phase 8 Random Forest Champion)",
                 "artifact_path": str(MODELS_DIR / "resolution_classifier_champion.joblib"),
-                "check_loaded": lambda: resolution_service._predictor.classifier_model is not None,
+                "check_loaded": lambda: (
+                    resolution_service._predictor is not None
+                    and getattr(resolution_service._predictor, "classifier_model", None) is not None
+                ),
                 "check_exists": (MODELS_DIR / "resolution_classifier_champion.joblib").exists(),
                 "details": {
                     "classifier": "RandomForestClassifier(n_estimators=100, max_depth=12)",

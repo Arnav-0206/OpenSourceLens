@@ -23,7 +23,7 @@ from backend.app.schemas.classification import (
     ClassificationRequest,
     ClassificationResponse,
 )
-from ml.preprocessing.text_cleaner import IssueTextCleaner
+from backend.app.services.nlp.text_cleaner import IssueTextCleaner
 
 logger = logging.getLogger(__name__)
 

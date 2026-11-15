@@ -46,8 +46,8 @@ from backend.app.database.models import (
 )
 from backend.app.schemas.ingestion import IngestionSummary, PaginatedResult
 from backend.app.services.github_client import AsyncGitHubClient
+from backend.app.services.nlp.text_cleaner import IssueTextCleaner
 from backend.app.services.rate_budgeter import EntityRateBudgeter
-from ml.preprocessing.text_cleaner import IssueTextCleaner
 
 logger = logging.getLogger(__name__)
 

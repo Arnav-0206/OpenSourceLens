@@ -1,9 +1,9 @@
-"""Unit tests for IssueTextCleaner in ml.preprocessing.text_cleaner."""
+"""Unit tests for IssueTextCleaner in backend.app.services.nlp.text_cleaner."""
 
 import unittest
 import pandas as pd
 
-from ml.preprocessing.text_cleaner import IssueTextCleaner
+from backend.app.services.nlp.text_cleaner import IssueTextCleaner
 
 
 class TestIssueTextCleaner(unittest.TestCase):

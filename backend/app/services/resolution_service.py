@@ -21,7 +21,6 @@ from backend.app.schemas.resolution import (
     ResolutionPredictionResponse,
     ResolutionStatsResponse,
 )
-from ml.resolution_analysis.predictor import ResolutionPredictor
 
 logger = logging.getLogger(__name__)
 
@@ -41,9 +40,16 @@ class ResolutionService:
         if getattr(self, "_initialized", False):
             return
 
-        logger.info("Initializing ResolutionPredictor for API service...")
-        self._predictor = ResolutionPredictor()
+        self._predictor = None
         self._initialized = True
+
+    def _get_predictor(self) -> Any:
+        if self._predictor is None:
+            from ml.resolution_analysis.predictor import ResolutionPredictor
+
+            logger.info("Initializing ResolutionPredictor for API service...")
+            self._predictor = ResolutionPredictor()
+        return self._predictor
 
     def predict_resolution(
         self,
@@ -61,7 +67,8 @@ class ResolutionService:
         """
         t0 = time.perf_counter()
 
-        res = self._predictor.predict_velocity(
+        predictor = self._get_predictor()
+        res = predictor.predict_velocity(
             title=request.title,
             body=request.body,
             repo_name=request.repo_name,
