@@ -1,7 +1,7 @@
 /**
  * OpenSourceLens — Strongly-Typed API Client
  *
- * Provides a client library for all FastAPI REST endpoints with error handling,
+ * Provides a client library for FastAPI REST endpoints with error handling,
  * type safety, and query parameter serialization.
  */
 
@@ -9,23 +9,9 @@ import {
   ClassificationRequest,
   ClassificationResponse,
   ErrorResponse,
-  GlobalAnalyticsOverview,
   HealthResponse,
-  IssueDetail,
-  IssueListResponse,
-  IssueQueryParams,
   ModelInfoItem,
   ModelRegistryResponse,
-  RelatedIssuesResponse,
-  RelatedSearchRequest,
-  RepositoryAnalyticsResponse,
-  RepositoryComparisonResponse,
-  RepositoryDetail,
-  RepositorySummary,
-  RepositoryTrendsResponse,
-  ResolutionPredictionRequest,
-  ResolutionPredictionResponse,
-  ResolutionStatsResponse,
   RootResponse,
 } from "./types";
 
@@ -75,7 +61,7 @@ export class ApiClientError extends Error {
 /**
  * Generic JSON fetch wrapper with standardized error decoding and timeout protection.
  */
-async function fetchJson<T>(
+export async function fetchJson<T>(
   url: string,
   options?: RequestOptions
 ): Promise<T> {
@@ -185,77 +171,6 @@ export async function pingBackendConnection(): Promise<BackendConnectionPingResu
   }
 }
 
-// ─── Repository & Issues Endpoints ──────────────────────────────────────────
-
-export async function getRepositories(): Promise<RepositorySummary[]> {
-  return fetchJson<RepositorySummary[]>(`${API_BASE_URL}/repos`);
-}
-
-export async function getRepository(
-  owner: string,
-  name: string
-): Promise<RepositoryDetail> {
-  return fetchJson<RepositoryDetail>(
-    `${API_BASE_URL}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}`
-  );
-}
-
-export async function getRepositoryIssues(
-  owner: string,
-  name: string,
-  params?: IssueQueryParams
-): Promise<IssueListResponse> {
-  const url = new URL(
-    `${API_BASE_URL}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/issues`
-  );
-  if (params?.state) url.searchParams.set("state", params.state);
-  if (params?.category) url.searchParams.set("category", params.category);
-  if (params?.speed_tier) url.searchParams.set("speed_tier", params.speed_tier);
-  if (params?.search) url.searchParams.set("search", params.search);
-  if (params?.limit !== undefined) url.searchParams.set("limit", String(params.limit));
-  if (params?.offset !== undefined) url.searchParams.set("offset", String(params.offset));
-
-  return fetchJson<IssueListResponse>(url.toString());
-}
-
-export async function getIssue(
-  owner: string,
-  name: string,
-  issueNumber: number
-): Promise<IssueDetail> {
-  return fetchJson<IssueDetail>(
-    `${API_BASE_URL}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/issues/${issueNumber}`
-  );
-}
-
-// ─── Analytics Endpoints ────────────────────────────────────────────────────
-
-export async function getAnalyticsOverview(): Promise<GlobalAnalyticsOverview> {
-  return fetchJson<GlobalAnalyticsOverview>(`${API_BASE_URL}/analytics/overview`);
-}
-
-export async function getAnalyticsComparison(): Promise<RepositoryComparisonResponse> {
-  return fetchJson<RepositoryComparisonResponse>(`${API_BASE_URL}/analytics/comparison`);
-}
-
-export async function getRepositoryAnalytics(
-  owner: string,
-  name: string
-): Promise<RepositoryAnalyticsResponse> {
-  return fetchJson<RepositoryAnalyticsResponse>(
-    `${API_BASE_URL}/analytics/${encodeURIComponent(owner)}/${encodeURIComponent(name)}`
-  );
-}
-
-export async function getRepositoryTrends(
-  owner: string,
-  name: string
-): Promise<RepositoryTrendsResponse> {
-  return fetchJson<RepositoryTrendsResponse>(
-    `${API_BASE_URL}/analytics/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/trends`
-  );
-}
-
 // ─── Classification Endpoint ────────────────────────────────────────────────
 
 export async function classifyIssue(
@@ -265,47 +180,6 @@ export async function classifyIssue(
     method: "POST",
     body: JSON.stringify(request),
   });
-}
-
-// ─── Related Issues Endpoints ───────────────────────────────────────────────
-
-export async function getRelatedIssues(
-  issueId: number,
-  params?: { top_k?: number; state?: string }
-): Promise<RelatedIssuesResponse> {
-  const url = new URL(`${API_BASE_URL}/related/${issueId}`);
-  if (params?.top_k !== undefined) url.searchParams.set("top_k", String(params.top_k));
-  if (params?.state) url.searchParams.set("state", params.state);
-  return fetchJson<RelatedIssuesResponse>(url.toString());
-}
-
-export async function searchRelatedIssues(
-  request: RelatedSearchRequest
-): Promise<RelatedIssuesResponse> {
-  return fetchJson<RelatedIssuesResponse>(`${API_BASE_URL}/related`, {
-    method: "POST",
-    body: JSON.stringify(request),
-  });
-}
-
-// ─── Resolution Velocity Endpoints ─────────────────────────────────────────
-
-export async function predictResolution(
-  request: ResolutionPredictionRequest
-): Promise<ResolutionPredictionResponse> {
-  return fetchJson<ResolutionPredictionResponse>(`${API_BASE_URL}/resolution/predict`, {
-    method: "POST",
-    body: JSON.stringify(request),
-  });
-}
-
-export async function getResolutionStats(
-  owner: string,
-  name: string
-): Promise<ResolutionStatsResponse> {
-  return fetchJson<ResolutionStatsResponse>(
-    `${API_BASE_URL}/resolution/stats/${encodeURIComponent(owner)}/${encodeURIComponent(name)}`
-  );
 }
 
 // ─── Model Registry Endpoints ───────────────────────────────────────────────

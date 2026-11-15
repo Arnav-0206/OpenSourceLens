@@ -1,5 +1,4 @@
-import Link from "next/link";
-import { GitPullRequest, ShieldCheck, Sparkles, Terminal } from "lucide-react";
+import { GitBranch, GitPullRequest, ShieldCheck, Sparkles, Terminal } from "lucide-react";
 
 export default function Footer() {
   return (
@@ -13,13 +12,12 @@ export default function Footer() {
                 OpenSource<span className="text-indigo-400">Lens</span>
               </span>
               <span className="px-1.5 py-0.5 text-[9px] uppercase font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 rounded">
-                Production Dual-Driver
+                Intelligence Platform
               </span>
             </div>
             <p className="text-slate-400 text-xs leading-relaxed max-w-md">
-              Intelligent open-source analytics platform applying data science,
-              classical ML baselines, fine-tuned transformer NLP, and semantic retrieval
-              to GitHub issues across major developer ecosystems.
+              Universal GitHub repository intelligence and analytics platform applying statistical analysis,
+              data science, fine-tuned transformer NLP, and machine learning to uncover deep repository dynamics.
             </p>
             <div className="flex items-center gap-3 text-[11px] text-slate-500">
               <span className="flex items-center gap-1">
@@ -29,36 +27,46 @@ export default function Footer() {
               <span>•</span>
               <span className="flex items-center gap-1">
                 <Sparkles className="w-3.5 h-3.5 text-cyan-400" />
-                DistilBERT + all-MiniLM-L6-v2
+                DistilBERT + Statistical Engine
               </span>
             </div>
           </div>
 
-          {/* Col 2: Target Repositories */}
+          {/* Col 2: Documentation & Resources */}
           <div className="space-y-2">
             <h4 className="text-xs font-semibold uppercase tracking-wider text-slate-300">
-              Monitored Ecosystems
+              Resources & Specs
             </h4>
             <ul className="space-y-1.5 text-slate-400 text-xs">
               <li>
-                <Link href="/repos/microsoft/vscode" className="hover:text-indigo-400 transition-colors">
-                  microsoft / vscode
-                </Link>
+                <a
+                  href="http://localhost:8000/docs"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="hover:text-indigo-400 transition-colors"
+                >
+                  FastAPI Swagger UI &rarr;
+                </a>
               </li>
               <li>
-                <Link href="/repos/pytorch/pytorch" className="hover:text-indigo-400 transition-colors">
-                  pytorch / pytorch
-                </Link>
+                <a
+                  href="http://localhost:8000/redoc"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="hover:text-indigo-400 transition-colors"
+                >
+                  ReDoc API Reference &rarr;
+                </a>
               </li>
               <li>
-                <Link href="/repos/kubernetes/kubernetes" className="hover:text-indigo-400 transition-colors">
-                  kubernetes / kubernetes
-                </Link>
-              </li>
-              <li>
-                <Link href="/repos/huggingface/transformers" className="hover:text-indigo-400 transition-colors">
-                  huggingface / transformers
-                </Link>
+                <a
+                  href="https://github.com/Arnav-0206/OpenSourceLens"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="hover:text-indigo-400 transition-colors"
+                >
+                  GitHub Project Repository &rarr;
+                </a>
               </li>
             </ul>
           </div>
@@ -66,26 +74,20 @@ export default function Footer() {
           {/* Col 3: Architecture */}
           <div className="space-y-2">
             <h4 className="text-xs font-semibold uppercase tracking-wider text-slate-300">
-              Architecture Stack
+              Technology Stack
             </h4>
             <ul className="space-y-1.5 text-slate-400 text-xs">
               <li className="flex items-center gap-1.5">
                 <Terminal className="w-3.5 h-3.5 text-slate-500" />
-                FastAPI 0.115 + PostgreSQL 16
+                FastAPI 0.115 + SQLite WAL / Postgres
               </li>
               <li className="flex items-center gap-1.5">
                 <GitPullRequest className="w-3.5 h-3.5 text-slate-500" />
-                Next.js 15 + TypeScript
+                Next.js 15.5 + TypeScript 5.7
               </li>
-              <li>
-                <a
-                  href="http://localhost:8000/docs"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-indigo-400 hover:text-indigo-300 underline underline-offset-2"
-                >
-                  REST API Documentation →
-                </a>
+              <li className="flex items-center gap-1.5">
+                <GitBranch className="w-3.5 h-3.5 text-slate-500" />
+                PyTorch & Hugging Face Transformers
               </li>
             </ul>
           </div>
@@ -94,7 +96,7 @@ export default function Footer() {
         <div className="pt-6 border-t border-slate-900 flex flex-col sm:flex-row items-center justify-between gap-4 text-slate-500">
           <p>© {new Date().getFullYear()} OpenSourceLens Project. MIT License.</p>
           <p className="text-[11px]">
-            Phase 10: Frontend UI Shell • Powered by Deep Learning & Empirical Data Science
+            Universal GitHub Intelligence • Powered by Data Science & ML
           </p>
         </div>
       </div>

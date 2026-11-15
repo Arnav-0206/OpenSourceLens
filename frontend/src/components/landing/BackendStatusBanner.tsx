@@ -78,7 +78,7 @@ export default function BackendStatusBanner() {
             <p className="text-xs text-slate-400 leading-relaxed">
               {isConnected
                 ? `FastAPI v${health?.version} connected to ${health?.database.dialect} (${health?.database.latency_ms.toFixed(1)}ms latency) with ${health?.database.tables_count} relational tables.`
-                : "The frontend is currently using static precomputed benchmarks. To enable live ML inference and real-time database queries, start the FastAPI service."}
+                : "Cannot reach the FastAPI backend service. Start the backend with 'python -m backend.app.main' to enable real-time ingestion, ML inference, and analytics."}
             </p>
 
             {!isConnected && (

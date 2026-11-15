@@ -19,10 +19,6 @@ import HealthIndicator from "../common/HealthIndicator";
 
 const navLinks = [
   { href: "/", label: "Overview", icon: Activity },
-  { href: "/repos", label: "Repositories", icon: Boxes },
-  { href: "/analytics", label: "Analytics", icon: BarChart3 },
-  { href: "/analyzer", label: "AI Analyzer", icon: Sparkles },
-  { href: "/models", label: "Models", icon: Cpu },
 ];
 
 export default function Navbar() {
