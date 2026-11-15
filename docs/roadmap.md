@@ -19,31 +19,30 @@ The backend core from recent phases is complete on SQLite (PostgreSQL execution 
 
 ---
 
-## Stage 1 — Repository & Source-Code Cleanup (Execute First)
+## Stage 1 — Repository & Source-Code Cleanup (COMPLETED)
 
 **Goal:** Remove dead prototypes, benchmark-coupled legacy code, duplicated collectors, and obsolete Phase 10/11 scaffolding *before* adding new features, while safely preserving shared runtime utilities (`IssueTextCleaner`, `all-MiniLM-L6-v2` embedder, and active DB migrations).
 
-> [!IMPORTANT]
-> Per project rules, **no files or folders listed below are deleted until reviewed and explicitly approved** in a code-cleanup plan step.
+**Status:** **COMPLETED** (Commits: `5cc3dc0`, `64dbc33`, `e4a24ca`, `181997e`, `5ce3dd7`)
 
-### 1.1 Dependency Extraction (Safety Prerequisite Before Deleting `ml/`)
-- Extract `IssueTextCleaner` (currently imported by `backend/app/services/repository_collector.py` and `classification_service.py` from `ml/preprocessing/text_cleaner.py`) into a clean backend module (`backend/app/services/nlp/text_cleaner.py`).
-- Extract/retain the clean `all-MiniLM-L6-v2` embedding encoder helper cleanly for per-repo indexing in Stage 5, independent of `models/related_issues/embeddings.npz`.
+### 1.1 Dependency Extraction (Completed)
+- Extracted `IssueTextCleaner` and `IssueEmbedder` into `backend/app/services/nlp/`.
+- Verified zero broken imports across live collectors and services.
 
-### 1.2 Exact Targets Slated for Removal or Retirement
+### 1.2 Prototype, Duplicate Collector & Legacy Script Removal (Completed)
+- Removed `demo_app.py`, `scripts/` (all 9 scripts), `ml/data_collection/`, `ml/repository_analyzer.py`, `backend/app/database/ingest.py`, and obsolete schema generators.
+- Removed benchmark-coupled resolution predictor (`ml/resolution_analysis/`, `resolution_service.py`), static embeddings store dependency (`related_service.py`), and unmounted obsolete routers.
+- Removed obsolete lab directories (`ml/eda/`, `ml/preprocessing/`, `ml/nlp/`, `ml/classification/`, `ml/deep_learning/`, `ml/related_issues/`).
+- Removed legacy Phase A routes in `analytics.py` (`/overview`, `/comparison`, `/{owner}/{name}`, `/{owner}/{name}/trends`), `repos.py`, and legacy schemas.
+- Removed paired obsolete test files (now 379 passing tests, 0 failures).
 
-| Category | Specific Paths & Components to Remove | Reason |
-|---|---|---|
-| **Prototype App & Ad-Hoc Scripts** | `demo_app.py` (root Streamlit prototype); `scripts/verify_*.py` (`9` Phase 10/11 verification scripts); `scripts/` folder once emptied | Superseded by FastAPI + Next.js + `pytest` suite. |
-| **Duplicate Legacy Ingestion & Schema Gen** | `ml/data_collection/*`; `ml/repository_analyzer.py`; `backend/app/database/ingest.py`; `backend/app/database/schema.sql`; `backend/app/database/schema_generator.py` | Replaced by Phase B `RepositoryCollector` + SQLAlchemy ORM + Alembic migrations. |
-| **Invalid / Benchmark-Locked ML (`ResolutionPredictor`)** | `ml/resolution_analysis/*`; `backend/app/services/resolution_service.py`; `backend/app/api/v1/endpoints/resolution.py`; `backend/app/schemas/resolution.py`; `models/resolution_classifier_champion.joblib`; `models/resolution_regressor_champion.joblib`; `models/resolution_scaler_params.json` | Phase 8 proved continuous within-repo prediction fails (`R^2 = -0.04..+0.18`), and the RF model uses hardcoded 4-repo dummy variables invalid on unseen repos. Replaced by factual Kaplan-Meier survival & quantiles. |
-| **Static 4-Repo Similarity Coupling** | `related_issues_cache` lookup path + static `models/related_issues/embeddings.npz` / `metadata.*` dependency in `backend/app/services/related_service.py` (keep `/api/v1/related*` route shells only if immediately replaced in Stage 5, or remove cleanly now and re-introduce clean V2 endpoints in Stage 5) | Locked to `2,328` static benchmark issues; cannot index newly submitted repositories. |
-| **Obsolete Offline Track A Scripts & Legacy Tests** | `ml/eda/*`, `ml/preprocessing/*` (after extracting `IssueTextCleaner`), `ml/nlp/*`, `ml/classification/*`, `ml/deep_learning/*`, `ml/related_issues/*`; redundant pre-Phase B `tests/test_*` suites targeting deleted `demo_app.py`, `ml.data_collection`, `ml.eda.*`, `ml.resolution_*`, `database.ingest`, `schema_generator` | Track A lab scripts already fulfilled their purpose; keeping them creates false dual pipelines. *(Note: Confirm explicitly whether to retain `data/raw/`, `data/processed/`, and `models/distilbert_finetuned/` as offline training baselines for Stage 5 retraining or archive them outside active runtime.)* |
-| **Legacy Phase A APIs & DB Summary Paths** | `backend/app/api/v1/endpoints/repos.py` (`/api/v1/repos*`), `backend/app/schemas/repository.py` (legacy summary schemas), and Phase A routes in `backend/app/api/v1/endpoints/analytics.py` (`/overview`, `/comparison`, legacy `/{owner}/{name}`, `/trends`) backed by `repository_analytics` | Case-sensitive legacy APIs serving stale 4-repo Phase A snapshots alongside Analytics V2. |
-| **Phase 10 Hardcoded Frontend Scaffolding** | Hardcoded `REPO_REGISTRY`, `FALLBACK_ISSUE_CORPUS`, legacy `/analytics` (4-repo comparison page), `/analyzer` (Phase A static ML playground), and legacy `/repos` mock components under `frontend/src/` | Built around 4 static repos and Phase A APIs; clear slate for the Stage 4 universal workspace. |
+### 1.3 Frontend Scrub (Completed)
+- Removed static `REPO_REGISTRY` and `FALLBACK_ISSUE_CORPUS`.
+- Retired dead routes (`/repos`, `/analytics`, `/analyzer`) and obsolete prototype components.
+- Verified Next.js build succeeds with 0 TypeScript or lint errors.
 
-### 1.3 What You Can Present After Stage 1
-- **Clean Architecture & Zero Dead Code:** Lean, single-source-of-truth codebase with no conflicting collectors, no 4-repo dummy leakage, clean FastAPI Swagger `/docs` showing only universal endpoints, and a fast, all-green `pytest` run on active backend components.
+### 1.4 What You Can Present After Stage 1
+- **Clean Architecture & Zero Dead Code:** Lean, single-source-of-truth codebase with no conflicting collectors, no 4-repo dummy leakage, clean FastAPI Swagger `/docs` showing only universal endpoints, and an all-green test suite.
 
 ---
 

@@ -1,8 +1,8 @@
 # OpenSourceLens — System Architecture
 
-OpenSourceLens is a universal **GitHub Repository Intelligence and Analytics Platform** (see [product-vision.md](./product-vision.md)). The backend is a multi-stage asynchronous pipeline built on **FastAPI**, **SQLAlchemy 2.0**, **Alembic**, **scikit-learn / PyTorch / Sentence-Transformers**, and a six-domain statistical analytics engine (`methodology_version = "2026.1"`).
+OpenSourceLens is a universal **GitHub Repository Intelligence and Analytics Platform** (see [product-vision.md](./product-vision.md)). The backend is a multi-stage asynchronous pipeline built on **FastAPI**, **SQLAlchemy 2.0**, **Alembic**, **PyTorch / Hugging Face Transformers / Sentence-Transformers**, and a six-domain statistical analytics engine (`methodology_version = "2026.1"`).
 
-> **Note on current system state:** The **Phase B** ingestion subsystem and **Phase C (C.1–C.8.3)** six-domain statistical analytics subsystem are implemented in the backend (`backend/`). The Next.js frontend in [`frontend/`](../frontend/) remains at its Phase 10 baseline and still targets legacy Phase A repository/ML endpoints rather than dynamic ingestion or Analytics V2, and **GitHub Discussions** plus deeper PR/issue fields and per-repo NLP/DL services from [product-vision.md](./product-vision.md) are planned additions. Legacy Phase A prototype paths remain temporarily in code until scheduled cleanup. See [OPENSOURCELENS_BACKEND_AUDIT.md](./audits/OPENSOURCELENS_BACKEND_AUDIT.md) for the backend gap analysis.
+> **System State Post-Stage 1 Cleanup:** The **Phase B** dynamic ingestion subsystem and **Phase C (C.1–C.8.3)** six-domain statistical analytics subsystem are operational in `backend/`. Obsolete 4-repo prototypes, duplicate collectors, legacy Phase A endpoints (`/repos`, `/related`, `/resolution`), and mock frontend registries have been removed. The platform is ready for Stage 2 (schema enrichment for discussions, diffs, assignees), Stage 3 (generalized ML/NLP), and Stage 4 (single-repository workspace UI).
 
 ---
 
@@ -10,9 +10,9 @@ OpenSourceLens is a universal **GitHub Repository Intelligence and Analytics Pla
 
 ```mermaid
 flowchart TD
-    Client["API Consumer / Future UI"] -->|POST preview / submit| FastAPI["FastAPI Application (backend/app/main.py)"]
+    Client["API Consumer / Next.js Workspace"] -->|POST preview / submit| FastAPI["FastAPI Application (backend/app/main.py)"]
     Client -->|POST recompute / GET status, latest, history, domains| FastAPI
-    Client -->|Legacy GET repos, analytics, POST classify, related, resolution| FastAPI
+    Client -->|POST classify, GET models| FastAPI
 
     subgraph IngestionFlow["Phase B: Dynamic GitHub Ingestion"]
         FastAPI --> Validator["GitHubURLValidator"]
@@ -42,10 +42,11 @@ flowchart TD
         PayloadVal -->|lease + source_revision fenced commit| DB
     end
 
-    subgraph PhaseAML["Phase A ML Services (Offline Benchmark Artifacts)"]
+    subgraph NLPMLServices["NLP & Machine Learning Subsystem"]
         MLMgr["ModelManager"] --> Cls["ClassificationService (DistilBERT, TF-IDF LR/SVM)"]
-        MLMgr --> Rel["RelatedIssueService (all-MiniLM-L6-v2 + static embeddings.npz)"]
-        MLMgr --> Res["ResolutionService (RF Champion Classifier)"]
+        NLPUtils["backend/app/services/nlp/"] --> Cleaner["IssueTextCleaner"]
+        NLPUtils --> Embedder["IssueEmbedder (all-MiniLM-L6-v2)"]
+        NLPUtils --> Classifiers["TextFeaturePipeline & Baseline Classifiers"]
     end
 
     FastAPI --> DB
@@ -61,9 +62,9 @@ The FastAPI application is constructed in [`backend/app/main.py`](../backend/app
 - **Configuration & Error Envelopes:** [`backend/app/core/config.py`](../backend/app/core/config.py) reads CORS and optional worker settings; [`backend/app/core/error_handlers.py`](../backend/app/core/error_handlers.py) and [`backend/app/core/exceptions.py`](../backend/app/core/exceptions.py) normalize domain errors, SQLAlchemy failures, HTTP exceptions, and validation errors into structured `ErrorResponse` / `ValidationErrorResponse` JSON envelopes.
 - **Router Mounting:**
   - `GET /` and `GET /health` live directly on `app`.
-  - [`backend/app/api/v1/api.py`](../backend/app/api/v1/api.py) mounts `/api/v1/ping`, `/api/v1/repos`, `/api/v1/analytics`, `/api/v1/classify`, `/api/v1/related`, `/api/v1/resolution`, `/api/v1/models`, and `/api/v1/ingest`.
+  - [`backend/app/api/v1/api.py`](../backend/app/api/v1/api.py) mounts `/api/v1/ping`, `/api/v1/analytics`, `/api/v1/classify`, `/api/v1/models`, and `/api/v1/ingest`.
   - [`backend/app/main.py`](../backend/app/main.py#L124) also mounts `ingest_router` directly at `/api/ingest`.
-- **Startup Lifespan:** Verifies DB readiness, runs `Base.metadata.create_all(bind=engine)` via `init_db()`, optionally prewarms Phase A ML artifacts if `PREWARM_ON_STARTUP=true`, and optionally starts an in-process background `AnalyticsWorker` task when `ENABLE_ANALYTICS_WORKER=true`. Note that `IngestionWorker` is **not** started inside `lifespan()`.
+- **Startup Lifespan:** Verifies DB readiness, runs `Base.metadata.create_all(bind=engine)` via `init_db()`, optionally prewarms ML artifacts if `PREWARM_ON_STARTUP=true`, and optionally starts an in-process background `AnalyticsWorker` task when `ENABLE_ANALYTICS_WORKER=true`.
 
 ---
 
@@ -107,16 +108,19 @@ See [analytics.md](./analytics.md) for exact formulas, thresholds, statistical g
 
 ---
 
-## 6. Legacy Phase A Pre-Trained Machine Learning Services (Scheduled for Decoupling)
+## 6. NLP & Machine Learning Subsystem
 
-Separate from the Phase C statistical calculators, the API still exposes offline-trained ML/NLP artifacts built on the 4-repository benchmark corpus (2,328 issues) via [`ModelManager`](../backend/app/services/model_manager.py#L27-L210):
+The ML subsystem provides text intelligence and sequence classification:
 
-- **Issue Categorization (`ClassificationService`):** Fine-tuned DistilBERT (`models/distilbert_finetuned`, 3 classes: `bug`, `feature`, `other`), TF-IDF Logistic Regression, and TF-IDF Linear SVM. Not yet wired into automated post-ingestion batch scoring or 5-class (`bug`/`feature`/`documentation`/`question`/`other`) OOD evaluation.
-- **Semantic Related-Issue Search (`RelatedIssueService`):** Queries precomputed relational cache edges (`related_issues_cache`, 11,640 edges) or runs `all-MiniLM-L6-v2` cosine similarity against the static `models/related_issues/embeddings.npz` benchmark store (`2,328` issues). **Does not index newly ingested repositories yet** and must be replaced with per-repository dynamic indexing per [product-vision.md](./product-vision.md).
-- **Resolution Velocity Advisory (`ResolutionService`):** Random Forest 4-tier classifier (`< 1 Day`, `1-7 Days`, `7-30 Days`, `30+ Days`) using `t=0` features and benchmark-repo dummy encodings (`kubernetes`, `vscode`, `pytorch`), making it scientifically invalid for arbitrary repositories and slated for removal or repo-agnostic redesign.
+- **Issue Categorization (`ClassificationService`):** Fine-tuned DistilBERT (`models/distilbert_finetuned`, 3 classes: `bug`, `feature`, `other`), TF-IDF Logistic Regression, and TF-IDF Linear SVM. Slated for 5-class OOD generalization and post-ingestion scoring in Stage 3.
+- **NLP Utilities (`backend/app/services/nlp/`):**
+  - `IssueTextCleaner`: Strips code blocks, URLs, markdown formatting, HTML tags, and stack traces with word counts and structural flags.
+  - `IssueEmbedder`: Dense vector embedding generation using `all-MiniLM-L6-v2` with lazy loading and L2-normalization for semantic similarity.
+  - `classifiers.py`: Classical pipeline representations (`TextFeaturePipeline`, `LogisticRegressionBaseline`, `SVMBaseline`).
+- **Retired Legacy Components:** The benchmark-coupled `ResolutionService` (4-repo dummy features) and static `RelatedIssueService` (fixed 2,328-issue lookup table) were removed during Stage 1 cleanup to make way for per-repository semantic duplicate detection.
 
 ---
 
 ## 7. API Response & Publication Flow
 
-FastAPI serves both **Phase A legacy analytics endpoints** (reading the legacy `repository_analytics` summary table) and **Phase C Analytics V2 endpoints** under `/api/v1/analytics/{owner}/{name}/...` (`recompute`, `status`, `latest`, `history`, `runs/{run_id}`, `domains/{domain_key}`) backed directly by `AnalysisRun` and `AnalysisRunAttempt`. See [api.md](./api.md) for complete endpoint contracts and status codes.
+FastAPI serves **Phase C Analytics V2 endpoints** under `/api/v1/analytics/{owner}/{name}/...` (`recompute`, `status`, `latest`, `history`, `runs/{run_id}`, `domains/{domain_key}`) backed directly by `AnalysisRun` and `AnalysisRunAttempt`. See [api.md](./api.md) for complete endpoint contracts and status codes.

@@ -6,7 +6,7 @@ Submit a public GitHub URL or `owner/repo` slug, and OpenSourceLens collects ric
 
 Instead of repeating surface-level GitHub counters (stars, forks, raw totals), OpenSourceLens helps **contributors**, **maintainers**, and **anyone evaluating a repository** understand how a project actually behaves beneath the surface.
 
-> **Start here:** Read [docs/product-vision.md](./docs/product-vision.md) for the complete, jargon-free explanation of what OpenSourceLens covers, what is out of scope, what already runs today, and what legacy prototype files are slated for removal.
+> **Start here:** Read [docs/product-vision.md](./docs/product-vision.md) for the complete, jargon-free explanation of what OpenSourceLens covers, what is out of scope, what already runs today, and the stepwise execution roadmap.
 
 ---
 
@@ -43,22 +43,23 @@ OpenSourceLens separates **objective statistical measurement** from **applied Ma
 6. **Release & Project Evolution** — Inter-release cadence predictability (`CV_release`), SemVer 2.0.0 adoption, pre-release commit surges (`14d` vs. prior `60d`), and release dormancy (+ planned tags/release notes).
 7. **Cross-Domain Discovery & Consolidated Report** — Multi-domain diagnostic scorecard, deterministic consolidated findings, and monthly cross-domain Spearman permutation tests (`B = 10,000`, `|r_AR1| > 0.40` autocorrelation guard, Benjamini-Hochberg FDR `alpha = 0.05`).
 
-> **Why no composite "health score" or exact countdown timer?** OpenSourceLens intentionally avoids arbitrary `0–100` grades and exact issue-hour countdown predictions (offline Phase 8 evaluation showed within-repo $R^2$ ranges from `-0.04` to `+0.18` because maintainer availability happens after creation). Missing or partial streams are flagged explicitly instead of coerced to `0`.
-
 ---
 
-## Honest Project State: Implemented vs. Next vs. Slated for Cleanup
+## Honest Project State: Implemented Foundation & Cleanup Status
 
-- **Implemented Backend (`backend/`):**
+- **Implemented Backend Subsystems (`backend/`):**
   - **Phase B Dynamic Ingestion:** GitHub URL validation, public/non-empty eligibility gating, request budget modes (`fast_snapshot` 10 reqs / `standard_diagnostic` 50 reqs), RFC 5988 pagination, lease-fenced `DurableJobQueue`, `IngestionWorker`, and automatic post-ingestion analytics enqueueing.
   - **Phase C Analytics Engine (`methodology_version = "2026.1"`):** Six-domain statistical calculators (`DevelopmentActivity`, `ContributorIntelligence`, `PullRequestIntelligence`, `IssueIntelligence`, `ReleaseEvolution`, `CrossDomainSynthesis`), snapshot-isolated `AnalyticsOrchestrator`, `AnalyticsWorker`, and Analytics V2 endpoints (`/api/v1/analytics/{owner}/{name}/...`).
-- **Pending Product Gaps:**
-  - Harvesting **GitHub Discussions**, PR diff stats/branches/bodies/requested reviewers from `/pulls` details, deeper commit diffs, issue reactions/assignees, and repo tags fallback.
-  - Decoupling ML/NLP from benchmark artifacts (`embeddings.npz` static lookup and 4-repo dummy encodings in `ResolutionPredictor`) so semantic duplicate search, 5-class categorization, and topic discovery run dynamically per ingested repository.
-  - Wiring the Next.js frontend ([`frontend/`](./frontend/)) to the dynamic ingestion + Analytics V2 endpoints.
-  - Operational fixes tracked in [the backend audit](./docs/audits/OPENSOURCELENS_BACKEND_AUDIT.md) (Migration `001` fresh-DB drift, `IngestionWorker` CLI entrypoint, `rate_limited` auto-resumption, live PostgreSQL multi-worker verification).
-- **Legacy Prototype Components Slated for Later Code Removal:**
-  - `demo_app.py` (old Streamlit prototype), legacy `scripts/verify_*.py` scripts, `backend/app/database/{ingest.py,schema.sql,schema_generator.py}`, legacy Phase A `/api/v1/repos*` & legacy `/api/v1/analytics/*` snapshots, static `embeddings.npz` coupling, benchmark-dummy RF velocity encodings, and Phase 10 hardcoded UI fallbacks (`REPO_REGISTRY`, `FALLBACK_ISSUE_CORPUS`). *(These remain untouched in code until the dedicated code-cleanup step.)*
+  - **Production NLP Utilities (`backend/app/services/nlp/`):** Clean text cleaning (`IssueTextCleaner`), dense vector embeddings (`IssueEmbedder`), and classification pipelines (`classifiers.py`).
+- **Stage 1 Strict Cleanup (Completed):**
+  - Removed obsolete Streamlit prototype (`demo_app.py`), duplicate legacy collectors (`ml/data_collection/`), ad-hoc scripts (`scripts/`), deleted Phase A endpoints (`/repos`, `/related`, `/resolution`), and dead schemas.
+  - Removed legacy offline lab scripts (`ml/`), benchmark-dummy RF velocity models, and hardcoded Phase 10 frontend registries (`REPO_REGISTRY`, `FALLBACK_ISSUE_CORPUS`).
+- **Next Roadmap Stages:**
+  - **Stage 2:** Backend stabilization, Alembic Migration 001 fresh-DB schema drift fix, and live unseen-repository E2E verification.
+  - **Stage 3:** Richer GitHub entity depth (PR diff stats, branches, bodies, assignees, reactions) and GitHub Discussions integration.
+  - **Stage 4:** Interactive Next.js single-repository intelligence workspace UI.
+  - **Stage 5:** Generalizable 5-class NLP categorization and per-repository dynamic semantic duplicate retrieval.
+  - **Stage 6:** Cross-domain discovery explorer, downloadable reports, and Dockerized production deployment.
 
 ---
 
@@ -80,22 +81,6 @@ flowchart LR
 
 ---
 
-## Documentation Guide
-
-| Document | Audience & Purpose |
-|---|---|
-| [docs/product-vision.md](./docs/product-vision.md) | Clear product vision, scope boundaries, 7 analytical areas, DS/ML fit, and legacy cleanup register |
-| [docs/architecture.md](./docs/architecture.md) | System architecture, component flow, queues, orchestrator, and legacy ML services |
-| [docs/ingestion.md](./docs/ingestion.md) | 12-stage GitHub collection lifecycle, request budgets, rate-limit handling, and depth gaps |
-| [docs/analytics.md](./docs/analytics.md) | Mathematical formulas, statistical guards, sample gates, and rule IDs across all 6 backend domains |
-| [docs/database.md](./docs/database.md) | SQLAlchemy 2.0 ORM tables, source revisions, lease fencing, and Migration `001` warning |
-| [docs/api.md](./docs/api.md) | Complete HTTP contract for ingestion, Analytics V2, and legacy Phase A endpoints |
-| [docs/workers-and-deployment.md](./docs/workers-and-deployment.md) | Environment variables, worker execution, lease recovery, and SQLite vs. PostgreSQL notes |
-| [docs/audits/OPENSOURCELENS_BACKEND_AUDIT.md](./docs/audits/OPENSOURCELENS_BACKEND_AUDIT.md) | Detailed technical audit of the backend, gaps, and verification priorities |
-| [docs/roadmap.md](./docs/roadmap.md) | Milestone history (pending separate update after doc alignment) |
-
----
-
 ## Repository Layout
 
 ```text
@@ -103,26 +88,23 @@ OpenSourceLens/
 ├── alembic.ini                 # Alembic config (invoke via `python -m alembic`)
 ├── docker-compose.yml          # PostgreSQL 16-alpine DB container config
 ├── requirements.txt            # Root Python HTTP/tabular dependencies
-├── demo_app.py                 # Legacy Streamlit prototype (scheduled for removal)
 ├── backend/
 │   ├── requirements.txt        # FastAPI, SQLAlchemy, Alembic, Pydantic
 │   ├── alembic/                # Migrations 001, 002, 003
 │   └── app/
 │       ├── main.py             # FastAPI factory, lifespan, /, /health
-│       ├── api/v1/             # API routers (ingest, Analytics V2, legacy Phase A)
+│       ├── api/v1/             # API routers (ingest, Analytics V2, classify, models)
 │       ├── core/               # Settings, exceptions, uniform error envelopes
 │       ├── database/           # SQLAlchemy 2.0 ORM (17 tables), session, init_db
-│       ├── schemas/            # Pydantic v2 contracts
-│       └── services/           # Collector, GitHub client, budgeter, queues, workers, analytics/
-├── docs/                       # Product vision & technical specifications
-├── frontend/                   # Next.js 15 Phase 10 UI prototype (not yet wired to V2 API)
-├── ml/                         # Offline benchmark research, EDA, NLP, DistilBERT & RF scripts
-├── models/                     # Offline benchmark artifacts (DistilBERT, static embeddings.npz, RF)
+│       ├── schemas/            # Pydantic v2 contracts (analytics_v2, ingestion, etc.)
+│       └── services/           # Collector, client, budgeter, queues, workers, analytics/, nlp/
+├── docs/                       # Product vision, technical specs, roadmap
+├── frontend/                   # Next.js 15.5 + React 19 UI shell
+├── models/                     # Production model artifacts (DistilBERT fine-tuned, classical baselines)
 ├── data/
-│   ├── opensource_lens.db      # Offline 4-repo SQLite benchmark DB (2,328 issues; 0 Phase B/C runs)
-│   └── raw/, processed/
-├── scripts/                    # Legacy verification scripts (scheduled for cleanup)
-└── tests/                      # 1,079 collected pytest unit and integration tests
+│   ├── opensource_lens.db      # Offline 4-repo SQLite benchmark DB (2,328 issues)
+│   └── raw/, processed/        # Offline training and benchmark corpus
+└── tests/                      # Active pytest unit and integration test suite (382 tests)
 ```
 
 ---
@@ -136,15 +118,15 @@ python -m venv .venv
 pip install -r requirements.txt
 pip install -r backend\requirements.txt
 ```
-Analytics statistics and ML endpoints also rely on packages installed in the project virtualenv (`numpy`, `scipy`, `torch`, `transformers`, `sentence-transformers`, `scikit-learn`, `pytest`, `httpx`).
+Analytics statistics and ML endpoints rely on packages installed in the project virtualenv (`numpy`, `scipy`, `torch`, `transformers`, `sentence-transformers`, `scikit-learn`, `pytest`, `httpx`).
 
 ### 2. Environment Variables
 Copy `.env.example` to `.env` (never commit `.env` or secrets):
 - `DATABASE_URL`: SQLAlchemy URL (defaults to local SQLite `data/opensource_lens.db`).
 - `GITHUB_TOKEN`: GitHub Personal Access Token (raises public REST rate limit from `60 req/hr` to `5,000 req/hr`).
 - `BACKEND_CORS_ORIGINS`: Allowed frontend origins (default `["http://localhost:3000", "http://127.0.0.1:3000"]`).
-- `PREWARM_ON_STARTUP`: Preload Phase A ML models on startup (`false` default).
-- Worker controls read by `backend/app/core/config.py`: `ENABLE_ANALYTICS_WORKER` (`false`), `ANALYTICS_WORKER_POLL_INTERVAL_SECONDS` (`1.0`), `ANALYTICS_WORKER_RECONCILE_INTERVAL_SECONDS` (`60.0`). See [docs/workers-and-deployment.md](./docs/workers-and-deployment.md).
+- `PREWARM_ON_STARTUP`: Preload ML models on startup (`false` default).
+- Worker controls: `ENABLE_ANALYTICS_WORKER` (`false`), `ANALYTICS_WORKER_POLL_INTERVAL_SECONDS` (`1.0`), `ANALYTICS_WORKER_RECONCILE_INTERVAL_SECONDS` (`60.0`).
 
 ### 3. Migrations & Services
 ```powershell
@@ -157,16 +139,12 @@ Copy `.env.example` to `.env` (never commit `.env` or secrets):
 # Start AnalyticsWorker (standalone process)
 .\.venv\Scripts\python.exe -m backend.app.services.analytics_worker
 
-# Start IngestionWorker (no __main__ CLI yet)
+# Start IngestionWorker
 .\.venv\Scripts\python.exe -c "import asyncio; from backend.app.database.session import SessionLocal; from backend.app.services.ingestion_worker import IngestionWorker; asyncio.run(IngestionWorker().run_worker_loop(SessionLocal))"
 ```
-*(Note: Provisioning a brand-new empty DB via `alembic upgrade head` currently hits Phase A column drift in Migration `001` documented in [docs/database.md](./docs/database.md#4-alembic-migrations--known-schema-drift-warning).)*
 
-### 4. Tests
+### 4. Running Tests
 ```powershell
-# Discover full suite (1,079 tests collected)
-.\.venv\Scripts\python.exe -m pytest --collect-only -q
-
-# Run backend ingestion, analytics engine, worker, and API suites (live GitHub tests opt-in via RUN_LIVE_GITHUB_TESTS=1)
-.\.venv\Scripts\python.exe -m pytest tests/test_alembic_migrations.py tests/test_github_url_validator.py tests/test_repository_eligibility.py tests/test_github_client.py tests/test_rate_budgeter.py tests/test_async_repository_collector.py tests/test_collector_mutation_tracking.py tests/test_durable_job_queue.py tests/test_e2e_ingestion_lifecycle.py tests/test_api_ingest.py tests/test_analytics_foundation.py tests/test_analytics_queue.py tests/test_development_activity.py tests/test_contributor_intelligence.py tests/test_pull_request_intelligence.py tests/test_issue_intelligence.py tests/test_release_and_cross_domain_intelligence.py tests/test_analytics_orchestrator.py tests/test_analytics_worker.py tests/test_post_ingestion_analytics_wiring.py tests/test_api_analytics_v2.py tests/test_api_analytics.py tests/test_api_app.py tests/test_api_error_handling.py tests/test_api_repos.py tests/test_api_models.py tests/test_api_classification.py tests/test_api_related.py tests/test_api_resolution.py -q
+# Run the complete test suite
+.\.venv\Scripts\python.exe -m pytest tests/ -q
 ```
