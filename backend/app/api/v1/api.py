@@ -1,7 +1,6 @@
 """API v1 master router for OpenSourceLens.
 
-Aggregates repository, analytics, classification, related issue, resolution,
-and model registry sub-routers.
+Aggregates analytics, classification, ingestion, and model registry sub-routers.
 """
 
 from fastapi import APIRouter
@@ -11,13 +10,11 @@ from backend.app.api.v1.endpoints import (
     classify,
     ingest,
     models,
-    repos,
 )
 
 api_router = APIRouter()
 
 # Mount API routers
-api_router.include_router(repos.router, prefix="/repos", tags=["repositories"])
 api_router.include_router(ingest.router, prefix="/ingest", tags=["ingestion"])
 api_router.include_router(analytics.router, prefix="/analytics", tags=["analytics"])
 api_router.include_router(classify.router, prefix="/classify", tags=["classification"])

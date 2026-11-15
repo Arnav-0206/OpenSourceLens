@@ -24,6 +24,7 @@ from backend.app.schemas.classification import (
     ClassificationResponse,
 )
 from backend.app.services.nlp.text_cleaner import IssueTextCleaner
+import backend.app.services.nlp.classifiers  # noqa: F401
 
 logger = logging.getLogger(__name__)
 

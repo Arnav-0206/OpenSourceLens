@@ -49,7 +49,7 @@ class TestApiErrorHandling(unittest.TestCase):
 
     def test_404_repository_not_found(self):
         """Verify 404 for unknown repository returns structured envelope."""
-        response = self.client.get("/api/v1/repos/fake_org/fake_repo")
+        response = self.client.get("/api/v1/analytics/fake_org/fake_repo/latest")
         self.assertEqual(response.status_code, 404)
         data = response.json()
 
@@ -57,11 +57,11 @@ class TestApiErrorHandling(unittest.TestCase):
         self.assertIn("not found", data["detail"].lower())
         self.assertEqual(data["error_code"], "RESOURCE_NOT_FOUND")
         self.assertEqual(data["status_code"], 404)
-        self.assertEqual(data["path"], "/api/v1/repos/fake_org/fake_repo")
+        self.assertEqual(data["path"], "/api/v1/analytics/fake_org/fake_repo/latest")
 
     def test_404_issue_not_found(self):
-        """Verify 404 for unknown issue returns structured envelope."""
-        response = self.client.get("/api/v1/repos/microsoft/vscode/issues/999999999")
+        """Verify 404 for unknown job returns structured envelope."""
+        response = self.client.get("/api/v1/ingest/status/999999999")
         self.assertEqual(response.status_code, 404)
         data = response.json()
 
@@ -104,7 +104,7 @@ class TestApiErrorHandling(unittest.TestCase):
 
     def test_422_validation_error_invalid_query_parameter(self):
         """Verify 422 for negative or invalid integer query parameter."""
-        response = self.client.get("/api/v1/repos/microsoft/vscode/issues?limit=-1")
+        response = self.client.get("/api/v1/analytics/pallets/flask/history?limit=-1")
         self.assertEqual(response.status_code, 422)
         data = response.json()
 

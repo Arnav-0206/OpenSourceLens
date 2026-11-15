@@ -27,8 +27,6 @@ class TestFastAPIApp(unittest.TestCase):
         self.assertEqual(data["docs_url"], "/docs")
         self.assertEqual(data["api_v1_url"], "/api/v1")
         self.assertIsInstance(data["supported_repositories"], list)
-        self.assertGreaterEqual(len(data["supported_repositories"]), 4)
-        self.assertIn("microsoft/vscode", data["supported_repositories"])
 
     def test_health_check_endpoint(self):
         """Verify GET /health reports healthy status and active database dialect."""

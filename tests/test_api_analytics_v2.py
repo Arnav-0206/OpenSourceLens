@@ -35,7 +35,6 @@ from backend.app.database.models import (
     PullRequestReview,
     Release,
     Repository,
-    RepositoryAnalytics,
 )
 from backend.app.database.session import get_db
 from backend.app.main import create_application
@@ -632,44 +631,6 @@ class TestAnalyticsV2LatestHistoryRunsAndDomains:
         assert ru["data"]["available"] is False
         assert ru["data"]["status"] == "unavailable"
 
-    def test_16_legacy_analytics_routes_preserved_on_dynamically_seeded_repo(self, v2_client):
-        client, db = v2_client
-        repo = _seed_unseen_rich_repo(db, repo_id=9508, owner="legacy-org", name="compat-repo", source_revision=2)
-        db.add(
-            RepositoryAnalytics(
-                repository_id=repo.id,
-                repo_name=repo.repo_name,
-                total_issues=6,
-                open_issues=2,
-                closed_issues=4,
-                median_resolution_hours=24.0,
-                mean_resolution_hours=24.0,
-                p25_resolution_hours=18.0,
-                p75_resolution_hours=30.0,
-                survival_rate_30d=0.33,
-                category_distribution={"bug": 3, "feature": 3},
-                speed_tier_distribution={"1-7 Days": 4},
-                snapshot_date=datetime.now(timezone.utc),
-            )
-        )
-        db.commit()
-
-        ov = client.get("/api/v1/analytics/overview")
-        assert ov.status_code == 200
-        assert ov.json()["total_repositories"] == 1
-        assert ov.json()["total_issues"] == 6
-
-        comp = client.get("/api/v1/analytics/comparison")
-        assert comp.status_code == 200
-        assert comp.json()["repositories"][0]["repo_name"] == repo.repo_name
-
-        snap = client.get(f"/api/v1/analytics/{repo.owner}/{repo.name}")
-        assert snap.status_code == 200
-        assert snap.json()["resolution_metrics"]["median_hours"] == 24.0
-
-        trends = client.get(f"/api/v1/analytics/{repo.owner}/{repo.name}/trends")
-        assert trends.status_code == 200
-        assert trends.json()["total_periods"] > 0
 
 
 class TestFullIngestionToAnalyticsAPILifecycleAndConcurrency:

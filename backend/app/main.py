@@ -141,19 +141,13 @@ app = create_application()
 def read_root(db: Session = Depends(get_db)) -> RootResponse:
     """Return project overview metadata and supported target repositories."""
     repos = db.scalars(select(Repository.repo_name)).all()
-    default_repos = [
-        "microsoft/vscode",
-        "pytorch/pytorch",
-        "kubernetes/kubernetes",
-        "huggingface/transformers",
-    ]
     return RootResponse(
         title=settings.PROJECT_NAME,
         version=settings.VERSION,
         description=settings.DESCRIPTION,
         docs_url=settings.DOCS_URL,
         api_v1_url=settings.API_V1_STR,
-        supported_repositories=list(repos) if repos else default_repos,
+        supported_repositories=list(repos),
     )
 
 
