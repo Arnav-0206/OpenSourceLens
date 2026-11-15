@@ -47,19 +47,9 @@ from backend.app.schemas.models import (
     ModelInfoItem,
     ModelRegistryResponse,
 )
-from backend.app.schemas.related import (
-    RelatedIssueMatch,
-    RelatedIssuesResponse,
-    RelatedSearchRequest,
-)
 from backend.app.schemas.repository import (
     RepositoryDetail,
     RepositorySummary,
-)
-from backend.app.schemas.resolution import (
-    ResolutionPredictionRequest,
-    ResolutionPredictionResponse,
-    ResolutionStatsResponse,
 )
 
 __all__ = [
@@ -93,12 +83,6 @@ __all__ = [
     "ParsedRepository",
     "RepositoryConfidenceReport",
     "RepositoryEligibilityResult",
-    "RelatedIssueMatch",
-    "RelatedIssuesResponse",
-    "RelatedSearchRequest",
-    "ResolutionPredictionRequest",
-    "ResolutionPredictionResponse",
-    "ResolutionStatsResponse",
     "ModelInfoItem",
     "ModelRegistryResponse",
     "ErrorDetailItem",

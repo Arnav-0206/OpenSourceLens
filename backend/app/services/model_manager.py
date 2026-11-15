@@ -15,8 +15,6 @@ import torch
 
 from backend.app.schemas.models import ModelInfoItem, ModelRegistryResponse
 from backend.app.services.classification_service import classification_service
-from backend.app.services.related_service import related_service
-from backend.app.services.resolution_service import resolution_service
 
 logger = logging.getLogger(__name__)
 
@@ -74,34 +72,16 @@ class ModelManager:
                 },
             },
             "sentence_transformer": {
-                "name": "Sentence-Transformers Dense Embedding Retriever",
-                "task_type": "semantic_retrieval",
-                "version": "all-MiniLM-L6-v2 (Phase 7)",
-                "artifact_path": str(MODELS_DIR / "related_issues" / "embeddings.npz"),
-                "check_loaded": lambda: related_service._embedder is not None,
-                "check_exists": (MODELS_DIR / "related_issues" / "embeddings.npz").exists(),
+                "name": "Sentence-Transformers Dense Embedding Model",
+                "task_type": "semantic_embedding",
+                "version": "all-MiniLM-L6-v2",
+                "artifact_path": "all-MiniLM-L6-v2",
+                "check_loaded": lambda: hasattr(model_manager, "_embedder") and getattr(model_manager, "_embedder", None) is not None,
+                "check_exists": True,
                 "details": {
                     "embedding_dimension": 384,
                     "metric": "cosine_similarity",
-                    "cached_embeddings_count": 2328,
                     "normalized": True,
-                },
-            },
-            "resolution_velocity": {
-                "name": "Resolution Velocity 4-Tier Champion Classifier",
-                "task_type": "resolution_prediction",
-                "version": "1.0.0 (Phase 8 Random Forest Champion)",
-                "artifact_path": str(MODELS_DIR / "resolution_classifier_champion.joblib"),
-                "check_loaded": lambda: (
-                    resolution_service._predictor is not None
-                    and getattr(resolution_service._predictor, "classifier_model", None) is not None
-                ),
-                "check_exists": (MODELS_DIR / "resolution_classifier_champion.joblib").exists(),
-                "details": {
-                    "classifier": "RandomForestClassifier(n_estimators=100, max_depth=12)",
-                    "regressor": "Ridge(alpha=100.0)",
-                    "classes": ["< 1 Day", "1-7 Days", "7-30 Days", "30+ Days"],
-                    "adjacent_accuracy": "88.11% (±1 tier)",
                 },
             },
         }
@@ -197,18 +177,12 @@ class ModelManager:
 
         # 3. Sentence Transformer
         try:
-            related_service._get_embedder()
-            related_service._get_embeddings_store()
+            from backend.app.services.nlp.embedder import IssueEmbedder
+
+            self._embedder = IssueEmbedder(model_name="all-MiniLM-L6-v2", normalize_embeddings=True)
             results["sentence_transformer"] = "prewarmed"
         except Exception as exc:
             results["sentence_transformer"] = f"error: {exc}"
-
-        # 4. Resolution Velocity Predictor
-        try:
-            _ = resolution_service._predictor
-            results["resolution_velocity"] = "prewarmed"
-        except Exception as exc:
-            results["resolution_velocity"] = f"error: {exc}"
 
         return results
 
