@@ -717,3 +717,76 @@ class TestIngestionWorkerExecution:
 
         asyncio.run(_run())
 
+    def test_rate_limited_job_automatic_resumption(self, in_memory_db, sample_repo):
+        """Verify rate_limited jobs whose resumes_at window elapsed are automatically reopened to pending."""
+        queue = DurableJobQueue()
+        now = datetime.now(timezone.utc)
+        elapsed_time = now - timedelta(seconds=30)
+
+        job = CollectionRun(
+            repository_id=sample_repo.id,
+            mode="fast_snapshot",
+            status="rate_limited",
+            worker_id="prev-worker:9",
+            coverage_summary={"resumes_at": elapsed_time.isoformat()},
+            started_at=now - timedelta(minutes=5),
+        )
+        in_memory_db.add(job)
+        in_memory_db.commit()
+        in_memory_db.refresh(job)
+
+        # Test explicit reopening
+        resumed = queue.reopen_resumed_rate_limited_jobs(db=in_memory_db)
+        assert resumed == 1
+
+        in_memory_db.refresh(job)
+        assert job.status == "pending"
+        assert job.worker_id is None
+        assert job.leased_until is None
+
+        # Verify it can now be claimed by next worker
+        claimed = queue.claim_next_job(worker_id="worker-new:1", db=in_memory_db)
+        assert claimed is not None
+        assert claimed.id == job.id
+        assert claimed.status == "in_progress"
+
+    def test_rate_limited_job_not_resumed_before_deadline(self, in_memory_db, sample_repo):
+        """Verify rate_limited jobs whose resumes_at is in the future remain rate_limited."""
+        queue = DurableJobQueue()
+        now = datetime.now(timezone.utc)
+        future_time = now + timedelta(minutes=10)
+
+        job = CollectionRun(
+            repository_id=sample_repo.id,
+            mode="fast_snapshot",
+            status="rate_limited",
+            worker_id="prev-worker:9",
+            coverage_summary={"resumes_at": future_time.isoformat()},
+            started_at=now,
+        )
+        in_memory_db.add(job)
+        in_memory_db.commit()
+        in_memory_db.refresh(job)
+
+        resumed = queue.reopen_resumed_rate_limited_jobs(db=in_memory_db)
+        assert resumed == 0
+
+        in_memory_db.refresh(job)
+        assert job.status == "rate_limited"
+
+    def test_ingestion_worker_standalone_runner(self, in_memory_db):
+        """Verify run_standalone_worker function executes configured iterations cleanly."""
+        from backend.app.services.ingestion_worker import run_standalone_worker
+
+        async def _run():
+            with patch.object(IngestionWorker, "process_one_job", AsyncMock(return_value=None)) as mock_proc:
+                await run_standalone_worker(
+                    db_factory=lambda: in_memory_db,
+                    max_iterations=2,
+                    poll_interval=0.01,
+                )
+                assert mock_proc.call_count == 2
+
+        asyncio.run(_run())
+
+

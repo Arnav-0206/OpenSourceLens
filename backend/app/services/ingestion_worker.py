@@ -370,3 +370,49 @@ class IngestionWorker:
                 await asyncio.sleep(poll_interval)
             finally:
                 db.close()
+
+
+async def run_standalone_worker(
+    *,
+    db_factory: Optional[Callable[[], Session]] = None,
+    client: Optional[AsyncGitHubClient] = None,
+    worker_id: Optional[str] = None,
+    poll_interval: float = 1.0,
+    stop_event: Optional[asyncio.Event] = None,
+    max_iterations: Optional[int] = None,
+) -> None:
+    """Run an independent standalone IngestionWorker loop using SessionLocal by default."""
+    if db_factory is None:
+        from backend.app.database.session import SessionLocal
+
+        factory = SessionLocal
+    else:
+        factory = db_factory
+
+    worker = IngestionWorker(worker_id=worker_id)
+    if max_iterations is not None:
+        count = 0
+        while (stop_event is None or not stop_event.is_set()) and count < max_iterations:
+            db = factory()
+            try:
+                await worker.process_one_job(db=db, client=client)
+            finally:
+                db.close()
+            count += 1
+            if count < max_iterations:
+                await asyncio.sleep(poll_interval)
+    else:
+        await worker.run_worker_loop(
+            db_factory=factory,
+            client=client,
+            poll_interval=poll_interval,
+            stop_event=stop_event,
+        )
+
+
+if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
+    try:
+        asyncio.run(run_standalone_worker())
+    except KeyboardInterrupt:
+        logger.info("IngestionWorker stopped by interrupt.")

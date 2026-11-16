@@ -155,6 +155,9 @@ class DurableJobQueue:
         now = datetime.now(timezone.utc)
         expiry = now + timedelta(seconds=lease_duration_seconds)
 
+        # Transition any rate_limited jobs whose resumption deadline elapsed back to pending
+        self.reopen_resumed_rate_limited_jobs(db)
+
         # Detect database dialect
         bind = db.get_bind() if db else None
         dialect_name = bind.dialect.name if bind else "sqlite"
@@ -472,6 +475,42 @@ class DurableJobQueue:
         )
         return True
 
+    def reopen_resumed_rate_limited_jobs(self, db: Session = None) -> int:
+        """Scan and transition rate_limited jobs whose resumes_at deadline has passed back to 'pending'.
+
+        Returns the count of resumed jobs.
+        """
+        if db is None:
+            return 0
+        now = datetime.now(timezone.utc)
+        rate_limited_jobs = db.scalars(
+            select(CollectionRun).where(CollectionRun.status == "rate_limited")
+        ).all()
+
+        reopened_count = 0
+        for job in rate_limited_jobs:
+            cov = job.coverage_summary or {}
+            resumes_at_str = cov.get("resumes_at")
+            if not resumes_at_str:
+                continue
+            try:
+                resumes_at = datetime.fromisoformat(resumes_at_str)
+                if resumes_at.tzinfo is None:
+                    resumes_at = resumes_at.replace(tzinfo=timezone.utc)
+            except Exception:
+                continue
+
+            if resumes_at <= now:
+                job.status = "pending"
+                job.worker_id = None
+                job.leased_until = None
+                reopened_count += 1
+
+        if reopened_count > 0:
+            db.commit()
+            logger.info("Reopened %d rate_limited collection jobs whose resumes_at elapsed", reopened_count)
+        return reopened_count
+
     def recover_expired_jobs(
         self,
         max_retries: int = 2,
@@ -479,9 +518,12 @@ class DurableJobQueue:
     ) -> Dict[str, int]:
         """Scan and transition expired in-progress jobs that have exceeded max_retries to 'failed'.
 
-        Returns a dictionary with the count of permanently failed expired jobs.
+        Also reopens rate_limited jobs whose resumes_at window has elapsed.
+        Returns a dictionary with the counts of failed expired and resumed jobs.
         """
         now = datetime.now(timezone.utc)
+        resumed_count = self.reopen_resumed_rate_limited_jobs(db)
+
         stmt = (
             update(CollectionRun)
             .where(
@@ -503,7 +545,7 @@ class DurableJobQueue:
                 res.rowcount,
                 max_retries,
             )
-        return {"failed_count": res.rowcount}
+        return {"failed_count": res.rowcount, "resumed_count": resumed_count}
 
     def get_job(self, job_id: int, db: Session) -> Optional[CollectionRun]:
         """Retrieve a CollectionRun by ID."""

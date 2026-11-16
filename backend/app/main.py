@@ -76,6 +76,22 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         )
         logger.info("Embedded AnalyticsWorker started (%s).", worker.worker_id)
 
+    ingestion_stop_event: Optional[asyncio.Event] = None
+    ingestion_task: Optional[asyncio.Task[None]] = None
+    if settings.ENABLE_INGESTION_WORKER:
+        from backend.app.services.ingestion_worker import IngestionWorker
+
+        ingestion_stop_event = asyncio.Event()
+        ingestion_worker = IngestionWorker()
+        ingestion_task = asyncio.create_task(
+            ingestion_worker.run_worker_loop(
+                db_factory=SessionLocal,
+                poll_interval=settings.INGESTION_WORKER_POLL_INTERVAL_SECONDS,
+                stop_event=ingestion_stop_event,
+            )
+        )
+        logger.info("Embedded IngestionWorker started (%s).", ingestion_worker.worker_id)
+
     try:
         yield
     finally:
@@ -92,6 +108,21 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
                     pass
             except asyncio.CancelledError:
                 pass
+
+        if ingestion_stop_event is not None and ingestion_task is not None:
+            logger.info("Stopping embedded IngestionWorker...")
+            ingestion_stop_event.set()
+            try:
+                await asyncio.wait_for(ingestion_task, timeout=5.0)
+            except asyncio.TimeoutError:
+                ingestion_task.cancel()
+                try:
+                    await ingestion_task
+                except asyncio.CancelledError:
+                    pass
+            except asyncio.CancelledError:
+                pass
+
         logger.info("Shutting down OpenSourceLens API...")
         engine.dispose()
 
@@ -181,4 +212,4 @@ def read_health(db: Session = Depends(get_db)) -> HealthResponse:
 
 
 if __name__ == "__main__":
-    uvicorn.run("backend.app.main:app", host="0.0.0.0", port=8000, reload=True)
+    uvicorn.run("backend.app.main:app", host=settings.FASTAPI_HOST, port=settings.FASTAPI_PORT, reload=True)

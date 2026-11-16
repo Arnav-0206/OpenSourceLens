@@ -39,6 +39,9 @@ class Settings(BaseModel):
     OPENAPI_URL: str = "/openapi.json"
     REDOC_URL: str = "/redoc"
 
+    FASTAPI_HOST: str = Field(default_factory=lambda: os.getenv("FASTAPI_HOST", "0.0.0.0"))
+    FASTAPI_PORT: int = Field(default_factory=lambda: int(os.getenv("FASTAPI_PORT", "8000")))
+
     PREWARM_ON_STARTUP: bool = Field(
         default_factory=lambda: os.getenv("PREWARM_ON_STARTUP", "false").lower()
         in ("true", "1", "yes")
@@ -52,6 +55,13 @@ class Settings(BaseModel):
     )
     ANALYTICS_WORKER_RECONCILE_INTERVAL_SECONDS: float = Field(
         default_factory=lambda: float(os.getenv("ANALYTICS_WORKER_RECONCILE_INTERVAL_SECONDS", "60.0"))
+    )
+    ENABLE_INGESTION_WORKER: bool = Field(
+        default_factory=lambda: os.getenv("ENABLE_INGESTION_WORKER", "false").lower()
+        in ("true", "1", "yes")
+    )
+    INGESTION_WORKER_POLL_INTERVAL_SECONDS: float = Field(
+        default_factory=lambda: float(os.getenv("INGESTION_WORKER_POLL_INTERVAL_SECONDS", "1.0"))
     )
 
 
