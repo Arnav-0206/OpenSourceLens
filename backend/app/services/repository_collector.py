@@ -769,6 +769,29 @@ class RepositoryCollector:
             deletions = item.get("deletions")
             changed_files = item.get("changed_files")
 
+            body = item.get("body")
+            is_draft = bool(item.get("draft", False))
+            head_branch = (
+                item.get("head", {}).get("ref")
+                if isinstance(item.get("head"), dict)
+                else None
+            )
+            base_branch = (
+                item.get("base", {}).get("ref")
+                if isinstance(item.get("base"), dict)
+                else None
+            )
+            labels = [
+                lbl.get("name")
+                for lbl in item.get("labels", [])
+                if isinstance(lbl, dict) and lbl.get("name")
+            ]
+            requested_reviewers = [
+                rev.get("login")
+                for rev in item.get("requested_reviewers", [])
+                if isinstance(rev, dict) and rev.get("login")
+            ]
+
             pr = db.scalar(
                 select(PullRequest).where(
                     PullRequest.repository_id == repo.id,
@@ -793,6 +816,12 @@ class RepositoryCollector:
                     additions=additions,
                     deletions=deletions,
                     changed_files=changed_files,
+                    body=body,
+                    head_branch=head_branch,
+                    base_branch=base_branch,
+                    is_draft=is_draft,
+                    labels=labels,
+                    requested_reviewers=requested_reviewers,
                 )
                 db.add(pr)
                 count += 1
@@ -812,6 +841,12 @@ class RepositoryCollector:
                     or (additions is not None and pr.additions != additions)
                     or (deletions is not None and pr.deletions != deletions)
                     or (changed_files is not None and pr.changed_files != changed_files)
+                    or pr.body != body
+                    or pr.head_branch != head_branch
+                    or pr.base_branch != base_branch
+                    or pr.is_draft != is_draft
+                    or pr.labels != labels
+                    or pr.requested_reviewers != requested_reviewers
                 )
                 if changed:
                     pr.title = title
@@ -829,6 +864,12 @@ class RepositoryCollector:
                         pr.deletions = deletions
                     if changed_files is not None:
                         pr.changed_files = changed_files
+                    pr.body = body
+                    pr.head_branch = head_branch
+                    pr.base_branch = base_branch
+                    pr.is_draft = is_draft
+                    pr.labels = labels
+                    pr.requested_reviewers = requested_reviewers
                     if mutated_records is not None:
                         mutated_records.add(("pull_request", pr_num))
 
@@ -858,6 +899,37 @@ class RepositoryCollector:
                     db=db,
                     mutated_records=mutated_records,
                 )
+
+        # Sample PR details (additions, deletions, changed_files) if budget allows
+        if budgeter.can_consume("pr_details", count=1):
+            for pr_rec in pr_records:
+                if not budgeter.can_consume("pr_details", count=1):
+                    break
+                if pr_rec.additions is not None and pr_rec.deletions is not None:
+                    continue
+                try:
+                    pr_resp = await self.client.request(
+                        method="GET",
+                        endpoint_or_url=f"/repos/{repo.owner}/{repo.name}/pulls/{pr_rec.pr_number}",
+                        entity="pr_details",
+                        budgeter=budgeter,
+                    )
+                    pr_data = pr_resp.json()
+                    new_adds = pr_data.get("additions")
+                    new_dels = pr_data.get("deletions")
+                    new_files = pr_data.get("changed_files")
+                    if (
+                        pr_rec.additions != new_adds
+                        or pr_rec.deletions != new_dels
+                        or pr_rec.changed_files != new_files
+                    ):
+                        pr_rec.additions = new_adds
+                        pr_rec.deletions = new_dels
+                        pr_rec.changed_files = new_files
+                        if mutated_records is not None:
+                            mutated_records.add(("pull_request", pr_rec.pr_number))
+                except Exception as exc:
+                    logger.debug("Could not fetch detailed stats for PR #%s: %s", pr_rec.pr_number, exc)
 
         db.flush()
         return pr_records, count, res.is_partial, res.partial_reason

@@ -37,11 +37,13 @@ class TestEntityRateBudgeter:
         assert budgeter.entity_limits["commit_details"] == 0
         assert budgeter.entity_limits["contributors"] == 1
         assert budgeter.entity_limits["pull_requests"] == 1
+        assert budgeter.entity_limits["pr_details"] == 0
         assert budgeter.entity_limits["pr_reviews"] == 2
         assert budgeter.entity_limits["pr_inline_comments"] == 0
         assert budgeter.entity_limits["issues"] == 1
         assert budgeter.entity_limits["issue_comments"] == 1
         assert budgeter.entity_limits["releases"] == 1
+        assert budgeter.entity_limits["discussions"] == 1
 
     def test_standard_diagnostic_initialization(self):
         """Standard Diagnostic mode must be initialized with total_limit = 50 and exact entity limits."""
@@ -58,11 +60,13 @@ class TestEntityRateBudgeter:
         assert budgeter.entity_limits["commit_details"] == 5
         assert budgeter.entity_limits["contributors"] == 2
         assert budgeter.entity_limits["pull_requests"] == 3
+        assert budgeter.entity_limits["pr_details"] == 5
         assert budgeter.entity_limits["pr_reviews"] == 20
         assert budgeter.entity_limits["pr_inline_comments"] == 2
         assert budgeter.entity_limits["issues"] == 5
         assert budgeter.entity_limits["issue_comments"] == 3
         assert budgeter.entity_limits["releases"] == 1
+        assert budgeter.entity_limits["discussions"] == 2
 
     def test_unknown_budget_mode_raises_value_error(self):
         """Unrecognized budget mode must raise ValueError."""

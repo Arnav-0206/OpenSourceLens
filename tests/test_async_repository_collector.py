@@ -655,6 +655,76 @@ class TestPullRequestsAndReviewsCollection:
 
         asyncio.run(_run())
 
+    def test_collect_pull_requests_depth_and_detail_fetching(self, in_memory_db, mock_client):
+        """Verify PR body, draft, branches, labels, reviewers, and detail additions/deletions fetching."""
+        async def _run():
+            collector = RepositoryCollector(client=mock_client)
+            budgeter = EntityRateBudgeter(mode="standard_diagnostic")
+
+            repo = Repository(id=1004, repo_name="org/pr-depth", owner="org", name="pr-depth")
+            in_memory_db.add(repo)
+            in_memory_db.commit()
+
+            # Mock PR list where additions/deletions are None (GitHub list endpoint behavior)
+            mock_client.paginate.return_value = PaginatedResult(
+                entity="pull_requests",
+                items=[
+                    {
+                        "number": 202,
+                        "title": "Enrich PR data structures",
+                        "state": "open",
+                        "user": {"login": "dev1", "id": 5555},
+                        "created_at": "2026-10-02T10:00:00Z",
+                        "body": "Detailed PR overview text",
+                        "draft": True,
+                        "head": {"ref": "feature/enrichment"},
+                        "base": {"ref": "main"},
+                        "labels": [{"name": "backend"}, {"name": "priority-high"}],
+                        "requested_reviewers": [{"login": "reviewer-alice"}],
+                        "comments": 3,
+                        "review_comments": 1,
+                        "additions": None,
+                        "deletions": None,
+                        "changed_files": None,
+                    }
+                ],
+                total_requests=1,
+                is_partial=False,
+                partial_reason=None,
+            )
+
+            # Mock single PR detail response
+            mock_detail_resp = MagicMock()
+            mock_detail_resp.json.return_value = {
+                "additions": 85,
+                "deletions": 12,
+                "changed_files": 3,
+            }
+            mock_client.request.return_value = mock_detail_resp
+
+            prs, count, is_part, reason = await collector.collect_pull_requests(
+                repo=repo,
+                budgeter=budgeter,
+                db=in_memory_db,
+            )
+
+            assert count == 1
+            assert len(prs) == 1
+            pr = prs[0]
+            assert pr.pr_number == 202
+            assert pr.body == "Detailed PR overview text"
+            assert pr.is_draft is True
+            assert pr.head_branch == "feature/enrichment"
+            assert pr.base_branch == "main"
+            assert pr.labels == ["backend", "priority-high"]
+            assert pr.requested_reviewers == ["reviewer-alice"]
+            # Verify diff details were fetched and populated
+            assert pr.additions == 85
+            assert pr.deletions == 12
+            assert pr.changed_files == 3
+
+        asyncio.run(_run())
+
 
 class TestIssuesCollection:
     """Tests for pure issues harvesting, PR exclusion, text cleaning, and canonical labels."""
