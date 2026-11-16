@@ -109,16 +109,14 @@ def upgrade() -> None:
         "issue_labels",
         sa.Column("id", PK_TYPE, autoincrement=True, nullable=False),
         sa.Column("issue_id", sa.BigInteger(), nullable=False),
-        sa.Column("raw_label", sa.String(length=120), nullable=False),
-        sa.Column("normalized_label", sa.String(length=120), nullable=False),
-        sa.Column("color", sa.String(length=10), nullable=True),
-        sa.Column("description", sa.String(length=255), nullable=True),
+        sa.Column("label_name", sa.String(length=100), nullable=False),
+        sa.Column("is_canonical", sa.Boolean(), nullable=False, server_default="0"),
+        sa.Column("canonical_category", sa.String(length=50), nullable=True),
         sa.ForeignKeyConstraint(["issue_id"], ["issues.id"], name="fk_issue_labels_issue_id", ondelete="CASCADE"),
         sa.PrimaryKeyConstraint("id", name="pk_issue_labels"),
     )
     op.create_index("ix_issue_labels_issue_id", "issue_labels", ["issue_id"])
-    op.create_index("ix_issue_labels_normalized_label", "issue_labels", ["normalized_label"])
-    op.create_index("ix_issue_labels_raw_label", "issue_labels", ["raw_label"])
+    op.create_index("ix_issue_labels_label_name", "issue_labels", ["label_name"])
 
     # 4. repository_analytics table
     op.create_table(
@@ -127,42 +125,23 @@ def upgrade() -> None:
         sa.Column("repository_id", sa.BigInteger(), nullable=False),
         sa.Column("repo_name", sa.String(length=120), nullable=False),
         sa.Column("snapshot_date", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
-        sa.Column("total_issues", sa.Integer(), nullable=False),
-        sa.Column("closed_issues", sa.Integer(), nullable=False),
-        sa.Column("open_issues", sa.Integer(), nullable=False),
-        sa.Column("closure_rate", sa.Float(), nullable=False),
-        sa.Column("category_bug_count", sa.Integer(), nullable=False),
-        sa.Column("category_feature_count", sa.Integer(), nullable=False),
-        sa.Column("category_other_count", sa.Integer(), nullable=False),
+        sa.Column("total_issues", sa.Integer(), nullable=False, server_default="0"),
+        sa.Column("open_issues", sa.Integer(), nullable=False, server_default="0"),
+        sa.Column("closed_issues", sa.Integer(), nullable=False, server_default="0"),
+        sa.Column("category_distribution", sa.JSON(), nullable=True),
         sa.Column("median_resolution_hours", sa.Float(), nullable=True),
         sa.Column("mean_resolution_hours", sa.Float(), nullable=True),
+        sa.Column("p25_resolution_hours", sa.Float(), nullable=True),
         sa.Column("p75_resolution_hours", sa.Float(), nullable=True),
-        sa.Column("p90_resolution_hours", sa.Float(), nullable=True),
-        sa.Column("iqr_resolution_hours", sa.Float(), nullable=True),
-        sa.Column("fast_tier_count", sa.Integer(), nullable=False),
-        sa.Column("medium_tier_count", sa.Integer(), nullable=False),
-        sa.Column("slow_tier_count", sa.Integer(), nullable=False),
-        sa.Column("unlabeled_count", sa.Integer(), nullable=False),
-        sa.Column("unlabeled_ratio", sa.Float(), nullable=False),
-        sa.Column("internal_author_count", sa.Integer(), nullable=False),
-        sa.Column("external_author_count", sa.Integer(), nullable=False),
-        sa.Column("bot_author_count", sa.Integer(), nullable=False),
-        sa.Column("internal_median_hours", sa.Float(), nullable=True),
-        sa.Column("external_median_hours", sa.Float(), nullable=True),
-        sa.Column("avg_comments_per_issue", sa.Float(), nullable=False),
-        sa.Column("avg_body_words", sa.Float(), nullable=False),
-        sa.Column("avg_title_words", sa.Float(), nullable=False),
-        sa.Column("code_block_ratio", sa.Float(), nullable=False),
-        sa.Column("has_url_ratio", sa.Float(), nullable=False),
-        sa.Column("survival_probabilities", sa.JSON(), nullable=True),
-        sa.Column("monthly_inflow_outflow", sa.JSON(), nullable=True),
+        sa.Column("survival_rate_30d", sa.Float(), nullable=True),
+        sa.Column("speed_tier_distribution", sa.JSON(), nullable=True),
+        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
         sa.ForeignKeyConstraint(["repository_id"], ["repositories.id"], name="fk_repo_analytics_repository_id", ondelete="CASCADE"),
         sa.PrimaryKeyConstraint("id", name="pk_repository_analytics"),
-        sa.UniqueConstraint("repository_id", "snapshot_date", name="uq_repo_analytics_snapshot"),
     )
     op.create_index("ix_repository_analytics_repo_name", "repository_analytics", ["repo_name"])
     op.create_index("ix_repository_analytics_repository_id", "repository_analytics", ["repository_id"])
-    op.create_index("ix_repository_analytics_snapshot_date", "repository_analytics", ["snapshot_date"])
+    op.create_index("ix_analytics_repo_date", "repository_analytics", ["repository_id", "snapshot_date"])
 
     # 5. predictions table
     op.create_table(
@@ -170,8 +149,9 @@ def upgrade() -> None:
         sa.Column("id", PK_TYPE, autoincrement=True, nullable=False),
         sa.Column("issue_id", sa.BigInteger(), nullable=True),
         sa.Column("repo_name", sa.String(length=120), nullable=True),
+        sa.Column("input_title", sa.Text(), nullable=False),
+        sa.Column("input_body", sa.Text(), nullable=True),
         sa.Column("model_name", sa.String(length=80), nullable=False),
-        sa.Column("model_version", sa.String(length=40), nullable=False),
         sa.Column("task_type", sa.String(length=50), nullable=False),
         sa.Column("predicted_label", sa.String(length=80), nullable=True),
         sa.Column("confidence_score", sa.Float(), nullable=True),

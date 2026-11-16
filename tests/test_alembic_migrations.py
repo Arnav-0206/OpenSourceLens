@@ -21,10 +21,17 @@ from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
 
 from backend.app.database.models import (
+    AnalysisRun,
+    AnalysisRunAttempt,
+    Commit,
+    Contributor,
     Issue,
     IssueComment,
-    Repository,
+    IssueLabel,
+    Prediction,
     PullRequest,
+    Repository,
+    RepositoryAnalytics,
 )
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -344,4 +351,116 @@ def test_migration_003_lifecycle(staging_db):
         assert cursor.fetchone()[0] == 2328
     finally:
         conn.close()
+
+
+def test_fresh_database_upgrade_head_and_orm_queries(tmp_path):
+    """Verify that a brand new empty database upgraded via alembic upgrade head matches ORM models 100%."""
+    from datetime import datetime, timezone
+
+    fresh_db_file = tmp_path / "fresh_alembic_test.db"
+    alembic_cfg = Config(str(ALEMBIC_INI))
+    alembic_cfg.set_main_option("script_location", str(PROJECT_ROOT / "backend" / "alembic"))
+    alembic_cfg.set_main_option("sqlalchemy.url", f"sqlite:///{fresh_db_file}")
+
+    # Upgrade to head on empty database
+    command.upgrade(alembic_cfg, "head")
+
+    # Connect with SQLAlchemy ORM
+    engine = create_engine(f"sqlite:///{fresh_db_file}")
+    try:
+        with Session(engine) as session:
+            # Verify ORM queries on all previously drifting tables execute without OperationalError
+            labels = session.scalars(select(IssueLabel)).all()
+            assert labels == []
+
+            predictions = session.scalars(select(Prediction)).all()
+            assert predictions == []
+
+            analytics = session.scalars(select(RepositoryAnalytics)).all()
+            assert analytics == []
+
+            runs = session.scalars(select(AnalysisRun)).all()
+            assert runs == []
+
+            # Verify complete write and read lifecycle with ORM models
+            now = datetime.now(timezone.utc)
+            repo = Repository(
+                id=101,
+                repo_name="test-org/fresh-repo",
+                owner="test-org",
+                name="fresh-repo",
+                stars_count=42,
+                forks_count=5,
+                open_issues_count=1,
+            )
+            session.add(repo)
+            session.flush()
+
+            issue = Issue(
+                id=202,
+                repository_id=repo.id,
+                repo_name=repo.repo_name,
+                issue_number=1,
+                title="Fresh DB test issue",
+                state="open",
+                author="tester",
+                created_at=now,
+                canonical_label="bug",
+                canonical_label_id=1,
+            )
+            session.add(issue)
+            session.flush()
+
+            label = IssueLabel(
+                issue_id=issue.id,
+                label_name="bug",
+                is_canonical=True,
+                canonical_category="bug",
+            )
+            session.add(label)
+
+            pred = Prediction(
+                issue_id=issue.id,
+                repo_name=repo.repo_name,
+                input_title=issue.title,
+                input_body=None,
+                model_name="distilbert",
+                task_type="classification",
+                predicted_label="bug",
+                confidence_score=0.95,
+            )
+            session.add(pred)
+
+            repo_ana = RepositoryAnalytics(
+                repository_id=repo.id,
+                repo_name=repo.repo_name,
+                total_issues=1,
+                open_issues=1,
+                closed_issues=0,
+                category_distribution={"bug": 1},
+                speed_tier_distribution={"< 1 Day": 1},
+            )
+            session.add(repo_ana)
+            session.commit()
+
+            # Verify persisted rows match expected ORM properties
+            queried_label = session.scalar(select(IssueLabel).where(IssueLabel.issue_id == issue.id))
+            assert queried_label is not None
+            assert queried_label.label_name == "bug"
+            assert queried_label.is_canonical is True
+
+            queried_pred = session.scalar(select(Prediction).where(Prediction.issue_id == issue.id))
+            assert queried_pred is not None
+            assert queried_pred.input_title == "Fresh DB test issue"
+            assert queried_pred.predicted_label == "bug"
+
+            queried_ana = session.scalar(
+                select(RepositoryAnalytics).where(RepositoryAnalytics.repository_id == repo.id)
+            )
+            assert queried_ana is not None
+            assert queried_ana.category_distribution == {"bug": 1}
+    finally:
+        engine.dispose()
+        gc.collect()
+
 
