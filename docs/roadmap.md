@@ -115,20 +115,24 @@ The backend core from recent phases is complete on SQLite (PostgreSQL execution 
 
 ---
 
-## Stage 4 — Interactive Single-Repository Workspace UI *(Feature Slice 2: Visual Core)*
+## Stage 4 — Interactive Single-Repository Workspace UI *(Feature Slice 2: Visual Core)* — [COMPLETED]
 
 **Goal:** Deliver the intuitive, interactive Next.js web application where any contributor, maintainer, or visitor can analyze a repository visually without touching API tools.
 
-1. **Universal Entry & Live Job Flow (`/`, `/explore`):**
-   - Clean GitHub URL / `owner/repo` submission bar -> instant pre-flight eligibility & budget preview (`fast_snapshot` vs. `standard_diagnostic`) -> live step-by-step ingestion & analytics progress bar (`status` polling + transparent coverage/truncation banners).
-2. **Repository Intelligence Workspace (`/repo/[owner]/[name]`):**
-   - **Overview & Consolidated Report Tab:** Repo & Community Discussions summary, Multi-Domain Diagnostic Scorecard, transparent data-coverage badges (never hiding `NULL` or bounded windows), and plain-English rule findings sorted by severity.
-   - **Development Activity & Releases Tab:** Weekly commit velocity with 4w/12w SMA & EWMA curves, anomaly & change-point markers, `7x24` UTC activity heatmap, churn coverage, commit landing latency quantiles, SemVer adoption, and pre-release surge timelines.
-   - **Contributors & Collaboration Tab:** Identity-clean contributor leaderboard, role filter (commits/PRs/reviews/issues/comments), Gini inequality + interactive Lorenz curve, `BF50`/`BF80` concentration alerts, and bot/unattributed isolation metrics.
-   - **Pull Requests & Code Review Tab:** `TTFResp` vs. `TTFR_formal` vs. `TTFR_inline` latency comparison, merge/abandonment outcome donut, PR Kaplan-Meier survival curve, diff-size turnaround chart, and reviewer bottleneck concentration.
+1. **Universal Entry & Live Job Flow (`/`, `/explore`):** [DONE]
+   - Clean GitHub URL / `owner/repo` submission bar -> instant pre-flight eligibility & budget preview (`fast_snapshot` vs. `standard_diagnostic`) -> live step-by-step ingestion & analytics progress bar (`status` polling + transparent coverage/truncation banners) implemented in `frontend/src/components/ingestion/RepoSearchFlow.tsx` and embedded in `frontend/src/app/page.tsx`.
+2. **Repository Intelligence Workspace (`/repo/[owner]/[name]`):** [DONE]
+   - Fully interactive Single-Repository Intelligence Workspace dynamic route implemented in `frontend/src/app/repo/[owner]/[name]/page.tsx` with `WorkspaceHeader.tsx` (real-time revision tracking, staleness warning, and one-click snapshot recompute).
+   - **Overview & Consolidated Report Tab (`TabOverview.tsx`):** Multi-Domain Diagnostic Scorecard across 6 domains, Community Discussions health summary, transparent data-coverage badges, and plain-English rule interpretations sorted by severity (`critical`, `warning`, `info`).
+   - **Development Activity & Releases Tab (`TabActivity.tsx`):** Weekly commit velocity with 4w/12w SMA & EWMA curves, anomaly & change-point markers, `7x24` UTC activity rhythm heatmap, commit landing latency quantiles, SemVer 2.0.0 adoption, and cadence regularity.
+   - **Contributors & Collaboration Tab (`TabContributors.tsx`):** Identity-clean contributor directory, role breakdown, Gini inequality gauge, interactive Lorenz curve line chart, and `BF50`/`BF80` bus factor concentration alerts.
+   - **Pull Requests & Code Review Tab (`TabPullRequests.tsx`):** `TTFResp` vs. `TTFR_formal` vs. `TTFR_inline` latency comparison, merge/abandonment outcome donut chart, turnaround quantiles (`p50`, `p75`, `p90`, `mean`), diff-size turnaround bins, and top reviewer bottlenecks.
+   - **Issues & Backlog Tab (`TabIssues.tsx`):** Monthly flow chart (opened vs closed), SLA resolution quantiles, 5-bin open backlog aging distribution, and discussion intensity.
+   - **Community Discussions Tab (`TabDiscussions.tsx`):** Q&A resolution rate meter, answer latency quantiles (`p50`, `p75`, `p90`, `mean`), category distribution bar chart, top engaged discussion threads, and contributor bridge overlap rate.
 
-### What You Can Present After Stage 4
-- **Full End-to-End Product Demo:** Live browser walkthrough from pasting a GitHub URL to exploring interactive charts for Development Activity, Contributors, PR Reviews, Releases, and Discussions—fully understandable to any contributor or maintainer.
+### 4.6 What You Can Present After Stage 4
+- **Full End-to-End Product Demo:** Live browser walkthrough from pasting any GitHub URL or `owner/repo` into the universal search flow, watching the live pre-flight eligibility check and ingestion progress, to exploring rich interactive charts and diagnostic cards across Development Activity, Contributors, PR Reviews, Issues, Releases, and Discussions—with zero terminal commands or API clients needed.
+- **Verification:** `npm --prefix frontend run type-check` passed with 0 errors; `npm --prefix frontend run build` succeeded creating optimized production bundles for all static and dynamic workspace routes.
 
 ---
 
