@@ -19,6 +19,7 @@ from sqlalchemy import (
     Index,
     Integer,
     JSON,
+    LargeBinary,
     String,
     Text,
     UniqueConstraint,
@@ -1269,5 +1270,72 @@ class DiscussionComment(Base):
     discussion: Mapped[Discussion] = relationship(
         "Discussion", back_populates="comments"
     )
+
+
+class IssueEmbedding(Base):
+    """Dense vector representation for a GitHub issue (384d all-MiniLM-L6-v2)."""
+
+    __tablename__ = "issue_embeddings"
+
+    id: Mapped[int] = mapped_column(
+        PK_BIGINT, primary_key=True, autoincrement=True
+    )
+    repository_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey("repositories.id", ondelete="CASCADE"),
+        index=True,
+        nullable=False,
+    )
+    issue_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey("issues.id", ondelete="CASCADE"),
+        index=True,
+        unique=True,
+        nullable=False,
+    )
+    embedding_blob: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
+    model_version: Mapped[str] = mapped_column(
+        String(60), default="all-MiniLM-L6-v2", server_default="all-MiniLM-L6-v2", nullable=False
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    issue: Mapped[Issue] = relationship("Issue")
+    repository: Mapped[Repository] = relationship("Repository")
+
+
+class DiscussionEmbedding(Base):
+    """Dense vector representation for a GitHub discussion (384d all-MiniLM-L6-v2)."""
+
+    __tablename__ = "discussion_embeddings"
+
+    id: Mapped[int] = mapped_column(
+        PK_BIGINT, primary_key=True, autoincrement=True
+    )
+    repository_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey("repositories.id", ondelete="CASCADE"),
+        index=True,
+        nullable=False,
+    )
+    discussion_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey("discussions.id", ondelete="CASCADE"),
+        index=True,
+        unique=True,
+        nullable=False,
+    )
+    embedding_blob: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
+    model_version: Mapped[str] = mapped_column(
+        String(60), default="all-MiniLM-L6-v2", server_default="all-MiniLM-L6-v2", nullable=False
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    discussion: Mapped[Discussion] = relationship("Discussion")
+    repository: Mapped[Repository] = relationship("Repository")
+
 
 

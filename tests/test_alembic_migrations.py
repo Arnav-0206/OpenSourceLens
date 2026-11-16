@@ -166,13 +166,15 @@ def test_staging_migration_lifecycle(staging_db):
     try:
         cursor = conn.cursor()
         cursor.execute("SELECT version_num FROM alembic_version;")
-        assert cursor.fetchone()[0] == "004_add_discussions_and_pr_depth"
+        assert cursor.fetchone()[0] == "005_issue_and_discussion_embeddings"
 
-        # Verify discussions and discussion_comments tables exist
+        # Verify discussions, discussion_comments, issue_embeddings, and discussion_embeddings tables exist
         cursor.execute("SELECT name FROM sqlite_master WHERE type='table';")
         tables = set(r[0] for r in cursor.fetchall())
         assert "discussions" in tables
         assert "discussion_comments" in tables
+        assert "issue_embeddings" in tables
+        assert "discussion_embeddings" in tables
 
         # Verify additive columns on pull_requests
         cursor.execute("PRAGMA table_info(pull_requests);")
@@ -385,8 +387,8 @@ def test_migration_004_lifecycle(staging_db):
     """Test Stage 3 Migration 004: upgrade from 003 -> verify schema -> downgrade -> re-upgrade."""
     staging_file, alembic_cfg = staging_db
 
-    # Step 1: Upgrade to 004 head
-    command.upgrade(alembic_cfg, "head")
+    # Step 1: Upgrade to 004
+    command.upgrade(alembic_cfg, "004_add_discussions_and_pr_depth")
 
     conn = sqlite3.connect(staging_file)
     try:
@@ -441,8 +443,8 @@ def test_migration_004_lifecycle(staging_db):
     finally:
         conn.close()
 
-    # Step 3: Re-upgrade to head
-    command.upgrade(alembic_cfg, "head")
+    # Step 3: Re-upgrade to 004
+    command.upgrade(alembic_cfg, "004_add_discussions_and_pr_depth")
 
     conn = sqlite3.connect(staging_file)
     try:
@@ -452,6 +454,71 @@ def test_migration_004_lifecycle(staging_db):
 
         cursor.execute("SELECT count(*) FROM issues;")
         assert cursor.fetchone()[0] == 2328
+    finally:
+        conn.close()
+
+
+def test_migration_005_lifecycle(staging_db):
+    """Test Stage 5 Migration 005: upgrade to 005 -> verify issue_embeddings and discussion_embeddings -> downgrade -> re-upgrade to head."""
+    staging_file, alembic_cfg = staging_db
+
+    # Step 1: Upgrade to head (005)
+    command.upgrade(alembic_cfg, "head")
+
+    conn = sqlite3.connect(staging_file)
+    try:
+        cursor = conn.cursor()
+        cursor.execute("SELECT version_num FROM alembic_version;")
+        assert cursor.fetchone()[0] == "005_issue_and_discussion_embeddings"
+
+        # Verify issue_embeddings and discussion_embeddings exist
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table';")
+        tables = set(r[0] for r in cursor.fetchall())
+        assert "issue_embeddings" in tables
+        assert "discussion_embeddings" in tables
+
+        # Verify columns on issue_embeddings
+        cursor.execute("PRAGMA table_info(issue_embeddings);")
+        cols = {r[1] for r in cursor.fetchall()}
+        assert "id" in cols
+        assert "repository_id" in cols
+        assert "issue_id" in cols
+        assert "embedding_blob" in cols
+        assert "model_version" in cols
+        assert "created_at" in cols
+
+        # Verify columns on discussion_embeddings
+        cursor.execute("PRAGMA table_info(discussion_embeddings);")
+        d_cols = {r[1] for r in cursor.fetchall()}
+        assert "id" in d_cols
+        assert "repository_id" in d_cols
+        assert "discussion_id" in d_cols
+        assert "embedding_blob" in d_cols
+        assert "model_version" in d_cols
+        assert "created_at" in d_cols
+    finally:
+        conn.close()
+
+    # Step 2: Downgrade to 004
+    command.downgrade(alembic_cfg, "004_add_discussions_and_pr_depth")
+    conn = sqlite3.connect(staging_file)
+    try:
+        cursor = conn.cursor()
+        cursor.execute("SELECT version_num FROM alembic_version;")
+        assert cursor.fetchone()[0] == "004_add_discussions_and_pr_depth"
+
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name IN ('issue_embeddings', 'discussion_embeddings');")
+        assert len(cursor.fetchall()) == 0
+    finally:
+        conn.close()
+
+    # Step 3: Re-upgrade to head
+    command.upgrade(alembic_cfg, "head")
+    conn = sqlite3.connect(staging_file)
+    try:
+        cursor = conn.cursor()
+        cursor.execute("SELECT version_num FROM alembic_version;")
+        assert cursor.fetchone()[0] == "005_issue_and_discussion_embeddings"
     finally:
         conn.close()
 
