@@ -214,12 +214,12 @@ def read_health(db: Session = Depends(get_db)) -> HealthResponse:
     queue_depths = {"ingestion": {"pending": 0, "running": 0}, "analytics": {"pending": 0, "running": 0}}
     active_workers = {"active_workers_count": 0, "active_worker_ids": []}
     try:
-        from backend.app.database.models import AnalysisRun, IngestionJob
+        from backend.app.database.models import AnalysisRun, CollectionRun
         from sqlalchemy import func
         now_utc = datetime.now(timezone.utc)
 
-        pending_ingest = db.scalar(select(func.count(IngestionJob.id)).where(IngestionJob.status == "pending")) or 0
-        running_ingest = db.scalar(select(func.count(IngestionJob.id)).where(IngestionJob.status == "running")) or 0
+        pending_ingest = db.scalar(select(func.count(CollectionRun.id)).where(CollectionRun.status == "pending")) or 0
+        running_ingest = db.scalar(select(func.count(CollectionRun.id)).where(CollectionRun.status == "running")) or 0
         pending_analytics = db.scalar(select(func.count(AnalysisRun.id)).where(AnalysisRun.status == "pending")) or 0
         running_analytics = db.scalar(select(func.count(AnalysisRun.id)).where(AnalysisRun.status == "running")) or 0
 

@@ -322,10 +322,13 @@ export default function RepoSearchFlow() {
               </div>
             </div>
 
-            <div className="p-3 rounded-xl bg-slate-950/60 border border-slate-800">
-              <div className="flex items-center gap-2 text-slate-400 text-xs">
-                <AlertCircle className="w-4 h-4 text-rose-400" />
-                <span>Open Issues</span>
+            <div className="p-3 rounded-xl bg-slate-950/60 border border-slate-800" title="GitHub REST API includes both open issues and open pull requests in open_issues_count">
+              <div className="flex items-center justify-between text-slate-400 text-xs">
+                <span className="flex items-center gap-1.5">
+                  <AlertCircle className="w-4 h-4 text-rose-400" />
+                  <span>Open Issues & PRs</span>
+                </span>
+                <span className="text-[10px] text-slate-500 font-mono">GitHub API Total</span>
               </div>
               <div className="text-lg font-bold text-white mt-1">
                 {(previewData.metadata.open_issues_count || 0).toLocaleString()}
@@ -459,40 +462,56 @@ export default function RepoSearchFlow() {
 
           {/* Progress Stage Tracker */}
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-center">
+            {/* Step 1: Pre-Flight Check */}
             <div className="p-3 rounded-xl bg-slate-950/80 border border-emerald-500/30 text-emerald-400">
               <CheckCircle2 className="w-5 h-5 mx-auto mb-1 text-emerald-400" />
               <div className="text-xs font-semibold">1. Pre-Flight Check</div>
               <div className="text-[10px] text-slate-400 mt-0.5">Eligibility Verified</div>
             </div>
 
+            {/* Step 2: Worker Claim */}
             <div className={`p-3 rounded-xl border ${
               jobStatus && jobStatus.status !== "pending"
                 ? "bg-slate-950/80 border-emerald-500/30 text-emerald-400"
-                : "bg-slate-950/40 border-slate-800 text-slate-500"
+                : "bg-slate-950/80 border-amber-500/40 text-amber-300"
             }`}>
               {jobStatus && jobStatus.status !== "pending" ? (
                 <CheckCircle2 className="w-5 h-5 mx-auto mb-1 text-emerald-400" />
               ) : (
-                <Clock className="w-5 h-5 mx-auto mb-1 text-slate-500" />
+                <Loader2 className="w-5 h-5 mx-auto mb-1 animate-spin text-amber-400" />
               )}
               <div className="text-xs font-semibold">2. Worker Claim</div>
-              <div className="text-[10px] text-slate-400 mt-0.5">Lease Version Fenced</div>
+              <div className="text-[10px] text-slate-400 mt-0.5">
+                {jobStatus && jobStatus.status !== "pending" ? "Worker Assigned" : "Lease Fenced (Claiming...)"}
+              </div>
             </div>
 
+            {/* Step 3: Stream Harvesting */}
             <div className={`p-3 rounded-xl border ${
               jobStatus?.status === "completed" || jobStatus?.status === "completed_partial"
                 ? "bg-slate-950/80 border-emerald-500/30 text-emerald-400"
-                : "bg-slate-950/80 border-indigo-500/40 text-indigo-300"
+                : jobStatus?.status === "in_progress"
+                ? "bg-slate-950/80 border-indigo-500/40 text-indigo-300"
+                : "bg-slate-950/40 border-slate-800 text-slate-500"
             }`}>
               {jobStatus?.status === "completed" || jobStatus?.status === "completed_partial" ? (
                 <CheckCircle2 className="w-5 h-5 mx-auto mb-1 text-emerald-400" />
-              ) : (
+              ) : jobStatus?.status === "in_progress" ? (
                 <Loader2 className="w-5 h-5 mx-auto mb-1 animate-spin text-indigo-400" />
+              ) : (
+                <Clock className="w-5 h-5 mx-auto mb-1 text-slate-500" />
               )}
               <div className="text-xs font-semibold">3. Stream Harvesting</div>
-              <div className="text-[10px] text-slate-400 mt-0.5">Commits, PRs, Discussions</div>
+              <div className="text-[10px] text-slate-400 mt-0.5">
+                {jobStatus?.status === "completed" || jobStatus?.status === "completed_partial"
+                  ? "Harvest Complete"
+                  : jobStatus?.status === "in_progress"
+                  ? "Commits, PRs, Discussions"
+                  : "Queued"}
+              </div>
             </div>
 
+            {/* Step 4: Analytics Engine */}
             <div className={`p-3 rounded-xl border ${
               isPollingAnalytics
                 ? "bg-slate-950/80 border-cyan-500/40 text-cyan-300"
@@ -504,7 +523,9 @@ export default function RepoSearchFlow() {
                 <Cpu className="w-5 h-5 mx-auto mb-1 text-slate-500" />
               )}
               <div className="text-xs font-semibold">4. Analytics Engine</div>
-              <div className="text-[10px] text-slate-400 mt-0.5">7-Domain Synthesis</div>
+              <div className="text-[10px] text-slate-400 mt-0.5">
+                {isPollingAnalytics ? "Synthesizing 7 Domains..." : "7-Domain Synthesis"}
+              </div>
             </div>
           </div>
 

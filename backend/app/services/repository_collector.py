@@ -1674,7 +1674,7 @@ class RepositoryCollector:
                   isAnswerable
                 }
                 isAnswered
-                answeredAt
+                answerChosenAt
                 answer {
                   id
                   body
@@ -1740,7 +1740,7 @@ class RepositoryCollector:
                 cat_name = cat_info.get("name") or "General"
                 cat_is_ans = bool(cat_info.get("isAnswerable", False))
                 is_ans = bool(node.get("isAnswered", False))
-                ans_at = parse_datetime(node.get("answeredAt"))
+                ans_at = parse_datetime(node.get("answerChosenAt")) or parse_datetime((node.get("answer") or {}).get("createdAt"))
                 ans_obj = node.get("answer") or {}
                 ans_author = (ans_obj.get("author") or {}).get("login")
                 created_at = parse_datetime(node.get("createdAt")) or datetime.now(timezone.utc)
