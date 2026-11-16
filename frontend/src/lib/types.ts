@@ -1,7 +1,7 @@
 /**
  * OpenSourceLens — Core TypeScript Data Contracts
  *
- * Direct typed mappings matching backend FastAPI schemas.
+ * Direct typed mappings matching backend FastAPI schemas and analytical domains.
  */
 
 // ─── Health & Root Discovery ────────────────────────────────────────────────
@@ -28,6 +28,466 @@ export interface RootResponse {
   docs_url: string;
   api_v1_url: string;
   supported_repositories: string[];
+}
+
+// ─── Ingestion Contracts ────────────────────────────────────────────────────
+
+export interface DomainConfidence {
+  domain: string;
+  domain_name: string;
+  level: "insufficient_data" | "limited_sample" | "confident";
+  sample_count: number;
+  metric_name: string;
+  thresholds: Record<string, any>;
+  is_sufficient: boolean;
+  message: string;
+  warning?: string | null;
+}
+
+export interface RepositoryConfidenceReport {
+  overall_confidence: "insufficient_data" | "limited_sample" | "confident";
+  overall_score: number;
+  domains: Record<string, DomainConfidence>;
+  summary: string;
+  sufficient_domains_count: number;
+  total_domains_count: number;
+}
+
+export interface IngestPreviewRequest {
+  repo: string;
+}
+
+export interface IngestPreviewResponse {
+  repo_name: string;
+  owner: string;
+  name: string;
+  canonical_url: string;
+  is_eligible: boolean;
+  rejection_reason?: string | null;
+  metadata: {
+    stars_count?: number;
+    forks_count?: number;
+    open_issues_count?: number;
+    commits_count?: number | null;
+    primary_language?: string | null;
+    default_branch?: string | null;
+    is_archived?: boolean;
+    is_fork?: boolean;
+    is_template?: boolean;
+    is_empty?: boolean;
+  };
+  estimated_budgets: Record<string, { request_limit: number; allocations: Record<string, number> }>;
+  confidence_preview?: RepositoryConfidenceReport | null;
+  badges: string[];
+}
+
+export interface IngestSubmitRequest {
+  repo: string;
+  mode?: "fast_snapshot" | "standard_diagnostic";
+  priority?: number;
+}
+
+export interface IngestSubmitResponse {
+  job_id: number;
+  repo_name: string;
+  mode: string;
+  status: string;
+  created_at: string;
+  message: string;
+}
+
+export interface IngestJobStatusResponse {
+  job_id: number;
+  repo_name: string;
+  mode: string;
+  status: "pending" | "in_progress" | "completed" | "completed_partial" | "rate_limited" | "failed";
+  worker_id?: string | null;
+  leased_until?: string | null;
+  lease_version: number;
+  retry_count: number;
+  max_retries: number;
+  is_partial: boolean;
+  partial_reason?: string | null;
+  resumes_at?: string | null;
+  rate_limit_consumed: number;
+  items_collected: Record<string, number>;
+  entity_status: Record<string, string>;
+  coverage_summary?: Record<string, any> | null;
+  error_message?: string | null;
+  started_at: string;
+  completed_at?: string | null;
+  duration_seconds?: number | null;
+}
+
+// ─── Analytics V2 Contracts ─────────────────────────────────────────────────
+
+export interface RepositoryFreshnessEnvelope {
+  repository_id: number;
+  repo_name: string;
+  analytics_source_revision: number;
+  last_synced_at?: string | null;
+  last_analyzed_at?: string | null;
+  primary_language?: string | null;
+  stars_count: number;
+  forks_count: number;
+  is_archived: boolean;
+}
+
+export interface MetricCoverageItem {
+  domain: string;
+  status: "sufficient" | "degraded" | "insufficient" | "empty" | "unavailable";
+  sample_size: number;
+  min_sample_required: number;
+  details?: Record<string, any> | null;
+}
+
+export interface ConfidencePenalty {
+  rule: string;
+  penalty: number;
+  reason: string;
+  domain?: string;
+}
+
+export interface ConfidenceSummary {
+  score: number;
+  band: "high" | "medium" | "low" | "unreliable";
+  penalties: ConfidencePenalty[];
+  total_domains_evaluated?: number;
+  unavailable_domains?: string[];
+  is_bounded_or_partial?: boolean;
+  domain_breakdown?: Record<string, {
+    score: number;
+    confidence_penalty: number;
+    coverage_status: string;
+    penalties_count: number;
+    penalties: ConfidencePenalty[];
+  }>;
+}
+
+export interface RuleInterpretation {
+  rule_id: string;
+  domain: string;
+  severity: "high" | "medium" | "low" | "info" | "warning" | "positive";
+  finding: string;
+  evidence?: Record<string, any>;
+  recommendation?: string | null;
+}
+
+export interface AnalysisRunAttemptRead {
+  id: number;
+  analysis_run_id: number;
+  attempt_number: number;
+  worker_id: string;
+  outcome: "running" | "completed" | "failed" | "lease_expired" | "interrupted";
+  error_category?: string | null;
+  error_message?: string | null;
+  interruption_reason?: string | null;
+  started_at: string;
+  completed_at?: string | null;
+}
+
+// ─── Domain Analytical Payloads ─────────────────────────────────────────────
+
+export interface WeeklyActivityPoint {
+  week_start: string;
+  count: number;
+  sma_4w?: number | null;
+  sma_12w?: number | null;
+  ewma_12w?: number | null;
+  is_anomaly?: boolean;
+}
+
+export interface DevelopmentActivityData {
+  status: string;
+  summary: {
+    total_commits: number;
+    active_weeks_count: number;
+    completed_weeks_evaluated: number;
+    velocity_trend?: string;
+    current_cadence_days?: number | null;
+  };
+  weekly_series: WeeklyActivityPoint[];
+  utc_rhythm?: {
+    matrix: number[][]; // 7 days x 24 hours
+    peak_day?: number;
+    peak_hour?: number;
+    concentration_ratio?: number;
+  };
+  landing_latency?: {
+    p50?: number | null;
+    p75?: number | null;
+    p90?: number | null;
+    sample_size?: number;
+  };
+  churn_metrics?: {
+    total_additions?: number;
+    total_deletions?: number;
+    net_churn?: number;
+  };
+}
+
+export interface LorenzPoint {
+  contributor_percentile: number;
+  contribution_percentile: number;
+}
+
+export interface ContributorLeaderboardItem {
+  login: string;
+  avatar_url?: string | null;
+  total_commits: number;
+  total_prs_authored?: number;
+  total_prs_reviewed?: number;
+  primary_role: string;
+  is_core?: boolean;
+  is_newcomer?: boolean;
+  is_bot?: boolean;
+  tenure_days?: number | null;
+}
+
+export interface ContributorEcosystemData {
+  status: string;
+  total_contributors: number;
+  gini_coefficient?: number | null;
+  lorenz_curve?: LorenzPoint[];
+  bus_factors?: {
+    bf50?: number | null;
+    bf80?: number | null;
+    total_evaluated?: number;
+  };
+  cohorts?: {
+    newcomers_30d?: number;
+    core_contributors?: number;
+    bot_count?: number;
+    unlinked_count?: number;
+  };
+  leaderboard?: ContributorLeaderboardItem[];
+}
+
+export interface PullRequestIntelligenceData {
+  status: string;
+  total_prs: number;
+  turnaround_hours?: {
+    p50?: number | null;
+    p75?: number | null;
+    p90?: number | null;
+    mean?: number | null;
+  };
+  response_latencies?: {
+    ttfresp?: { p50?: number | null };
+    ttfr_formal?: { p50?: number | null };
+    ttfr_inline?: { p50?: number | null };
+  };
+  outcomes?: {
+    total_prs: number;
+    merged_count: number;
+    closed_unmerged_count: number;
+    merge_rate?: number | null;
+  };
+  diff_size_turnaround?: Record<string, { count: number; p50_hours?: number | null }>;
+  reviewer_metrics?: {
+    unique_reviewers_count?: number;
+    top_reviewers?: Array<{ login: string; review_count: number }>;
+  };
+}
+
+export interface IssueIntelligenceData {
+  status: string;
+  total_issues: number;
+  flow?: {
+    total_opened: number;
+    total_closed: number;
+    net_growth?: number;
+    monthly_flow?: Array<{ month: string; opened: number; closed: number }>;
+  };
+  resolution_sla_hours?: {
+    p50?: number | null;
+    p75?: number | null;
+    p90?: number | null;
+  };
+  aging?: {
+    open_stale_count?: number;
+    median_age_days?: number | null;
+  };
+  discussion_intensity?: {
+    comments_per_issue_mean?: number | null;
+    comments_per_issue_p50?: number | null;
+  };
+}
+
+export interface ReleaseEvolutionData {
+  status: string;
+  scope?: {
+    mode: string;
+    is_bounded_or_partial: boolean;
+  };
+  cadence?: {
+    total_releases: number;
+    cv_release?: number | null;
+    regularity_classification?: string;
+    days_since_last_release?: number | null;
+    latest_release_tag?: string | null;
+  };
+  semver_adoption?: {
+    semver_adoption_rate?: number | null;
+    major_releases?: number;
+    minor_releases?: number;
+    patch_releases?: number;
+    prerelease_count?: number;
+  };
+  prerelease_surges?: {
+    surge_detected?: boolean;
+    surge_ratio?: number | null;
+    valid_surge_releases_count?: number;
+  };
+}
+
+export interface DiscussionsIntelligenceData {
+  status: string;
+  total_discussions: number;
+  total_comments: number;
+  total_upvotes: number;
+  active_discussions_window?: number;
+  dominant_category?: string | null;
+  categories?: Record<string, number>;
+  qna?: {
+    total_qna_threads: number;
+    answered_qna_threads: number;
+    unanswered_qna_threads: number;
+    qna_answered_rate?: number | null;
+    time_to_answer_hours?: {
+      p50?: number | null;
+      p75?: number | null;
+      p90?: number | null;
+      mean?: number | null;
+    };
+  };
+  engagement?: {
+    mean_comments_per_discussion?: number | null;
+    median_comments_per_discussion?: number | null;
+    mean_upvotes_per_discussion?: number | null;
+    median_upvotes_per_discussion?: number | null;
+    unique_discussion_authors?: number;
+    contributor_overlap_count?: number;
+    contributor_overlap_rate?: number | null;
+    top_discussed_threads?: Array<{
+      discussion_number: number;
+      title: string;
+      category: string;
+      comments_count: number;
+      upvote_count: number;
+      is_answered: boolean;
+      created_at?: string | null;
+    }>;
+  };
+}
+
+export interface CrossDomainSynthesisData {
+  diagnostic_scorecard?: Record<string, any>;
+  cross_domain_correlations?: {
+    status?: string;
+    tested_pairs_count?: number;
+    pairs?: Array<{
+      pair_id: string;
+      name: string;
+      domain_x: string;
+      domain_y: string;
+      spearman_r?: number | null;
+      p_value?: number | null;
+      q_value?: number | null;
+      status?: string;
+    }>;
+  };
+  release_evolution?: ReleaseEvolutionData;
+  discussions_intelligence?: DiscussionsIntelligenceData;
+  orchestration_metadata?: Record<string, any>;
+}
+
+export interface AnalysisPayload {
+  development_activity?: DevelopmentActivityData;
+  contributor_ecosystem?: ContributorEcosystemData;
+  pull_request_intelligence?: PullRequestIntelligenceData;
+  issue_intelligence?: IssueIntelligenceData;
+  repository_synthesis?: CrossDomainSynthesisData;
+}
+
+export interface AnalysisRunRead {
+  id: number;
+  repository_id: number;
+  collection_run_id?: number | null;
+  status: "pending" | "running" | "completed" | "failed" | "cancelled";
+  requested_source_revision: number;
+  analytics_source_revision?: number | null;
+  requested_methodology_version?: string | null;
+  methodology_version?: string | null;
+  analysis_reference_time?: string | null;
+  source_content_digest?: string | null;
+  worker_id?: string | null;
+  lease_version: number;
+  retry_count: number;
+  max_retries: number;
+  metrics_payload?: AnalysisPayload | null;
+  coverage_summary?: Record<string, any> | null;
+  confidence_summary?: ConfidenceSummary | null;
+  rule_interpretations?: RuleInterpretation[] | null;
+  started_at: string;
+  completed_at?: string | null;
+  error_message?: string | null;
+  execution_time_ms: number;
+  attempts: AnalysisRunAttemptRead[];
+}
+
+export interface AnalysisLatestResponse {
+  repository: RepositoryFreshnessEnvelope;
+  is_stale: boolean;
+  active_run_id?: number | null;
+  active_run_status?: string | null;
+  run: AnalysisRunRead;
+}
+
+export interface AnalysisStatusResponse {
+  repository: RepositoryFreshnessEnvelope;
+  has_analysis: boolean;
+  status?: string | null;
+  is_stale: boolean;
+  retry_count: number;
+  max_retries: number;
+  failure_category?: string | null;
+  current_run?: AnalysisRunRead | null;
+  attempts: AnalysisRunAttemptRead[];
+  latest_completed_run_id?: number | null;
+}
+
+export interface AnalysisRecomputeRequest {
+  force?: boolean;
+  requested_methodology_version?: string;
+}
+
+export interface AnalysisRecomputeResponse {
+  repository: RepositoryFreshnessEnvelope;
+  run: AnalysisRunRead;
+  enqueued: boolean;
+  already_active: boolean;
+  cached: boolean;
+  message: string;
+}
+
+export interface AnalysisDomainSliceResponse {
+  repository: RepositoryFreshnessEnvelope;
+  run_id: number;
+  domain: string;
+  analytics_source_revision?: number | null;
+  methodology_version?: string | null;
+  analysis_reference_time?: string | null;
+  is_stale: boolean;
+  data?: Record<string, any> | null;
+  coverage?: MetricCoverageItem | null;
+  confidence_breakdown?: {
+    score?: number;
+    confidence_penalty?: number;
+    coverage_status?: string;
+    penalties?: ConfidencePenalty[];
+  } | null;
+  rules: RuleInterpretation[];
 }
 
 // ─── Classification Schemas ─────────────────────────────────────────────────
