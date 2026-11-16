@@ -653,23 +653,33 @@ class TestAtomicRevisionAdvancement:
         import os
         from sqlalchemy import create_engine, select, func
         from sqlalchemy.orm import Session
-        from backend.app.database.models import Issue, Commit
+        from backend.app.database.models import Issue, Commit, Repository
 
         db_path = "data/opensource_lens.db"
         if not os.path.exists(db_path):
             pytest.skip("Local database data/opensource_lens.db not present.")
 
+        BENCHMARK_REPOS = [
+            "microsoft/vscode",
+            "pytorch/pytorch",
+            "kubernetes/kubernetes",
+            "huggingface/transformers",
+        ]
         engine = create_engine(f"sqlite:///{db_path}")
         with Session(engine) as session:
             # 1. Verify 2,328 benchmark issues
-            issue_count = session.scalar(select(func.count(Issue.id)))
+            issue_count = session.scalar(
+                select(func.count(Issue.id)).join(Repository).where(Repository.repo_name.in_(BENCHMARK_REPOS))
+            )
             assert issue_count == 2328, f"Expected 2328 benchmark issues, found {issue_count}"
 
             # 2. Verify all existing benchmark commits have committer_date IS NULL
-            total_commits = session.scalar(select(func.count(Commit.id)))
             non_null_committer_dates = session.scalar(
-                select(func.count(Commit.id)).where(Commit.committer_date.isnot(None))
+                select(func.count(Commit.id))
+                .join(Repository)
+                .where(Repository.repo_name.in_(BENCHMARK_REPOS))
+                .where(Commit.committer_date.isnot(None))
             )
             assert non_null_committer_dates == 0, (
-                f"Expected 0 non-null committer_date commits in benchmark, found {non_null_committer_dates} / {total_commits}"
+                f"Expected 0 non-null committer_date commits in benchmark, found {non_null_committer_dates}"
             )

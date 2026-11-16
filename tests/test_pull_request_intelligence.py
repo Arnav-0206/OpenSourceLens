@@ -847,9 +847,15 @@ class TestBenchmarkAndQueueIntegrationC4:
         calc = PullRequestIntelligenceCalculator()
         ref_time = datetime(2026, 11, 11, 0, 0, 0, tzinfo=timezone.utc)
 
+        BENCHMARK_REPOS = [
+            "microsoft/vscode",
+            "pytorch/pytorch",
+            "kubernetes/kubernetes",
+            "huggingface/transformers",
+        ]
         with Session(engine) as session:
-            repos = session.scalars(select(Repository)).all()
-            assert len(repos) >= 4
+            repos = session.scalars(select(Repository).where(Repository.repo_name.in_(BENCHMARK_REPOS))).all()
+            assert len(repos) == 4
             for repo in repos:
                 res = calc.calculate(repo.id, session, ref_time, repo.analytics_source_revision)
                 assert res.domain == "pull_request_intelligence"

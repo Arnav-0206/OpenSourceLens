@@ -63,9 +63,15 @@ class TestBenchmarkRepositoriesEmptyCommitHandling:
         calc = DevelopmentActivityCalculator()
         ref_time = datetime(2026, 11, 10, 0, 0, 0, tzinfo=timezone.utc)
 
+        BENCHMARK_REPOS = [
+            "microsoft/vscode",
+            "pytorch/pytorch",
+            "kubernetes/kubernetes",
+            "huggingface/transformers",
+        ]
         with Session(engine) as session:
-            repos = session.scalars(select(Repository)).all()
-            assert len(repos) >= 4, "Expected at least 4 benchmark repositories."
+            repos = session.scalars(select(Repository).where(Repository.repo_name.in_(BENCHMARK_REPOS))).all()
+            assert len(repos) == 4, "Expected at least 4 benchmark repositories."
 
             for repo in repos:
                 result = calc.calculate(

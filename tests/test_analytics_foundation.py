@@ -109,18 +109,28 @@ class TestMigration003AndBenchmarkPreservation:
             pytest.skip(f"Database {db_path} not found.")
 
         engine = create_engine(f"sqlite:///{db_path}")
+        BENCHMARK_REPOS = [
+            "microsoft/vscode",
+            "pytorch/pytorch",
+            "kubernetes/kubernetes",
+            "huggingface/transformers",
+        ]
         with Session(engine) as session:
             # 1. Exactly 2,328 benchmark issues remain intact
-            issue_count = session.scalar(select(func.count(Issue.id)))
+            issue_count = session.scalar(
+                select(func.count(Issue.id)).join(Repository).where(Repository.repo_name.in_(BENCHMARK_REPOS))
+            )
             assert issue_count == 2328, f"Benchmark data modified: expected 2328 issues, found {issue_count}"
 
             # 2. Historical benchmark commits have committer_date IS NULL
-            total_commits = session.scalar(select(func.count(Commit.id)))
             non_null_committer_dates = session.scalar(
-                select(func.count(Commit.id)).where(Commit.committer_date.isnot(None))
+                select(func.count(Commit.id))
+                .join(Repository)
+                .where(Repository.repo_name.in_(BENCHMARK_REPOS))
+                .where(Commit.committer_date.isnot(None))
             )
             assert non_null_committer_dates == 0, (
-                f"Historical commits modified: expected 0 non-null committer_date, found {non_null_committer_dates} / {total_commits}"
+                f"Historical commits modified: expected 0 non-null committer_date, found {non_null_committer_dates}"
             )
 
             # 3. Repositories have analytics_source_revision >= 1 and last_analyzed_at column exists
