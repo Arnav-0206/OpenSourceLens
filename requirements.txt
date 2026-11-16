@@ -10,7 +10,7 @@ sqlalchemy>=2.0.0
 alembic>=1.13.0
 
 # Optional PostgreSQL driver (SQLite WAL supported out-of-the-box):
-# psycopg2-binary>=2.9.9
+psycopg2-binary>=2.9.9
 
 # ─── HTTP & Async Ingestion ───────────────────
 requests>=2.31.0

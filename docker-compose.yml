@@ -1,21 +1,85 @@
+# OpenSourceLens — Multi-Container Production Docker Compose Stack
+# Orchestrates: PostgreSQL 16 Alpine, FastAPI Backend, Background AnalyticsWorker, and Next.js 15 Frontend
+
 services:
   db:
     image: postgres:16-alpine
-    container_name: opensourcelens-postgres
+    container_name: osl-postgres
     restart: unless-stopped
     environment:
-      POSTGRES_DB: opensource_lens
-      POSTGRES_USER: opensourcelens
-      POSTGRES_PASSWORD: lens_password_secure
+      POSTGRES_USER: ${POSTGRES_USER:-opensourcelens}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-lenspassword}
+      POSTGRES_DB: ${POSTGRES_DB:-opensourcelens}
     ports:
       - "5432:5432"
     volumes:
-      - pgdata:/var/lib/postgresql/data
+      - osl_pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U opensourcelens -d opensource_lens"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-opensourcelens} -d ${POSTGRES_DB:-opensourcelens}"]
       interval: 5s
       timeout: 5s
       retries: 5
+      start_period: 5s
+
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    container_name: osl-backend
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-opensourcelens}:${POSTGRES_PASSWORD:-lenspassword}@db:5432/${POSTGRES_DB:-opensourcelens}
+      GITHUB_TOKEN: ${GITHUB_TOKEN:-}
+      ENVIRONMENT: production
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      - osl_models:/app/models
+      - osl_data:/app/data
+
+  analytics_worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.worker
+    container_name: osl-analytics-worker
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-opensourcelens}:${POSTGRES_PASSWORD:-lenspassword}@db:5432/${POSTGRES_DB:-opensourcelens}
+      GITHUB_TOKEN: ${GITHUB_TOKEN:-}
+      WORKER_ID: worker-compose-1
+    depends_on:
+      db:
+        condition: service_healthy
+      backend:
+        condition: service_started
+    volumes:
+      - osl_models:/app/models
+      - osl_data:/app/data
+
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
+      args:
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8000/api/v1}
+    container_name: osl-frontend
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      BACKEND_INTERNAL_URL: http://backend:8000
+      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8000/api/v1}
+    depends_on:
+      backend:
+        condition: service_started
 
 volumes:
-  pgdata:
+  osl_pgdata:
+    driver: local
+  osl_models:
+    driver: local
+  osl_data:
+    driver: local

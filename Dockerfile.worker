@@ -1,0 +1,35 @@
+# Production Dockerfile for OpenSourceLens Background AnalyticsWorker
+FROM python:3.11-slim AS base
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PYTHONPATH=/app
+
+WORKDIR /app
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gcc \
+    g++ \
+    libpq-dev \
+    curl \
+    git \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install python dependencies
+COPY requirements.txt .
+RUN pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir -r requirements.txt
+
+# Create application directories and unprivileged user
+RUN useradd -m -u 1000 appuser && \
+    mkdir -p /app/data /app/models /app/logs && \
+    chown -R appuser:appuser /app
+
+# Copy application source code
+COPY backend/ ./backend/
+COPY alembic.ini .
+
+USER appuser
+
+CMD ["python", "-m", "backend.app.services.analytics_worker"]

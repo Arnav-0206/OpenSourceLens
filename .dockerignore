@@ -1,0 +1,33 @@
+.git
+.gitignore
+.venv
+venv
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache
+.coverage
+htmlcov
+dist
+build
+*.egg-info
+
+# Frontend artifacts
+frontend/node_modules
+frontend/.next
+frontend/out
+frontend/.turbo
+frontend/tsconfig.tsbuildinfo
+
+# Local databases and backups
+data/*.db
+data/*.db-shm
+data/*.db-wal
+data/*.sqlite
+data/*.bak
+data/*.backup
+
+# Brain and scratch files
+.gemini
+scratch
