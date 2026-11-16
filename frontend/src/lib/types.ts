@@ -556,3 +556,64 @@ export interface ValidationErrorResponse {
   timestamp: string;
   errors: ErrorDetailItem[];
 }
+
+export interface SimilarQueryRequest {
+  query_text?: string | null;
+  issue_number?: number | null;
+  top_k?: number;
+  threshold?: number;
+  include_discussions?: boolean;
+}
+
+export interface SimilarCandidateItem {
+  rank: number;
+  entity_type: "issue" | "discussion";
+  id: number;
+  number: number;
+  title: string;
+  state: string;
+  similarity_score: number;
+  confidence_tier: "HIGH" | "MEDIUM" | "LOW";
+  duplicate_candidate: boolean;
+  canonical_label?: string | null;
+  category?: string | null;
+  author?: string | null;
+  comments_count?: number | null;
+  created_at?: string | null;
+}
+
+export interface SimilarQueryResponse {
+  query: string;
+  total_candidates_found: number;
+  has_potential_duplicate: boolean;
+  highest_similarity_score: number;
+  primary_recommendation: string;
+  latency_ms: number;
+  candidates: SimilarCandidateItem[];
+}
+
+export interface DiscoveredTopicItem {
+  cluster_id: number;
+  title: string;
+  keywords: string[];
+  total_count: number;
+  open_count: number;
+  closed_count: number;
+  representative_items: Array<{
+    number: number;
+    title: string;
+    entity_type: string;
+    state: string;
+    similarity_to_centroid?: number;
+  }>;
+}
+
+export interface TopicDiscoveryResponse {
+  repo_name: string;
+  total_topics_discovered: number;
+  total_items_clustered: number;
+  methodology: string;
+  topics: DiscoveredTopicItem[];
+  execution_time_ms: number;
+}
+

@@ -22,6 +22,9 @@ import {
   ModelInfoItem,
   ModelRegistryResponse,
   RootResponse,
+  SimilarQueryRequest,
+  SimilarQueryResponse,
+  TopicDiscoveryResponse,
 } from "./types";
 
 const API_BASE_URL =
@@ -291,4 +294,30 @@ export async function prewarmModels(): Promise<Record<string, string>> {
   return fetchJson<Record<string, string>>(`${API_BASE_URL}/models/prewarm`, {
     method: "POST",
   });
+}
+
+// ─── Applied Intelligence (Stage 5) Endpoints ───────────────────────────────
+
+export async function searchSimilarIssues(
+  owner: string,
+  name: string,
+  payload: SimilarQueryRequest
+): Promise<SimilarQueryResponse> {
+  return fetchJson<SimilarQueryResponse>(
+    `${API_BASE_URL}/analytics/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/similar`,
+    {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }
+  );
+}
+
+export async function getDiscoveredTopics(
+  owner: string,
+  name: string,
+  maxClusters: number = 8
+): Promise<TopicDiscoveryResponse> {
+  return fetchJson<TopicDiscoveryResponse>(
+    `${API_BASE_URL}/analytics/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/topics?max_clusters=${maxClusters}`
+  );
 }

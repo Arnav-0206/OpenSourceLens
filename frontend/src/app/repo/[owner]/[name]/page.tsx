@@ -395,7 +395,11 @@ export default function RepoWorkspacePage({ params }: PageProps) {
               )}
 
               {activeTab === "issues" && (
-                <TabIssues issues={payload?.issue_intelligence} />
+                <TabIssues
+                  issues={payload?.issue_intelligence}
+                  owner={owner}
+                  name={name}
+                />
               )}
 
               {activeTab === "discussions" && (
