@@ -110,8 +110,8 @@ Migrations reside in [`backend/alembic/versions/`](../backend/alembic/versions/)
 
 [`backend/alembic/env.py`](../backend/alembic/env.py) configures `render_as_batch=True` for SQLite compatibility and supports overriding the target database with `-x db_url=...` or `-x db_path=...`, otherwise falling back to `DATABASE_URL` or `get_database_url()`.
 
-> [!WARNING]
-> **Critical Migration 001 vs. Phase A ORM Drift:** Inspection of [`001_initial_benchmark_schema.py`](../backend/alembic/versions/001_initial_benchmark_schema.py) against [`backend/app/database/models.py`](../backend/app/database/models.py) reveals column mismatches on three Phase A tables (`issue_labels` `raw_label/normalized_label` vs. ORM `label_name/is_canonical/canonical_category`; `repository_analytics` flat columns vs. ORM `category_distribution`/`speed_tier_distribution` JSON columns; `predictions` `model_version` vs. ORM `input_title`/`input_body`). The checked-in SQLite file `data/opensource_lens.db` matches the ORM (having been initialized via `init_db()` / `create_all` before migrations 002/003), whereas running `alembic upgrade head` alone on a completely empty database produces mismatched Phase A tables. See [OPENSOURCELENS_BACKEND_AUDIT.md §5 & §21](./audits/OPENSOURCELENS_BACKEND_AUDIT.md).
+> [!NOTE]
+> **Migration 001 vs. ORM Alignment (Resolved in Stage 2.1):** In earlier iterations, [`001_initial_benchmark_schema.py`](../backend/alembic/versions/001_initial_benchmark_schema.py) had column discrepancies on three Phase A tables (`issue_labels`, `repository_analytics`, `predictions`). In Stage 2.1, Migration 001 was updated to match [`backend/app/database/models.py`](../backend/app/database/models.py) exactly. Running `alembic upgrade head` on a completely empty database now provisions a pristine schema identical to the ORM, as verified by `test_fresh_database_upgrade_head_and_orm_queries()` in [`tests/test_alembic_migrations.py`](../tests/test_alembic_migrations.py).
 
 ---
 
