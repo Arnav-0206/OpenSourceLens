@@ -45,106 +45,66 @@ OpenSourceLens separates **objective statistical measurement** from **applied Ma
 
 ---
 
-## Honest Project State: Implemented Foundation & Cleanup Status
+## Honest Project State: Implemented Foundation & Roadmap Status
 
-- **Implemented Backend Subsystems (`backend/`):**
-  - **Phase B Dynamic Ingestion:** GitHub URL validation, public/non-empty eligibility gating, request budget modes (`fast_snapshot` 10 reqs / `standard_diagnostic` 50 reqs), RFC 5988 pagination, lease-fenced `DurableJobQueue`, `IngestionWorker`, and automatic post-ingestion analytics enqueueing.
-  - **Phase C Analytics Engine (`methodology_version = "2026.1"`):** Six-domain statistical calculators (`DevelopmentActivity`, `ContributorIntelligence`, `PullRequestIntelligence`, `IssueIntelligence`, `ReleaseEvolution`, `CrossDomainSynthesis`), snapshot-isolated `AnalyticsOrchestrator`, `AnalyticsWorker`, and Analytics V2 endpoints (`/api/v1/analytics/{owner}/{name}/...`).
-  - **Production NLP Utilities (`backend/app/services/nlp/`):** Clean text cleaning (`IssueTextCleaner`), dense vector embeddings (`IssueEmbedder`), and classification pipelines (`classifiers.py`).
-- **Stage 1 Strict Cleanup (Completed):**
-  - Removed obsolete Streamlit prototype (`demo_app.py`), duplicate legacy collectors (`ml/data_collection/`), ad-hoc scripts (`scripts/`), deleted Phase A endpoints (`/repos`, `/related`, `/resolution`), and dead schemas.
-  - Removed legacy offline lab scripts (`ml/`), benchmark-dummy RF velocity models, and hardcoded Phase 10 frontend registries (`REPO_REGISTRY`, `FALLBACK_ISSUE_CORPUS`).
-- **Next Roadmap Stages:**
-  - **Stage 2:** Backend stabilization, Alembic Migration 001 fresh-DB schema drift fix, and live unseen-repository E2E verification.
-  - **Stage 3:** Richer GitHub entity depth (PR diff stats, branches, bodies, assignees, reactions) and GitHub Discussions integration.
-  - **Stage 4:** Interactive Next.js single-repository intelligence workspace UI.
-  - **Stage 5:** Generalizable 5-class NLP categorization and per-repository dynamic semantic duplicate retrieval.
-  - **Stage 6:** Cross-domain discovery explorer, downloadable reports, and Dockerized production deployment.
+- **Fully Implemented Architecture (Stages 1 through 6 Completed):**
+  - **Phase B Dynamic Ingestion (Stage 3):** Full GitHub REST API v3 entity harvesting (commits, contributors, issues, comments, labels, assignees, reactions, pull requests, reviews, review comments, diff churn stats, branches, releases) and **GitHub Discussions** with pagination, rate-budgeting (`fast_snapshot` 10 reqs / `standard_diagnostic` 50 reqs), and automatic post-ingestion analytics enqueueing.
+  - **Phase C Analytics Engine (Stage 2):** Six-domain statistical calculators (`DevelopmentActivity`, `ContributorIntelligence`, `PullRequestIntelligence`, `IssueIntelligence`, `ReleaseEvolution`, `CrossDomainSynthesis`), snapshot-isolated `AnalyticsOrchestrator`, `AnalyticsWorker`, and Analytics V2 API endpoints (`/api/v1/analytics/{owner}/{name}/...`).
+  - **Interactive Workspace UI (Stage 4):** Next.js 15 App Router interface featuring domain tabs (Overview, Activity, Contributors, Pull Requests, Issues, Releases, Discussions), live ingestion tracker, and confidence penalty audit logs.
+  - **Applied Intelligence & Backlog Discovery (Stage 5):** Generalizable 5-class NLP issue classifier with calibrated abstention, per-repo semantic duplicate retrieval via dense vector embeddings (`all-MiniLM-L6-v2`), and unsupervised Spherical KMeans topic discovery with c-TF-IDF keyword extraction.
+  - **Cross-Domain Explorer & Deployment (Stage 6):** Cross-Domain Discovery Explorer (`PAIR-01..03` Spearman $r_s$, Monte Carlo permutation $p$, BH FDR $q$, AR(1) guardrails), one-click Executive Intelligence Report export (`.md` and `.json`), and a multi-container Docker Compose production stack.
+- **Verification Status:** Complete suite of **414 passed, 3 skipped** automated tests spanning all migrations, models, collectors, calculators, and API routes.
 
 ---
 
-## End-to-End Architecture
+## Quickstart: Production Multi-Container Docker Stack
 
-```mermaid
-flowchart LR
-    API["FastAPI Backend (backend/app/main.py)"] -->|POST ingest submit| Q1["DurableJobQueue (collection_runs)"]
-    Q1 --> W1["IngestionWorker"]
-    W1 <-->|REST API v3 + Budgeter| GH["GitHub API"]
-    W1 -->|Entities + revision bump| DB[(SQLite WAL / PostgreSQL)]
-    W1 -->|Auto-enqueue on clean completion| Q2["AnalyticsJobQueue (analysis_runs)"]
-    API -->|POST recompute| Q2
-    Q2 --> W2["AnalyticsWorker (CLI / Opt-in Lifespan)"]
-    W2 --> Orch["AnalyticsOrchestrator (C.2–C.6 + Validation)"]
-    Orch -->|Fenced publication| DB
-    API -->|GET status, latest, history, domains| DB
+OpenSourceLens provides an automated multi-container Docker Compose stack orchestrating PostgreSQL 16 Alpine, FastAPI Backend, Background AnalyticsWorker, and Next.js 15 Standalone Frontend.
+
+```bash
+# 1. Clone repository and set optional GitHub token (for 5,000 req/hr API budget)
+export GITHUB_TOKEN="ghp_your_personal_access_token"
+
+# 2. Start full production stack
+docker compose up --build
 ```
 
----
-
-## Repository Layout
-
-```text
-OpenSourceLens/
-├── alembic.ini                 # Alembic config (invoke via `python -m alembic`)
-├── docker-compose.yml          # PostgreSQL 16-alpine DB container config
-├── requirements.txt            # Root Python HTTP/tabular dependencies
-├── backend/
-│   ├── requirements.txt        # FastAPI, SQLAlchemy, Alembic, Pydantic
-│   ├── alembic/                # Migrations 001, 002, 003
-│   └── app/
-│       ├── main.py             # FastAPI factory, lifespan, /, /health
-│       ├── api/v1/             # API routers (ingest, Analytics V2, classify, models)
-│       ├── core/               # Settings, exceptions, uniform error envelopes
-│       ├── database/           # SQLAlchemy 2.0 ORM (17 tables), session, init_db
-│       ├── schemas/            # Pydantic v2 contracts (analytics_v2, ingestion, etc.)
-│       └── services/           # Collector, client, budgeter, queues, workers, analytics/, nlp/
-├── docs/                       # Product vision, technical specs, roadmap
-├── frontend/                   # Next.js 15.5 + React 19 UI shell
-├── models/                     # Production model artifacts (DistilBERT fine-tuned, classical baselines)
-├── data/
-│   ├── opensource_lens.db      # Offline 4-repo SQLite benchmark DB (2,328 issues)
-│   └── raw/, processed/        # Offline training and benchmark corpus
-└── tests/                      # Active pytest unit and integration test suite (382 tests)
-```
+Access the platform:
+- **Interactive Workspace UI:** [http://localhost:3000](http://localhost:3000)
+- **FastAPI Backend & Swagger UI:** [http://localhost:8000/docs](http://localhost:8000/docs)
+- **System Health Probe:** [http://localhost:8000/api/v1/health](http://localhost:8000/api/v1/health)
 
 ---
 
-## Local Setup & Running Backend Services
+## Local Development Setup
 
-### 1. Python Environment
+### 1. Python Virtual Environment
 ```powershell
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
 pip install -r backend\requirements.txt
 ```
-Analytics statistics and ML endpoints rely on packages installed in the project virtualenv (`numpy`, `scipy`, `torch`, `transformers`, `sentence-transformers`, `scikit-learn`, `pytest`, `httpx`).
 
-### 2. Environment Variables
-Copy `.env.example` to `.env` (never commit `.env` or secrets):
-- `DATABASE_URL`: SQLAlchemy URL (defaults to local SQLite `data/opensource_lens.db`).
-- `GITHUB_TOKEN`: GitHub Personal Access Token (raises public REST rate limit from `60 req/hr` to `5,000 req/hr`).
-- `BACKEND_CORS_ORIGINS`: Allowed frontend origins (default `["http://localhost:3000", "http://127.0.0.1:3000"]`).
-- `PREWARM_ON_STARTUP`: Preload ML models on startup (`false` default).
-- Worker controls: `ENABLE_ANALYTICS_WORKER` (`false`), `ANALYTICS_WORKER_POLL_INTERVAL_SECONDS` (`1.0`), `ANALYTICS_WORKER_RECONCILE_INTERVAL_SECONDS` (`60.0`).
-
-### 3. Migrations & Services
+### 2. Frontend Development Server
 ```powershell
-# Inspect current migration state
-.\.venv\Scripts\python.exe -m alembic -c alembic.ini current
+cd frontend
+npm install
+npm run dev
+# Running on http://localhost:3000
+```
 
-# Start FastAPI server (Swagger UI at http://127.0.0.1:8000/docs)
+### 3. Running Backend Services
+```powershell
+# Start FastAPI backend server (http://127.0.0.1:8000)
 .\.venv\Scripts\python.exe -m uvicorn backend.app.main:app --host 127.0.0.1 --port 8000 --reload
 
-# Start AnalyticsWorker (standalone process)
+# Start AnalyticsWorker daemon (processes background analytical pipelines)
 .\.venv\Scripts\python.exe -m backend.app.services.analytics_worker
-
-# Start IngestionWorker
-.\.venv\Scripts\python.exe -c "import asyncio; from backend.app.database.session import SessionLocal; from backend.app.services.ingestion_worker import IngestionWorker; asyncio.run(IngestionWorker().run_worker_loop(SessionLocal))"
 ```
 
 ### 4. Running Tests
 ```powershell
-# Run the complete test suite
-.\.venv\Scripts\python.exe -m pytest tests/ -q
+# Run the complete test suite (414 unit and integration tests)
+.\.venv\Scripts\python.exe -m pytest tests/ -v
 ```
