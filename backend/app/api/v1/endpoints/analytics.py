@@ -7,6 +7,7 @@ import re
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, Response, status
+from fastapi.responses import JSONResponse
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session, selectinload
 
@@ -37,6 +38,7 @@ from backend.app.schemas.analytics_v2 import (
 )
 from backend.app.services.nlp.semantic_index_service import semantic_index_service
 from backend.app.services.nlp.topic_discovery_service import topic_discovery_service
+from backend.app.services.analytics.report_generator import report_generator
 from backend.app.services.analytics.orchestrator import ALL_ANALYTICS_DOMAINS
 from backend.app.services.analytics_queue import AnalyticsJobQueue
 
@@ -701,6 +703,72 @@ def discover_topics(
         db=db,
         max_clusters=max_clusters,
     )
+
+
+@router.get(
+    "/{owner}/{name}/report",
+    summary="Download Executive Intelligence Report",
+    tags=["analytics-v2", "reporting"],
+)
+def export_repository_report(
+    owner: str,
+    name: str,
+    format: str = Query(default="json", pattern="^(json|markdown)$", description="Report format: 'markdown' or 'json'"),
+    methodology_version: str = Query(
+        CURRENT_METHODOLOGY_VERSION,
+        description="Target methodology version.",
+    ),
+    db: Session = Depends(get_db),
+):
+    """Generate and download a comprehensive repository intelligence report in Markdown or JSON format."""
+    repo = _resolve_repository_ci(owner=owner, name=name, db=db)
+    methodology = _validate_methodology_version(methodology_version)
+    completed_run = _get_latest_completed_run(repo.id, methodology, db)
+    if not completed_run:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"No completed analytics run available for {owner}/{name}. Run recompute first.",
+        )
+
+    payload = _normalize_public_payload(completed_run.metrics_payload) or {}
+
+    # Discovered topics (if available)
+    try:
+        topics_res = topic_discovery_service.discover_repository_topics(
+            repository_id=repo.id,
+            repo_name=repo.repo_name,
+            db=db,
+        )
+        topics_list = [t.model_dump() for t in topics_res.topics]
+    except Exception:
+        topics_list = []
+
+    if format == "markdown":
+        md_text = report_generator.generate_markdown(
+            repo=repo,
+            run=completed_run,
+            payload=payload,
+            topics=topics_list,
+        )
+        filename = f"{owner}_{name}_intelligence_report.md"
+        return Response(
+            content=md_text,
+            media_type="text/markdown; charset=utf-8",
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        )
+    else:
+        json_data = report_generator.generate_json(
+            repo=repo,
+            run=completed_run,
+            payload=payload,
+            topics=topics_list,
+        )
+        filename = f"{owner}_{name}_intelligence_report.json"
+        return JSONResponse(
+            content=json_data,
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        )
+
 
 
 
