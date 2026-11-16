@@ -62,6 +62,7 @@ class ReleaseEvolutionCalculator(BaseMetricCalculator):
                 Release.name,
                 Release.published_at,
                 Release.is_prerelease,
+                Release.is_tag_fallback,
             ).where(Release.repository_id == repository_id)
         ).fetchall()
 
@@ -584,6 +585,9 @@ class ReleaseEvolutionCalculator(BaseMetricCalculator):
                 "total_releases": r_count,
                 "valid_surge_releases_count": surges["valid_surge_releases_count"],
                 "semver_compliant_count": semver["semver_compliant_count"],
+                "tag_fallback_releases_count": sum(
+                    1 for rel, _ in valid_releases if getattr(rel, "is_tag_fallback", False)
+                ),
                 "collection_mode": collection_scope["mode"],
                 "subdomains": {
                     "cadence": cadence["status"],

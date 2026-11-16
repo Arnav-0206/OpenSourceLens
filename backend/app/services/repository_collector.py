@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 from datetime import datetime, timezone, timedelta
+import hashlib
 import logging
 import re
 import time
@@ -1546,6 +1547,78 @@ class RepositoryCollector:
                     rel.body = body
                     if mutated_records is not None:
                         mutated_records.add(("release", rel_id))
+
+        # Fallback to git tags if formal releases returned 0 and budget allows
+        if count == 0 and len(res.items) == 0 and budgeter.can_consume("releases", 1):
+            try:
+                tags_endpoint = f"/repos/{repo.owner}/{repo.name}/tags"
+                tags_res = await self.client.paginate(
+                    endpoint_or_url=tags_endpoint,
+                    entity="releases",
+                    budgeter=budgeter,
+                    params={"per_page": 100},
+                )
+                for tag_item in tags_res.items:
+                    tag_name = tag_item.get("name")
+                    if not tag_name:
+                        continue
+                    commit_obj = tag_item.get("commit") or {}
+                    commit_sha = commit_obj.get("sha")
+                    # Deterministic release_id for tag fallback (positive 64-bit integer)
+                    tag_hash = int(hashlib.sha256(f"{repo.id}:tag:{tag_name}".encode("utf-8")).hexdigest()[:14], 16)
+
+                    # Lookup commit in database if available to get approximate published_at date
+                    published_at = None
+                    if commit_sha:
+                        matched_commit = db.scalar(
+                            select(Commit).where(
+                                Commit.repository_id == repo.id,
+                                Commit.sha == commit_sha,
+                            )
+                        )
+                        if matched_commit:
+                            published_at = matched_commit.author_date or matched_commit.committer_date
+
+                    is_prerelease = any(
+                        p in tag_name.lower()
+                        for p in ("rc", "alpha", "beta", "pre", "dev", "preview")
+                    )
+
+                    rel = db.scalar(
+                        select(Release).where(Release.release_id == tag_hash)
+                    )
+                    if rel is None:
+                        rel = Release(
+                            repository_id=repo.id,
+                            release_id=tag_hash,
+                            tag_name=tag_name,
+                            name=tag_name,
+                            published_at=published_at,
+                            is_prerelease=is_prerelease,
+                            is_tag_fallback=True,
+                            commit_sha=commit_sha,
+                            body=None,
+                        )
+                        db.add(rel)
+                        count += 1
+                        if mutated_records is not None:
+                            mutated_records.add(("release", tag_hash))
+                    else:
+                        changed = (
+                            rel.tag_name != tag_name
+                            or not _datetimes_equal(rel.published_at, published_at)
+                            or rel.is_prerelease != is_prerelease
+                            or rel.commit_sha != commit_sha
+                        )
+                        if changed:
+                            rel.tag_name = tag_name
+                            rel.published_at = published_at
+                            rel.is_prerelease = is_prerelease
+                            rel.commit_sha = commit_sha
+                            if mutated_records is not None:
+                                mutated_records.add(("release", tag_hash))
+            except Exception as exc:
+                logger.debug("Failed to harvest git tags fallback for %s: %s", repo.repo_name, exc)
 
         db.flush()
         return count, res.is_partial, res.partial_reason

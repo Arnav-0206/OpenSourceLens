@@ -43,6 +43,7 @@ from backend.app.database.models import (
     Release,
     Repository,
 )
+from backend.app.services.analytics import ReleaseEvolutionCalculator
 from backend.app.schemas.ingestion import IngestionSummary, PaginatedResult
 from backend.app.services.github_client import AsyncGitHubClient
 from backend.app.services.rate_budgeter import EntityRateBudgeter
@@ -1041,6 +1042,91 @@ class TestReleasesCollection:
             r2 = in_memory_db.scalar(select(Release).where(Release.release_id == 2222))
             assert r2.tag_name == "v2.0.0-rc1"
             assert r2.is_prerelease is True
+
+        asyncio.run(_run())
+
+    def test_collect_releases_tag_fallback(self, in_memory_db, mock_client):
+        """Verify fallback to git tags when formal releases endpoint returns 0 items."""
+        async def _run():
+            collector = RepositoryCollector(client=mock_client)
+            budgeter = EntityRateBudgeter(mode="standard_diagnostic")
+
+            repo = Repository(id=1008, repo_name="org/tag-only", owner="org", name="tag-only")
+            in_memory_db.add(repo)
+            commit1 = Commit(
+                repository_id=repo.id,
+                sha="c111000000000000000000000000000000000000",
+                author_name="Alice",
+                author_date=datetime(2026, 8, 1, 12, 0, tzinfo=timezone.utc),
+                message="Tag 1 commit",
+            )
+            commit2 = Commit(
+                repository_id=repo.id,
+                sha="c222000000000000000000000000000000000000",
+                author_name="Bob",
+                author_date=datetime(2026, 9, 1, 12, 0, tzinfo=timezone.utc),
+                message="Tag 2 commit",
+            )
+            in_memory_db.add_all([commit1, commit2])
+            in_memory_db.commit()
+
+            # First call to /releases returns empty, second call to /tags returns git tags
+            mock_client.paginate.side_effect = [
+                PaginatedResult(
+                    entity="releases",
+                    items=[],
+                    total_requests=1,
+                    is_partial=False,
+                    partial_reason=None,
+                ),
+                PaginatedResult(
+                    entity="releases",
+                    items=[
+                        {
+                            "name": "v0.1.0",
+                            "commit": {"sha": "c111000000000000000000000000000000000000"},
+                        },
+                        {
+                            "name": "v0.2.0-rc1",
+                            "commit": {"sha": "c222000000000000000000000000000000000000"},
+                        },
+                    ],
+                    total_requests=1,
+                    is_partial=False,
+                    partial_reason=None,
+                ),
+            ]
+
+            count, is_part, reason = await collector.collect_releases(
+                repo=repo,
+                budgeter=budgeter,
+                db=in_memory_db,
+            )
+
+            assert count == 2
+            releases = in_memory_db.scalars(
+                select(Release).where(Release.repository_id == repo.id)
+            ).all()
+            assert len(releases) == 2
+
+            tag_names = {r.tag_name for r in releases}
+            assert tag_names == {"v0.1.0", "v0.2.0-rc1"}
+            for r in releases:
+                assert r.is_tag_fallback is True
+                assert r.published_at is not None
+                if r.tag_name == "v0.2.0-rc1":
+                    assert r.is_prerelease is True
+
+            # Verify calculator consumes tag fallback releases cleanly
+            calc = ReleaseEvolutionCalculator()
+            res = calc.calculate(
+                repository_id=repo.id,
+                db=in_memory_db,
+                analysis_reference_time=datetime(2026, 10, 1, tzinfo=timezone.utc),
+                snapshot_revision=1,
+            )
+            assert res.metrics["cadence"]["status"] in ("sufficient", "limited")
+            assert res.coverage.details["tag_fallback_releases_count"] == 2
 
         asyncio.run(_run())
 
