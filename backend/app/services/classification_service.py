@@ -1,7 +1,8 @@
 """Issue Classification Inference Service for OpenSourceLens.
 
-Loads and caches pre-trained model artifacts (fine-tuned DistilBERT and classical
-TF-IDF pipelines) and runs inference with database audit logging.
+Loads and caches pre-trained model artifacts (Generalizable 5-class classifier,
+fine-tuned DistilBERT, and classical TF-IDF baselines) and runs inference with
+database audit logging.
 """
 
 from __future__ import annotations
@@ -24,6 +25,10 @@ from backend.app.schemas.classification import (
     ClassificationResponse,
 )
 from backend.app.services.nlp.text_cleaner import IssueTextCleaner
+from backend.app.services.nlp.generalizable_classifier import (
+    CLASS_TO_ID,
+    GeneralizableIssueClassifier,
+)
 import backend.app.services.nlp.classifiers  # noqa: F401
 
 logger = logging.getLogger(__name__)
@@ -35,6 +40,7 @@ DISTILBERT_DIR = MODELS_DIR / "distilbert_finetuned"
 LR_MODEL_PATH = MODELS_DIR / "baseline_logistic_regression.joblib"
 SVM_MODEL_PATH = MODELS_DIR / "baseline_svm.joblib"
 TFIDF_PATH = MODELS_DIR / "tfidf_vectorizer.joblib"
+GENERALIZABLE_MODEL_PATH = MODELS_DIR / "generalizable_issue_classifier.joblib"
 LABEL_MAPPINGS_PATH = PROJECT_ROOT / "data" / "processed" / "label_mappings.json"
 
 
@@ -54,6 +60,7 @@ class ClassificationService:
             return
 
         self._cleaner = IssueTextCleaner()
+        self._generalizable_classifier: Optional[GeneralizableIssueClassifier] = None
         self._distilbert_model = None
         self._distilbert_tokenizer = None
         self._lr_model = None
@@ -76,8 +83,24 @@ class ClassificationService:
                     "documentation": 2,
                     "question": 3,
                     "other": 4,
+                    "uncertain": -1,
                 }
             }
+
+    def _get_generalizable_classifier(self) -> GeneralizableIssueClassifier:
+        """Lazy load generalizable 5-class issue classifier champion."""
+        if self._generalizable_classifier is None:
+            if not GENERALIZABLE_MODEL_PATH.exists():
+                logger.warning(
+                    "Generalizable classifier artifact not found at %s. Attempting training...",
+                    GENERALIZABLE_MODEL_PATH,
+                )
+                from backend.app.services.nlp.evaluate_loro import run_loro_evaluation_and_export
+                run_loro_evaluation_and_export()
+
+            logger.info("Loading Generalizable Classifier from %s...", GENERALIZABLE_MODEL_PATH)
+            self._generalizable_classifier = GeneralizableIssueClassifier.load(GENERALIZABLE_MODEL_PATH)
+        return self._generalizable_classifier
 
     def _get_distilbert(self) -> Tuple[Any, Any]:
         """Lazy load DistilBERT model and tokenizer on CPU."""
@@ -125,7 +148,7 @@ class ClassificationService:
             db: Optional active SQLAlchemy session for persistence.
 
         Returns:
-            ClassificationResponse with predicted label and confidence.
+            ClassificationResponse with predicted label, confidence, and calibrated abstention.
         """
         t0 = time.perf_counter()
 
@@ -136,9 +159,22 @@ class ClassificationService:
 
         model_type = request.model_type.lower()
         probabilities: Dict[str, float] = {}
+        is_abstention = False
+        normalized_entropy: Optional[float] = None
 
         # 2. Model Inference
-        if model_type == "distilbert":
+        if model_type in ("generalizable", "generalizable_classifier"):
+            classifier = self._get_generalizable_classifier()
+            pred = classifier.predict_single(request.title, request.body)
+            predicted_label = pred["predicted_label"]
+            confidence = pred["confidence_score"]
+            probabilities = pred["probabilities"]
+            is_abstention = pred["is_abstention"]
+            normalized_entropy = pred["normalized_entropy"]
+            canon_id = pred["canonical_label_id"]
+            model_identifier = "generalizable-5class-v2026.5"
+
+        elif model_type == "distilbert":
             model, tokenizer = self._get_distilbert()
             inputs = tokenizer(
                 combined_text,
@@ -157,6 +193,9 @@ class ClassificationService:
                 probabilities[label_name] = round(float(p), 4)
 
             model_identifier = "distilbert-finetuned-v1"
+            predicted_label = max(probabilities.items(), key=lambda kv: kv[1])[0]
+            confidence = probabilities[predicted_label]
+            canon_id = int(CLASS_TO_ID.get(predicted_label, -1))
 
         elif model_type in ("logistic_regression", "svm"):
             vec = self._get_tfidf_pipeline()
@@ -183,27 +222,29 @@ class ClassificationService:
             else:
                 svm = self._get_svm_model()
                 decision = svm.decision_function(X)[0]
-                # Softmax calibration over SVM hyperplane distances
                 exp_scores = np.exp(decision - np.max(decision))
                 probs = exp_scores / np.sum(exp_scores)
                 classes = svm.classes_
                 for cls_name, p in zip(classes, probs):
                     probabilities[str(cls_name)] = round(float(p), 4)
                 model_identifier = "tfidf-svm-baseline"
+
+            predicted_label = max(probabilities.items(), key=lambda kv: kv[1])[0]
+            confidence = probabilities[predicted_label]
+            canon_id = int(CLASS_TO_ID.get(predicted_label, -1))
         else:
             raise ValueError(f"Unsupported model_type: {model_type}")
 
-        # 3. Determine Top Class
-        predicted_label = max(probabilities.items(), key=lambda kv: kv[1])[0]
-        confidence = probabilities[predicted_label]
-
-        label_to_id = self._label_mappings.get("label_to_id", {})
-        canon_id = int(label_to_id.get(predicted_label, -1))
-        is_classified = predicted_label in ["bug", "feature", "documentation", "question"]
-
+        is_classified = predicted_label in [
+            "bug",
+            "feature",
+            "documentation",
+            "question",
+            "other",
+        ]
         latency_ms = round((time.perf_counter() - t0) * 1000.0, 2)
 
-        # 4. Optional Database Audit Logging
+        # 3. Optional Database Audit Logging
         if db is not None:
             audit = Prediction(
                 issue_id=request.issue_id,
@@ -230,6 +271,8 @@ class ClassificationService:
             clean_title=clean_title,
             clean_body=clean_body if clean_body else None,
             is_classified_category=is_classified,
+            is_abstention=is_abstention,
+            normalized_entropy=normalized_entropy,
         )
 
 

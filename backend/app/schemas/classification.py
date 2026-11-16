@@ -30,9 +30,9 @@ class ClassificationRequest(BaseModel):
         examples=["microsoft/vscode"],
     )
     model_type: str = Field(
-        "distilbert",
-        description="Classification model to invoke: 'distilbert' (champion), 'svm', or 'logistic_regression'",
-        pattern="^(distilbert|svm|logistic_regression)$",
+        "generalizable",
+        description="Classification model to invoke: 'generalizable' (champion), 'distilbert', 'svm', or 'logistic_regression'",
+        pattern="^(generalizable|distilbert|svm|logistic_regression)$",
     )
     issue_id: Optional[int] = Field(
         None,
@@ -43,7 +43,7 @@ class ClassificationRequest(BaseModel):
 class ClassificationResponse(BaseModel):
     """Response model containing predicted category and probability distribution."""
 
-    predicted_label: str = Field(..., description="Predicted canonical category (e.g. bug, feature, other)")
+    predicted_label: str = Field(..., description="Predicted canonical category (e.g. bug, feature, documentation, question, other, uncertain)")
     canonical_label_id: int = Field(..., description="Integer taxonomy ID for predicted label")
     confidence_score: float = Field(..., description="Softmax confidence score for predicted class [0.0, 1.0]")
     probabilities: Dict[str, float] = Field(..., description="Complete class probability distribution")
@@ -52,3 +52,5 @@ class ClassificationResponse(BaseModel):
     clean_title: str = Field(..., description="Sanitized and normalized title used as input")
     clean_body: Optional[str] = Field(None, description="Sanitized and normalized body text")
     is_classified_category: bool = Field(True, description="Whether predicted class is in core taxonomy")
+    is_abstention: bool = Field(False, description="Whether the model abstained due to low confidence")
+    normalized_entropy: Optional[float] = Field(None, description="Normalized prediction entropy [0.0, 1.0]")
