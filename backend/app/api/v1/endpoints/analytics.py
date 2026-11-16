@@ -563,9 +563,9 @@ def get_repository_analysis_domain_slice(
         )
 
     normalized_payload = _normalize_public_payload(completed_run.metrics_payload) or {}
-    if domain_key == "release_evolution":
+    if domain_key in ("release_evolution", "discussions_intelligence"):
         syn_block = normalized_payload.get("repository_synthesis")
-        domain_data = syn_block.get("release_evolution") if isinstance(syn_block, dict) else None
+        domain_data = syn_block.get(domain_key) if isinstance(syn_block, dict) else None
     else:
         domain_data = normalized_payload.get(domain_key)
 

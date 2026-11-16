@@ -4,6 +4,7 @@ from backend.app.services.analytics.base import BaseMetricCalculator, Calculatio
 from backend.app.services.analytics.contributors import ContributorIntelligenceCalculator
 from backend.app.services.analytics.cross_domain import CrossDomainSynthesisCalculator
 from backend.app.services.analytics.development_activity import DevelopmentActivityCalculator
+from backend.app.services.analytics.discussions import DiscussionsIntelligenceCalculator
 from backend.app.services.analytics.issues import IssueIntelligenceCalculator
 from backend.app.services.analytics.orchestrator import (
     AnalyticsOrchestrator,
@@ -22,6 +23,7 @@ __all__ = [
     "ContributorIntelligenceCalculator",
     "CrossDomainSynthesisCalculator",
     "DevelopmentActivityCalculator",
+    "DiscussionsIntelligenceCalculator",
     "IssueIntelligenceCalculator",
     "OrchestratedAnalysisBundle",
     "OrchestrationExecutionResult",

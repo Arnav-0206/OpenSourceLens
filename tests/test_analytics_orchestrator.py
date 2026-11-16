@@ -295,6 +295,8 @@ class TestOrchestrationCoreAndPublication:
         assert set(persisted.metrics_payload.keys()) == expected_top_keys
         assert "release_evolution" not in persisted.metrics_payload
         assert "release_evolution" in persisted.metrics_payload["repository_synthesis"]
+        assert "discussions_intelligence" not in persisted.metrics_payload
+        assert "discussions_intelligence" in persisted.metrics_payload["repository_synthesis"]
         assert "last_synced_at" not in json.dumps(persisted.metrics_payload)
 
         # Schema validations succeed directly on stored payloads
@@ -304,12 +306,12 @@ class TestOrchestrationCoreAndPublication:
         assert validated_payload.repository_synthesis["orchestration_metadata"]["methodology_version"] == CURRENT_METHODOLOGY_VERSION
         assert validated_payload.repository_synthesis["orchestration_metadata"]["snapshot_revision"] == 3
 
-        # Coverage & confidence aggregate across ALL 6 domains (including release_evolution)
+        # Coverage & confidence aggregate across ALL 7 domains (including release_evolution and discussions_intelligence)
         for domain in ALL_ANALYTICS_DOMAINS:
             assert domain in persisted.coverage_summary
             assert domain in persisted.confidence_summary["domain_breakdown"]
-        assert persisted.coverage_summary["summary"]["total_domains"] == 6
-        assert persisted.confidence_summary["total_domains_evaluated"] == 6
+        assert persisted.coverage_summary["summary"]["total_domains"] == len(ALL_ANALYTICS_DOMAINS)
+        assert persisted.confidence_summary["total_domains_evaluated"] == len(ALL_ANALYTICS_DOMAINS)
         validated_conf = ConfidenceSummary(**persisted.confidence_summary)
         assert 0.0 <= validated_conf.score <= 1.0
         assert validated_conf.band in {"high", "medium", "low", "unreliable"}
@@ -510,6 +512,7 @@ class TestSnapshotConsistencyAndIsolation:
             ContributorIntelligenceCalculator,
             CrossDomainSynthesisCalculator,
             DevelopmentActivityCalculator,
+            DiscussionsIntelligenceCalculator,
             IssueIntelligenceCalculator,
             PullRequestIntelligenceCalculator,
             ReleaseEvolutionCalculator,
@@ -521,6 +524,7 @@ class TestSnapshotConsistencyAndIsolation:
             "pull_request_intelligence": SnapshotSpyCalculator(PullRequestIntelligenceCalculator()),
             "issue_intelligence": SnapshotSpyCalculator(IssueIntelligenceCalculator()),
             "release_evolution": SnapshotSpyCalculator(ReleaseEvolutionCalculator()),
+            "discussions_intelligence": SnapshotSpyCalculator(DiscussionsIntelligenceCalculator()),
             "repository_synthesis": SnapshotSpyCalculator(CrossDomainSynthesisCalculator()),
         }
 
@@ -529,7 +533,7 @@ class TestSnapshotConsistencyAndIsolation:
                 orchestrator = AnalyticsOrchestrator(calculators=spied_calculators)
                 exec_res = orchestrator.enqueue_and_process(repository_id=9101, db=rdb, worker_id="wal_worker")
 
-                assert len(observed_calls) == 6
+                assert len(observed_calls) == len(ALL_ANALYTICS_DOMAINS)
                 assert [c["domain"] for c in observed_calls] == list(ALL_ANALYTICS_DOMAINS)
                 # Every domain observed the exact same pinned snapshot revision (3), ref_time, and db session!
                 assert all(c["snapshot_revision"] == 3 for c in observed_calls)
@@ -572,6 +576,7 @@ class TestUnavailableDomainsFailuresRetriesFencing:
             ContributorIntelligenceCalculator,
             CrossDomainSynthesisCalculator,
             DevelopmentActivityCalculator,
+            DiscussionsIntelligenceCalculator,
             IssueIntelligenceCalculator,
         )
 
@@ -583,6 +588,7 @@ class TestUnavailableDomainsFailuresRetriesFencing:
                 "pull_request_intelligence": None,
                 "issue_intelligence": IssueIntelligenceCalculator(),
                 "release_evolution": _NoneCalculator("release_evolution"),
+                "discussions_intelligence": DiscussionsIntelligenceCalculator(),
                 "repository_synthesis": CrossDomainSynthesisCalculator(),
             }
         )
@@ -898,8 +904,9 @@ class TestUnavailableDomainsFailuresRetriesFencing:
         assert persisted_empty.status == "completed"
         assert persisted_empty.confidence_summary["band"] == "unreliable"
         assert persisted_empty.coverage_summary["summary"]["overall_status"] == "empty"
-        assert len(persisted_empty.confidence_summary["domain_breakdown"]) == 6
+        assert len(persisted_empty.confidence_summary["domain_breakdown"]) == len(ALL_ANALYTICS_DOMAINS)
         assert any(p.get("domain") == "release_evolution" for p in persisted_empty.confidence_summary["penalties"])
+        assert any(p.get("domain") == "discussions_intelligence" for p in persisted_empty.confidence_summary["penalties"])
 
         # 2. force=True recompute creates a distinct new completed AnalysisRun ID
         res_forced = orch.enqueue_and_process(
@@ -911,7 +918,7 @@ class TestUnavailableDomainsFailuresRetriesFencing:
         assert res_forced.published is True
         assert res_forced.run_id != res_empty.run_id
 
-        # 3. Direct custom 6-domain penalty aggregation creates fallback penalties when details omit "penalties"
+        # 3. Direct custom domain penalty aggregation creates fallback penalties when details omit "penalties"
         custom_domains = {}
         penalties_by_domain = {
             "development_activity": 0.1,
@@ -919,6 +926,7 @@ class TestUnavailableDomainsFailuresRetriesFencing:
             "pull_request_intelligence": 0.15,
             "issue_intelligence": 0.25,
             "release_evolution": 0.3,
+            "discussions_intelligence": 0.1,
             "repository_synthesis": 0.0,
         }
         for key, pen in penalties_by_domain.items():
@@ -952,8 +960,8 @@ class TestUnavailableDomainsFailuresRetriesFencing:
             analysis_reference_time=datetime(2026, 3, 20, 12, 0, tzinfo=timezone.utc),
             domain_results=custom_domains,
         )
-        # Expected mean domain score: (0.9 + 0.8 + 0.85 + 0.75 + 0.7 + 1.0) / 6 = 5.0 / 6 = 0.833
-        assert bundle.confidence_summary["score"] == pytest.approx(0.833, abs=1e-3)
+        # Expected mean domain score: (0.9 + 0.8 + 0.85 + 0.75 + 0.7 + 0.9 + 1.0) / 7 = 5.9 / 7 = 0.843
+        assert bundle.confidence_summary["score"] == pytest.approx(0.843, abs=1e-3)
         fallback_rules = {p["rule"] for p in bundle.confidence_summary["penalties"]}
         assert fallback_rules == {
             "PENALTY-DEVELOPMENT_ACTIVITY",
@@ -961,6 +969,7 @@ class TestUnavailableDomainsFailuresRetriesFencing:
             "PENALTY-PULL_REQUEST_INTELLIGENCE",
             "PENALTY-ISSUE_INTELLIGENCE",
             "PENALTY-RELEASE_EVOLUTION",
+            "PENALTY-DISCUSSIONS_INTELLIGENCE",
         }
 
     def test_non_retryable_validation_failure_terminates_first_attempt_with_retries_allowed(self, in_memory_db):

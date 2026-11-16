@@ -499,6 +499,12 @@ class TestAnalyticsV2LatestHistoryRunsAndDomains:
         assert "semver_adoption" in rel_slice["data"]
         assert len(rel_slice["rules"]) >= 1
 
+        disc_slice = client.get("/api/v1/analytics/dynamic-org/target-repo/domains/discussions_intelligence").json()
+        assert disc_slice["data"] == payload["repository_synthesis"]["discussions_intelligence"]
+        assert "qna" in disc_slice["data"]
+        assert "engagement" in disc_slice["data"]
+        assert len(disc_slice["rules"]) >= 1
+
         # Test 8: Advance source revision -> /latest marks is_stale=True and exposes pending replacement run
         repo.analytics_source_revision = 3
         repo.last_synced_at = datetime.now(timezone.utc)

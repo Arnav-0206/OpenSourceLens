@@ -60,6 +60,7 @@ from backend.app.services.analytics.pull_requests import (
     _extract_stream_status,
 )
 from backend.app.services.analytics.releases import ReleaseEvolutionCalculator
+from backend.app.services.analytics.discussions import DiscussionsIntelligenceCalculator
 from backend.app.services.analytics.rule_engine import (
     build_cross_domain_rules,
     consolidate_rules,
@@ -386,6 +387,7 @@ class CrossDomainSynthesisCalculator(BaseMetricCalculator):
             "pull_request_intelligence": PullRequestIntelligenceCalculator(),
             "issue_intelligence": IssueIntelligenceCalculator(),
             "release_evolution": ReleaseEvolutionCalculator(),
+            "discussions_intelligence": DiscussionsIntelligenceCalculator(),
         }
         for key, calc in calculators.items():
             if key not in domain_map:
@@ -1028,6 +1030,14 @@ class CrossDomainSynthesisCalculator(BaseMetricCalculator):
                 "median_interval_days": rel_cad.get("median_interval_days"),
                 "days_since_last_release": rel_cad.get("days_since_last_release"),
                 "semver_adoption_rate": rel_sem.get("semver_adoption_rate"),
+            },
+            "community_discussions": {
+                "coverage_status": domain_map.get("discussions_intelligence").coverage.status if domain_map.get("discussions_intelligence") else "unavailable",
+                "total_discussions": domain_map.get("discussions_intelligence").metrics.get("total_discussions", 0) if domain_map.get("discussions_intelligence") else 0,
+                "qna_answered_rate": domain_map.get("discussions_intelligence").metrics.get("qna", {}).get("qna_answered_rate") if domain_map.get("discussions_intelligence") else None,
+                "time_to_answer_p50_hours": domain_map.get("discussions_intelligence").metrics.get("qna", {}).get("time_to_answer_hours", {}).get("p50") if domain_map.get("discussions_intelligence") else None,
+                "dominant_category": domain_map.get("discussions_intelligence").metrics.get("dominant_category") if domain_map.get("discussions_intelligence") else None,
+                "median_comments_per_discussion": domain_map.get("discussions_intelligence").metrics.get("engagement", {}).get("median_comments_per_discussion") if domain_map.get("discussions_intelligence") else None,
             },
         }
 

@@ -15,7 +15,7 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional
 from pydantic import BaseModel, ConfigDict, Field
 
-CURRENT_METHODOLOGY_VERSION: str = "2026.1"
+CURRENT_METHODOLOGY_VERSION: str = "2026.2"
 
 
 class MetricCoverageItem(BaseModel):

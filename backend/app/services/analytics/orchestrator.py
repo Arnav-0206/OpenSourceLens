@@ -46,6 +46,7 @@ from backend.app.services.analytics.development_activity import (
     DevelopmentActivityCalculator,
     _ensure_utc,
 )
+from backend.app.services.analytics.discussions import DiscussionsIntelligenceCalculator
 from backend.app.services.analytics.issues import IssueIntelligenceCalculator
 from backend.app.services.analytics.pull_requests import PullRequestIntelligenceCalculator
 from backend.app.services.analytics.releases import ReleaseEvolutionCalculator
@@ -60,6 +61,7 @@ BASE_ANALYTICS_DOMAINS: Tuple[str, ...] = (
     "pull_request_intelligence",
     "issue_intelligence",
     "release_evolution",
+    "discussions_intelligence",
 )
 ALL_ANALYTICS_DOMAINS: Tuple[str, ...] = (
     *BASE_ANALYTICS_DOMAINS,
@@ -170,6 +172,7 @@ def _default_calculators() -> Dict[str, Optional[BaseMetricCalculator]]:
         "pull_request_intelligence": PullRequestIntelligenceCalculator(),
         "issue_intelligence": IssueIntelligenceCalculator(),
         "release_evolution": ReleaseEvolutionCalculator(),
+        "discussions_intelligence": DiscussionsIntelligenceCalculator(),
         "repository_synthesis": CrossDomainSynthesisCalculator(),
     }
 
@@ -191,6 +194,7 @@ def _make_unavailable_result(
     reason: str,
     *,
     embedded_release: Optional[CalculationResult] = None,
+    embedded_discussions: Optional[CalculationResult] = None,
 ) -> CalculationResult:
     """Construct an explicit unavailable CalculationResult without fabricating zero metrics."""
     coverage = MetricCoverageItem(
@@ -220,6 +224,21 @@ def _make_unavailable_result(
                 "semver_adoption": {"status": "unavailable", "total_releases": 0, "semver_adoption_rate": None},
             }
         )
+    elif domain == "discussions_intelligence":
+        metrics.update(
+            {
+                "total_discussions": 0,
+                "dominant_category": None,
+                "qna": {
+                    "total_qna_threads": 0,
+                    "qna_answered_rate": None,
+                    "time_to_answer_hours": {"p50": None},
+                },
+                "engagement": {
+                    "median_comments_per_discussion": None,
+                },
+            }
+        )
     elif domain == "repository_synthesis":
         metrics["chi_deferred"] = True
         metrics["chi_deferral_reason"] = (
@@ -229,6 +248,11 @@ def _make_unavailable_result(
             metrics["release_evolution"] = {
                 **embedded_release.metrics,
                 "coverage": embedded_release.coverage.model_dump(),
+            }
+        if embedded_discussions is not None:
+            metrics["discussions_intelligence"] = {
+                **embedded_discussions.metrics,
+                "coverage": embedded_discussions.coverage.model_dump(),
             }
     penalty_entry = {
         "rule": f"PENALTY-UNAVAILABLE-{domain.upper()}",
@@ -506,6 +530,7 @@ class AnalyticsOrchestrator:
                 normalized_results[key] = raw_res
 
         rel_res = normalized_results["release_evolution"]
+        disc_res = normalized_results["discussions_intelligence"]
         syn_raw = domain_results.get("repository_synthesis")
         if syn_raw is None:
             unavailable_domains.append("repository_synthesis")
@@ -514,6 +539,7 @@ class AnalyticsOrchestrator:
                 snapshot_revision=snapshot_revision,
                 reason="Domain 'repository_synthesis' result was missing from orchestrated domain outputs.",
                 embedded_release=rel_res,
+                embedded_discussions=disc_res,
             )
         else:
             if syn_raw.coverage.status == "unavailable" or syn_raw.metrics.get("available") is False:
@@ -522,8 +548,9 @@ class AnalyticsOrchestrator:
 
         syn_res = normalized_results["repository_synthesis"]
         rel_penalties = [dict(p) for p in ((rel_res.details or {}).get("penalties") or [])]
+        disc_penalties = [dict(p) for p in ((disc_res.details or {}).get("penalties") or [])]
 
-        # 2. Construct locked 5-key AnalysisPayload with embedded release_evolution + release penalties & lineage
+        # 2. Construct locked 5-key AnalysisPayload with embedded release_evolution + discussions_intelligence
         syn_metrics = dict(syn_res.metrics)
         existing_rel_block = syn_metrics.get("release_evolution")
         if isinstance(existing_rel_block, dict):
@@ -540,7 +567,22 @@ class AnalyticsOrchestrator:
         }
         syn_metrics["release_evolution"] = rel_embedded
 
-        # Preserve explicit orchestration lineage metadata without introducing any 6th top-level AnalysisPayload key
+        existing_disc_block = syn_metrics.get("discussions_intelligence")
+        if isinstance(existing_disc_block, dict):
+            disc_embedded = dict(existing_disc_block)
+        else:
+            disc_embedded = {
+                **disc_res.metrics,
+                "coverage": disc_res.coverage.model_dump(),
+            }
+        disc_embedded.setdefault("coverage", disc_res.coverage.model_dump())
+        disc_embedded["confidence"] = {
+            "confidence_penalty": round(min(1.0, max(0.0, float(disc_res.confidence_penalty))), 3),
+            "penalties": disc_penalties,
+        }
+        syn_metrics["discussions_intelligence"] = disc_embedded
+
+        # Preserve explicit orchestration lineage metadata without introducing any additional top-level AnalysisPayload key
         # and strictly excluding last_synced_at.
         syn_metrics["orchestration_metadata"] = {
             "methodology_version": self.methodology_version,
@@ -566,13 +608,17 @@ class AnalyticsOrchestrator:
         validated_payload = AnalysisPayload(**payload_dict)
         metrics_payload = validated_payload.model_dump()
 
-        # Verify release_evolution remains present inside validated repository_synthesis
+        # Verify release_evolution and discussions_intelligence remain present inside validated repository_synthesis
         if "release_evolution" not in (metrics_payload.get("repository_synthesis") or {}):
             raise NonRetryableAnalyticsError(
                 "Validated AnalysisPayload is missing embedded 'release_evolution' inside 'repository_synthesis'."
             )
+        if "discussions_intelligence" not in (metrics_payload.get("repository_synthesis") or {}):
+            raise NonRetryableAnalyticsError(
+                "Validated AnalysisPayload is missing embedded 'discussions_intelligence' inside 'repository_synthesis'."
+            )
 
-        # 3. Aggregate coverage across ALL six original CalculationResults
+        # 3. Aggregate coverage across ALL seven original CalculationResults
         domain_statuses: Dict[str, str] = {}
         status_counts: Dict[str, int] = {
             "sufficient": 0,
