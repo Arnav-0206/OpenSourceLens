@@ -321,3 +321,34 @@ export async function getDiscoveredTopics(
     `${API_BASE_URL}/analytics/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/topics?max_clusters=${maxClusters}`
   );
 }
+
+// ─── Executive Intelligence Reports (Stage 6) ────────────────────────────────
+
+export function getReportDownloadUrl(
+  owner: string,
+  name: string,
+  format: "markdown" | "json" = "json"
+): string {
+  return `${API_BASE_URL}/analytics/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/report?format=${format}`;
+}
+
+export async function downloadReport(
+  owner: string,
+  name: string,
+  format: "markdown" | "json" = "json"
+): Promise<void> {
+  const url = getReportDownloadUrl(owner, name, format);
+  const resp = await fetch(url);
+  if (!resp.ok) {
+    throw new Error(`Failed to download report: ${resp.status} ${resp.statusText}`);
+  }
+  const blob = await resp.blob();
+  const blobUrl = window.URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = blobUrl;
+  a.download = `${owner}_${name}_intelligence_report.${format === "markdown" ? "md" : "json"}`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  window.URL.revokeObjectURL(blobUrl);
+}

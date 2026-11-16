@@ -5,7 +5,11 @@ import {
   AlertTriangle,
   Calendar,
   CheckCircle2,
+  ChevronDown,
+  Code,
+  Download,
   ExternalLink,
+  FileText,
   GitBranch,
   GitCommit,
   GitFork,
@@ -22,7 +26,7 @@ import {
   AnalysisLatestResponse,
   AnalysisRecomputeResponse,
 } from "@/lib/types";
-import { triggerRecompute } from "@/lib/api";
+import { downloadReport, triggerRecompute } from "@/lib/api";
 
 interface WorkspaceHeaderProps {
   data: AnalysisLatestResponse;
@@ -33,6 +37,9 @@ export default function WorkspaceHeader({ data, onRefresh }: WorkspaceHeaderProp
   const { repository, run, is_stale } = data;
   const [isRecomputing, setIsRecomputing] = useState(false);
   const [recomputeMsg, setRecomputeMsg] = useState<string | null>(null);
+  const [isExportOpen, setIsExportOpen] = useState(false);
+  const [exportingFormat, setExportingFormat] = useState<string | null>(null);
+  const [exportErr, setExportErr] = useState<string | null>(null);
 
   const confidence = run.confidence_summary;
   const confBand = confidence?.band || "unreliable";
@@ -60,6 +67,20 @@ export default function WorkspaceHeader({ data, onRefresh }: WorkspaceHeaderProp
       setRecomputeMsg(err.message || "Failed to trigger analysis recomputation.");
     } finally {
       setIsRecomputing(false);
+    }
+  };
+
+  const handleExport = async (format: "markdown" | "json") => {
+    const [owner, name] = repository.repo_name.split("/");
+    setExportingFormat(format);
+    setExportErr(null);
+    setIsExportOpen(false);
+    try {
+      await downloadReport(owner, name, format);
+    } catch (err: any) {
+      setExportErr(err.message || "Failed to download intelligence report.");
+    } finally {
+      setExportingFormat(null);
     }
   };
 
@@ -133,7 +154,50 @@ export default function WorkspaceHeader({ data, onRefresh }: WorkspaceHeaderProp
           </div>
 
           {/* Action Tools */}
-          <div className="flex items-center gap-3">
+          <div className="flex flex-wrap items-center gap-3">
+            {/* Export Report Dropdown */}
+            <div className="relative">
+              <button
+                onClick={() => setIsExportOpen(!isExportOpen)}
+                disabled={!!exportingFormat}
+                className="inline-flex items-center gap-2 px-3.5 py-2.5 rounded-xl bg-indigo-600/90 hover:bg-indigo-600 text-white border border-indigo-500/40 text-xs font-semibold transition-all cursor-pointer disabled:opacity-50 shadow-sm shadow-indigo-950"
+                title="Download full intelligence audit report"
+              >
+                {exportingFormat ? (
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                ) : (
+                  <Download className="w-3.5 h-3.5" />
+                )}
+                <span>{exportingFormat ? `Exporting ${exportingFormat.toUpperCase()}...` : "Export Audit Report"}</span>
+                <ChevronDown className="w-3 h-3 text-indigo-200" />
+              </button>
+
+              {isExportOpen && (
+                <div className="absolute right-0 mt-2 w-64 rounded-xl border border-slate-700 bg-slate-900 shadow-2xl p-1.5 z-50 space-y-1">
+                  <button
+                    onClick={() => handleExport("markdown")}
+                    className="w-full flex items-start gap-2.5 px-3 py-2 text-xs text-left rounded-lg text-slate-200 hover:text-white hover:bg-slate-800 transition-colors cursor-pointer"
+                  >
+                    <FileText className="w-4 h-4 text-indigo-400 flex-shrink-0 mt-0.5" />
+                    <div>
+                      <div className="font-semibold text-white">Executive Markdown (.md)</div>
+                      <div className="text-[10px] text-slate-400">Download report with tables, audits & themes</div>
+                    </div>
+                  </button>
+                  <button
+                    onClick={() => handleExport("json")}
+                    className="w-full flex items-start gap-2.5 px-3 py-2 text-xs text-left rounded-lg text-slate-200 hover:text-white hover:bg-slate-800 transition-colors cursor-pointer"
+                  >
+                    <Code className="w-4 h-4 text-cyan-400 flex-shrink-0 mt-0.5" />
+                    <div>
+                      <div className="font-semibold text-white">Machine Audit (.json)</div>
+                      <div className="text-[10px] text-slate-400">Export structured payload, metadata & scores</div>
+                    </div>
+                  </button>
+                </div>
+              )}
+            </div>
+
             <button
               onClick={() => handleRecompute(true)}
               disabled={isRecomputing}
@@ -146,7 +210,12 @@ export default function WorkspaceHeader({ data, onRefresh }: WorkspaceHeaderProp
           </div>
         </div>
 
-        {/* Recompute Alert Message */}
+        {/* Feedback Messages */}
+        {exportErr && (
+          <div className="mt-4 p-3 rounded-xl bg-rose-500/10 border border-rose-500/25 text-rose-300 text-xs">
+            {exportErr}
+          </div>
+        )}
         {recomputeMsg && (
           <div className="mt-4 p-3 rounded-xl bg-indigo-500/10 border border-indigo-500/20 text-indigo-300 text-xs">
             {recomputeMsg}

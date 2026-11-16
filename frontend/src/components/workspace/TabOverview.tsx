@@ -2,6 +2,16 @@
 
 import React, { useState } from "react";
 import {
+  CartesianGrid,
+  Legend,
+  Line,
+  LineChart,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from "recharts";
+import {
   Activity,
   AlertCircle,
   AlertTriangle,
@@ -28,7 +38,7 @@ import {
   Users,
   Zap,
 } from "lucide-react";
-import { AnalysisPayload, ConfidenceSummary, RuleInterpretation } from "@/lib/types";
+import { AnalysisPayload, ConfidenceSummary, CrossDomainCorrelationPair, RuleInterpretation } from "@/lib/types";
 
 interface TabOverviewProps {
   payload?: AnalysisPayload | null;
@@ -43,6 +53,8 @@ export default function TabOverview({ payload, confidence, rules = [] }: TabOver
   const scorecard = syn?.diagnostic_scorecard || {};
   const rel = syn?.release_evolution || payload?.repository_synthesis?.release_evolution;
   const disc = syn?.discussions_intelligence || payload?.repository_synthesis?.discussions_intelligence;
+  const correlations = syn?.cross_domain_correlations;
+  const pairs: CrossDomainCorrelationPair[] = correlations?.pairs || [];
 
   // Domain scorecards
   const devCard = scorecard["development_activity"] || {};
@@ -267,7 +279,192 @@ export default function TabOverview({ payload, confidence, rules = [] }: TabOver
         </div>
       </section>
 
-      {/* 2. Deterministic Rule Findings */}
+      {/* 2. Cross-Domain Discovery Explorer (Feature Slice 4: Synthesis & Scale) */}
+      <section className="space-y-4">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+          <div>
+            <h2 className="text-lg font-bold text-white tracking-tight flex items-center gap-2">
+              <Compass className="w-5 h-5 text-indigo-400" />
+              <span>Cross-Domain Discovery Explorer</span>
+              <span className="text-[10px] uppercase font-bold tracking-wider px-2 py-0.5 rounded bg-indigo-500/10 text-indigo-300 border border-indigo-500/20">
+                Synthesis & Scale
+              </span>
+            </h2>
+            <p className="text-xs text-slate-400 mt-0.5">
+              Spearman monotonic alignment testing with Monte Carlo permutations (B=10,000), BH FDR correction (α=0.05), and AR(1) serial dependence guardrails
+            </p>
+          </div>
+          <span className="text-[11px] font-mono px-2.5 py-1 rounded-md bg-slate-800 text-slate-300 border border-slate-700">
+            {pairs.length} Tested Pairs
+          </span>
+        </div>
+
+        {/* Scientific Non-Causal Disclaimer */}
+        <div className="flex items-start gap-3 p-3.5 rounded-xl bg-indigo-950/30 border border-indigo-500/20 text-xs text-indigo-200/90 leading-relaxed">
+          <Info className="w-4 h-4 text-indigo-400 flex-shrink-0 mt-0.5" />
+          <div>
+            <strong className="text-white">Scientific Association Guardrail: </strong>
+            Statistical association does not establish direct operational causation. Correlation estimates reflect calendar-month alignment and may be influenced by seasonal cadence, team expansion, or external repository events.
+          </div>
+        </div>
+
+        {pairs.length === 0 ? (
+          <div className="p-8 text-center rounded-xl border border-slate-800 bg-slate-900/40 text-slate-400 text-sm">
+            No cross-domain correlation pairs available for this repository. At least 6 overlapping calendar months with complete telemetry are required for inferential testing.
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
+            {pairs.map((pair) => {
+              const isSignificant = pair.significant_fdr_05;
+              const isGuarded = pair.serial_dependence_guardrail_tripped || pair.status === "serial_dependence_detected";
+              const isCoverageGuard = pair.status === "incomplete_review_coverage";
+              const rVal = pair.spearman_r;
+
+              return (
+                <div
+                  key={pair.pair_id}
+                  className={`p-4 rounded-xl border flex flex-col justify-between transition-all ${
+                    isSignificant
+                      ? "border-emerald-500/30 bg-emerald-950/10"
+                      : isGuarded
+                      ? "border-amber-500/30 bg-amber-950/10"
+                      : "border-slate-800 bg-slate-900/60"
+                  }`}
+                >
+                  <div className="space-y-3">
+                    <div className="flex items-center justify-between">
+                      <span className="font-mono text-xs px-2 py-0.5 rounded bg-slate-800 text-indigo-300 border border-slate-700">
+                        {pair.pair_id}
+                      </span>
+                      <span
+                        className={`text-[10px] font-bold px-2 py-0.5 rounded ${
+                          isSignificant
+                            ? "bg-emerald-500/20 text-emerald-300"
+                            : isGuarded
+                            ? "bg-amber-500/20 text-amber-300"
+                            : isCoverageGuard
+                            ? "bg-amber-500/20 text-amber-300"
+                            : "bg-slate-800 text-slate-400"
+                        }`}
+                      >
+                        {isSignificant
+                          ? "Significant (FDR 5%)"
+                          : isGuarded
+                          ? "AR(1) Guarded"
+                          : isCoverageGuard
+                          ? "Incomplete Reviews"
+                          : pair.status}
+                      </span>
+                    </div>
+
+                    <div>
+                      <h3 className="text-sm font-bold text-white">
+                        {pair.label_x || pair.metric_x} vs {pair.label_y || pair.metric_y}
+                      </h3>
+                      <p className="text-[11px] text-slate-400 mt-0.5">
+                        Aligned Window: {pair.k_months || pair.overlapping_months?.length || 0} overlapping months
+                      </p>
+                    </div>
+
+                    {/* Stats Grid */}
+                    <div className="grid grid-cols-4 gap-1.5 p-2 rounded-lg bg-slate-950/70 border border-slate-800/80 text-center">
+                      <div>
+                        <div className="text-[9px] text-slate-400">Spearman r</div>
+                        <div
+                          className={`text-xs font-mono font-bold mt-0.5 ${
+                            rVal != null
+                              ? rVal > 0.3
+                                ? "text-emerald-400"
+                                : rVal < -0.3
+                                ? "text-rose-400"
+                                : "text-slate-200"
+                              : "text-slate-500"
+                          }`}
+                        >
+                          {rVal != null ? (rVal > 0 ? `+${rVal.toFixed(2)}` : rVal.toFixed(2)) : "N/A"}
+                        </div>
+                      </div>
+                      <div>
+                        <div className="text-[9px] text-slate-400">p-value</div>
+                        <div className="text-xs font-mono font-bold text-slate-200 mt-0.5">
+                          {pair.p_value != null ? pair.p_value.toFixed(3) : "Suppr."}
+                        </div>
+                      </div>
+                      <div>
+                        <div className="text-[9px] text-slate-400">q (FDR)</div>
+                        <div className="text-xs font-mono font-bold text-slate-200 mt-0.5">
+                          {pair.q_value != null ? pair.q_value.toFixed(3) : "N/A"}
+                        </div>
+                      </div>
+                      <div>
+                        <div className="text-[9px] text-slate-400">|r_AR1|</div>
+                        <div
+                          className={`text-xs font-mono font-bold mt-0.5 ${
+                            pair.max_abs_ar1 != null && pair.max_abs_ar1 > 0.40
+                              ? "text-amber-400"
+                              : "text-slate-300"
+                          }`}
+                        >
+                          {pair.max_abs_ar1 != null ? pair.max_abs_ar1.toFixed(2) : "N/A"}
+                        </div>
+                      </div>
+                    </div>
+
+                    {pair.note && (
+                      <p className="text-[11px] text-slate-400 italic line-clamp-2" title={pair.note}>
+                        {pair.note}
+                      </p>
+                    )}
+                  </div>
+
+                  {/* Dual-Line Trend Chart */}
+                  {pair.monthly_points && pair.monthly_points.length > 0 && (
+                    <div className="h-36 w-full mt-3 pt-2 border-t border-slate-800/60">
+                      <ResponsiveContainer width="100%" height="100%">
+                        <LineChart data={pair.monthly_points} margin={{ top: 5, right: 10, left: -25, bottom: 0 }}>
+                          <CartesianGrid strokeDasharray="3 3" stroke="#334155" opacity={0.3} />
+                          <XAxis dataKey="month" stroke="#64748b" fontSize={9} tickLine={false} />
+                          <YAxis yAxisId="left" stroke="#818cf8" fontSize={9} tickLine={false} />
+                          <YAxis yAxisId="right" orientation="right" stroke="#38bdf8" fontSize={9} tickLine={false} />
+                          <Tooltip
+                            contentStyle={{
+                              backgroundColor: "#0f172a",
+                              borderColor: "#334155",
+                              borderRadius: "0.5rem",
+                              fontSize: "10px",
+                            }}
+                            labelStyle={{ color: "#f8fafc", fontWeight: "bold" }}
+                          />
+                          <Line
+                            yAxisId="left"
+                            type="monotone"
+                            dataKey="val_x"
+                            name={pair.label_x || "Series X"}
+                            stroke="#818cf8"
+                            strokeWidth={1.5}
+                            dot={false}
+                          />
+                          <Line
+                            yAxisId="right"
+                            type="monotone"
+                            dataKey="val_y"
+                            name={pair.label_y || "Series Y"}
+                            stroke="#38bdf8"
+                            strokeWidth={1.5}
+                            dot={false}
+                          />
+                        </LineChart>
+                      </ResponsiveContainer>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </section>
+
+      {/* 3. Deterministic Rule Findings */}
       <section className="space-y-4">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <div>

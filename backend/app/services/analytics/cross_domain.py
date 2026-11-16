@@ -186,6 +186,14 @@ def evaluate_paired_spearman_permutation(
         "k_months": k,
         "min_periods_required": MIN_OVERLAPPING_MONTHS,
         "overlapping_months": [f"{ym[0]:04d}-{ym[1]:02d}" for ym in overlapping_months],
+        "monthly_points": [
+            {
+                "month": f"{ym[0]:04d}-{ym[1]:02d}",
+                "val_x": round(float(x_vals[i]), 2) if not np.isnan(x_vals[i]) else None,
+                "val_y": round(float(y_vals[i]), 2) if not np.isnan(y_vals[i]) else None,
+            }
+            for i, ym in enumerate(overlapping_months)
+        ],
         "permutations": permutations,
         "association_type": "Descriptive Monotonic Association (Non-Causal)",
         "confidence_intervals_deferred": True,

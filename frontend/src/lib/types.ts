@@ -381,21 +381,44 @@ export interface DiscussionsIntelligenceData {
   };
 }
 
+export interface CrossDomainCorrelationPair {
+  pair_id: string;
+  name?: string;
+  metric_x?: string;
+  label_x?: string;
+  metric_y?: string;
+  label_y?: string;
+  domain_x?: string;
+  domain_y?: string;
+  spearman_r?: number | null;
+  p_value?: number | null;
+  q_value?: number | null;
+  status: string;
+  k_months?: number;
+  max_abs_ar1?: number | null;
+  ar1_x?: number | null;
+  ar1_y?: number | null;
+  serial_dependence_guardrail_tripped?: boolean;
+  significant_fdr_05?: boolean;
+  note?: string;
+  overlapping_months?: string[];
+  monthly_points?: Array<{
+    month: string;
+    val_x: number | null;
+    val_y: number | null;
+  }>;
+}
+
 export interface CrossDomainSynthesisData {
   diagnostic_scorecard?: Record<string, any>;
   cross_domain_correlations?: {
     status?: string;
+    methodology?: string;
+    min_periods_required?: number;
+    fdr_alpha?: number;
     tested_pairs_count?: number;
-    pairs?: Array<{
-      pair_id: string;
-      name: string;
-      domain_x: string;
-      domain_y: string;
-      spearman_r?: number | null;
-      p_value?: number | null;
-      q_value?: number | null;
-      status?: string;
-    }>;
+    pairs?: CrossDomainCorrelationPair[];
+    causality_disclaimer?: string;
   };
   release_evolution?: ReleaseEvolutionData;
   discussions_intelligence?: DiscussionsIntelligenceData;
