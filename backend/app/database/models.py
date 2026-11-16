@@ -135,6 +135,11 @@ class Repository(Base):
         back_populates="repository",
         cascade="all, delete-orphan",
     )
+    discussions: Mapped[List[Discussion]] = relationship(
+        "Discussion",
+        back_populates="repository",
+        cascade="all, delete-orphan",
+    )
 
 
 class Issue(Base):
@@ -935,6 +940,18 @@ class PullRequest(Base):
     changed_files: Mapped[Optional[int]] = mapped_column(
         Integer, nullable=True
     )
+    body: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    head_branch: Mapped[Optional[str]] = mapped_column(String(120), nullable=True)
+    base_branch: Mapped[Optional[str]] = mapped_column(String(120), nullable=True)
+    is_draft: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default="0", nullable=False
+    )
+    labels: Mapped[List[str]] = mapped_column(
+        JSON, default=list, nullable=False
+    )
+    requested_reviewers: Mapped[List[str]] = mapped_column(
+        JSON, default=list, nullable=False
+    )
 
     __table_args__ = (
         UniqueConstraint(
@@ -1076,6 +1093,12 @@ class Release(Base):
     is_prerelease: Mapped[bool] = mapped_column(
         Boolean, default=False, nullable=False
     )
+    is_tag_fallback: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default="0", nullable=False
+    )
+    commit_sha: Mapped[Optional[str]] = mapped_column(
+        String(40), nullable=True
+    )
     body: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
     __table_args__ = (
@@ -1150,4 +1173,101 @@ class IssueComment(Base):
     pull_request: Mapped[Optional[PullRequest]] = relationship(
         "PullRequest", back_populates="issue_comments"
     )
+
+
+class Discussion(Base):
+    """Represents a GitHub Discussion thread."""
+
+    __tablename__ = "discussions"
+
+    id: Mapped[int] = mapped_column(
+        PK_BIGINT, primary_key=True, autoincrement=True
+    )
+    repository_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey("repositories.id", ondelete="CASCADE"),
+        index=True,
+        nullable=False,
+    )
+    discussion_number: Mapped[int] = mapped_column(Integer, nullable=False)
+    title: Mapped[str] = mapped_column(Text, nullable=False)
+    body: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    author: Mapped[Optional[str]] = mapped_column(String(80), nullable=True)
+    author_id: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
+    category_id: Mapped[Optional[str]] = mapped_column(String(80), nullable=True)
+    category_name: Mapped[str] = mapped_column(String(80), nullable=False)
+    category_is_answerable: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default="0", nullable=False
+    )
+    is_answered: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default="0", nullable=False
+    )
+    answered_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    answer_author: Mapped[Optional[str]] = mapped_column(String(80), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    updated_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    comments_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    upvote_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    reactions_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint(
+            "repository_id", "discussion_number", name="uq_discussions_repo_number"
+        ),
+        Index("ix_discussions_repo_created", "repository_id", "created_at"),
+    )
+
+    repository: Mapped[Repository] = relationship(
+        "Repository", back_populates="discussions"
+    )
+    comments: Mapped[List[DiscussionComment]] = relationship(
+        "DiscussionComment",
+        back_populates="discussion",
+        cascade="all, delete-orphan",
+    )
+
+
+class DiscussionComment(Base):
+    """Represents a comment or answer on a GitHub Discussion."""
+
+    __tablename__ = "discussion_comments"
+
+    id: Mapped[int] = mapped_column(
+        PK_BIGINT, primary_key=True, autoincrement=True
+    )
+    discussion_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey("discussions.id", ondelete="CASCADE"),
+        index=True,
+        nullable=False,
+    )
+    repository_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey("repositories.id", ondelete="CASCADE"),
+        index=True,
+        nullable=False,
+    )
+    comment_id: Mapped[str] = mapped_column(
+        String(80), unique=True, index=True, nullable=False
+    )
+    author: Mapped[Optional[str]] = mapped_column(String(80), nullable=True)
+    body: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    is_answer: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default="0", nullable=False
+    )
+    upvote_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+
+    discussion: Mapped[Discussion] = relationship(
+        "Discussion", back_populates="comments"
+    )
+
 

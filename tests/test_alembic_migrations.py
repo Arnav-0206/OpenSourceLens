@@ -25,11 +25,14 @@ from backend.app.database.models import (
     AnalysisRunAttempt,
     Commit,
     Contributor,
+    Discussion,
+    DiscussionComment,
     Issue,
     IssueComment,
     IssueLabel,
     Prediction,
     PullRequest,
+    Release,
     Repository,
     RepositoryAnalytics,
 )
@@ -163,7 +166,29 @@ def test_staging_migration_lifecycle(staging_db):
     try:
         cursor = conn.cursor()
         cursor.execute("SELECT version_num FROM alembic_version;")
-        assert cursor.fetchone()[0] == "003_add_phase_c_analytics_infrastructure"
+        assert cursor.fetchone()[0] == "004_add_discussions_and_pr_depth"
+
+        # Verify discussions and discussion_comments tables exist
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table';")
+        tables = set(r[0] for r in cursor.fetchall())
+        assert "discussions" in tables
+        assert "discussion_comments" in tables
+
+        # Verify additive columns on pull_requests
+        cursor.execute("PRAGMA table_info(pull_requests);")
+        pr_cols = {r[1] for r in cursor.fetchall()}
+        assert "body" in pr_cols
+        assert "head_branch" in pr_cols
+        assert "base_branch" in pr_cols
+        assert "is_draft" in pr_cols
+        assert "labels" in pr_cols
+        assert "requested_reviewers" in pr_cols
+
+        # Verify additive columns on releases
+        cursor.execute("PRAGMA table_info(releases);")
+        rel_cols = {r[1] for r in cursor.fetchall()}
+        assert "is_tag_fallback" in rel_cols
+        assert "commit_sha" in rel_cols
     finally:
         conn.close()
 
@@ -262,8 +287,11 @@ def test_migration_003_lifecycle(staging_db):
     """Test Phase C Migration 003: upgrade from 002 -> verify schema & data -> downgrade -> re-upgrade."""
     staging_file, alembic_cfg = staging_db
 
-    # Step 1: Upgrade to 003 head
-    command.upgrade(alembic_cfg, "head")
+    # Ensure baseline is at 002 before testing 003
+    command.downgrade(alembic_cfg, "002_add_dynamic_tables")
+
+    # Step 1: Upgrade to 003
+    command.upgrade(alembic_cfg, "003_add_phase_c_analytics_infrastructure")
 
     conn = sqlite3.connect(staging_file)
     try:
@@ -338,14 +366,89 @@ def test_migration_003_lifecycle(staging_db):
     finally:
         conn.close()
 
-    # Step 3: Re-upgrade to 003 head
-    command.upgrade(alembic_cfg, "head")
+    # Step 3: Re-upgrade to 003
+    command.upgrade(alembic_cfg, "003_add_phase_c_analytics_infrastructure")
 
     conn = sqlite3.connect(staging_file)
     try:
         cursor = conn.cursor()
         cursor.execute("SELECT version_num FROM alembic_version;")
         assert cursor.fetchone()[0] == "003_add_phase_c_analytics_infrastructure"
+
+        cursor.execute("SELECT count(*) FROM issues;")
+        assert cursor.fetchone()[0] == 2328
+    finally:
+        conn.close()
+
+
+def test_migration_004_lifecycle(staging_db):
+    """Test Stage 3 Migration 004: upgrade from 003 -> verify schema -> downgrade -> re-upgrade."""
+    staging_file, alembic_cfg = staging_db
+
+    # Step 1: Upgrade to 004 head
+    command.upgrade(alembic_cfg, "head")
+
+    conn = sqlite3.connect(staging_file)
+    try:
+        cursor = conn.cursor()
+        cursor.execute("SELECT version_num FROM alembic_version;")
+        assert cursor.fetchone()[0] == "004_add_discussions_and_pr_depth"
+
+        # Verify discussions and discussion_comments exist
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table';")
+        tables = set(r[0] for r in cursor.fetchall())
+        assert "discussions" in tables
+        assert "discussion_comments" in tables
+
+        # Verify pull_requests additions
+        cursor.execute("PRAGMA table_info(pull_requests);")
+        pr_cols = {r[1] for r in cursor.fetchall()}
+        assert "body" in pr_cols
+        assert "head_branch" in pr_cols
+        assert "base_branch" in pr_cols
+        assert "is_draft" in pr_cols
+        assert "labels" in pr_cols
+        assert "requested_reviewers" in pr_cols
+
+        # Verify releases additions
+        cursor.execute("PRAGMA table_info(releases);")
+        rel_cols = {r[1] for r in cursor.fetchall()}
+        assert "is_tag_fallback" in rel_cols
+        assert "commit_sha" in rel_cols
+    finally:
+        conn.close()
+
+    # Step 2: Downgrade back to 003
+    command.downgrade(alembic_cfg, "003_add_phase_c_analytics_infrastructure")
+
+    conn = sqlite3.connect(staging_file)
+    try:
+        cursor = conn.cursor()
+        cursor.execute("SELECT version_num FROM alembic_version;")
+        assert cursor.fetchone()[0] == "003_add_phase_c_analytics_infrastructure"
+
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name IN ('discussions', 'discussion_comments');")
+        assert len(cursor.fetchall()) == 0
+
+        cursor.execute("PRAGMA table_info(pull_requests);")
+        pr_cols_down = {r[1] for r in cursor.fetchall()}
+        assert "is_draft" not in pr_cols_down
+        assert "head_branch" not in pr_cols_down
+
+        cursor.execute("PRAGMA table_info(releases);")
+        rel_cols_down = {r[1] for r in cursor.fetchall()}
+        assert "is_tag_fallback" not in rel_cols_down
+    finally:
+        conn.close()
+
+    # Step 3: Re-upgrade to head
+    command.upgrade(alembic_cfg, "head")
+
+    conn = sqlite3.connect(staging_file)
+    try:
+        cursor = conn.cursor()
+        cursor.execute("SELECT version_num FROM alembic_version;")
+        assert cursor.fetchone()[0] == "004_add_discussions_and_pr_depth"
 
         cursor.execute("SELECT count(*) FROM issues;")
         assert cursor.fetchone()[0] == 2328
@@ -381,6 +484,12 @@ def test_fresh_database_upgrade_head_and_orm_queries(tmp_path):
 
             runs = session.scalars(select(AnalysisRun)).all()
             assert runs == []
+
+            discussions = session.scalars(select(Discussion)).all()
+            assert discussions == []
+
+            disc_comments = session.scalars(select(DiscussionComment)).all()
+            assert disc_comments == []
 
             # Verify complete write and read lifecycle with ORM models
             now = datetime.now(timezone.utc)
@@ -441,7 +550,87 @@ def test_fresh_database_upgrade_head_and_orm_queries(tmp_path):
                 speed_tier_distribution={"< 1 Day": 1},
             )
             session.add(repo_ana)
+
+            pr = PullRequest(
+                repository_id=repo.id,
+                pr_number=1,
+                title="Fresh DB test PR",
+                body="PR description body text",
+                state="open",
+                head_branch="feature-x",
+                base_branch="main",
+                is_draft=True,
+                labels=["enhancement"],
+                requested_reviewers=["lead-reviewer"],
+                created_at=now,
+            )
+            session.add(pr)
+
+            rel = Release(
+                repository_id=repo.id,
+                release_id=99901,
+                tag_name="v1.0.0",
+                name="v1.0.0",
+                published_at=now,
+                is_prerelease=False,
+                is_tag_fallback=True,
+                commit_sha="a1b2c3d4e5f67890123456789012345678901234",
+            )
+            session.add(rel)
+
+            disc = Discussion(
+                repository_id=repo.id,
+                discussion_number=1,
+                title="Welcome to discussions",
+                body="Q&A thread",
+                author="maintainer",
+                category_name="Q&A",
+                category_is_answerable=True,
+                is_answered=True,
+                answered_at=now,
+                answer_author="contributor",
+                created_at=now,
+                comments_count=1,
+                upvote_count=5,
+            )
+            session.add(disc)
+            session.flush()
+
+            disc_comment = DiscussionComment(
+                discussion_id=disc.id,
+                repository_id=repo.id,
+                comment_id="DC_123456",
+                author="contributor",
+                body="Here is the answer",
+                created_at=now,
+                is_answer=True,
+                upvote_count=3,
+            )
+            session.add(disc_comment)
             session.commit()
+
+            # Verify persisted rows match expected ORM properties
+            queried_pr = session.scalar(select(PullRequest).where(PullRequest.repository_id == repo.id))
+            assert queried_pr is not None
+            assert queried_pr.head_branch == "feature-x"
+            assert queried_pr.is_draft is True
+            assert queried_pr.labels == ["enhancement"]
+            assert queried_pr.requested_reviewers == ["lead-reviewer"]
+
+            queried_rel = session.scalar(select(Release).where(Release.release_id == 99901))
+            assert queried_rel is not None
+            assert queried_rel.is_tag_fallback is True
+            assert queried_rel.commit_sha == "a1b2c3d4e5f67890123456789012345678901234"
+
+            queried_disc = session.scalar(select(Discussion).where(Discussion.repository_id == repo.id))
+            assert queried_disc is not None
+            assert queried_disc.is_answered is True
+            assert queried_disc.category_name == "Q&A"
+            assert queried_disc.upvote_count == 5
+
+            queried_comment = session.scalar(select(DiscussionComment).where(DiscussionComment.comment_id == "DC_123456"))
+            assert queried_comment is not None
+            assert queried_comment.is_answer is True
 
             # Verify persisted rows match expected ORM properties
             queried_label = session.scalar(select(IssueLabel).where(IssueLabel.issue_id == issue.id))
