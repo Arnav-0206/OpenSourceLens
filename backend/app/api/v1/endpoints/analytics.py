@@ -643,7 +643,7 @@ def find_similar_issues(
 
     if not query_text or not query_text.strip():
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail="Either query_text or a valid issue_number must be provided.",
         )
 
