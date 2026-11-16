@@ -59,12 +59,12 @@ class TestDatabaseInit(unittest.TestCase):
         # Create tables
         create_res = create_database_tables(self.engine)
         self.assertEqual(create_res["status"], "success")
-        self.assertEqual(create_res["table_count"], 17)
+        self.assertEqual(create_res["table_count"], 19)
 
         # Status after creation
         status_after = get_table_status(self.engine)
         self.assertTrue(status_after["is_complete"])
-        self.assertEqual(len(status_after["existing_tables"]), 17)
+        self.assertEqual(len(status_after["existing_tables"]), 19)
 
         expected_tables = {
             "repositories",
@@ -84,6 +84,8 @@ class TestDatabaseInit(unittest.TestCase):
             "pull_request_review_comments",
             "releases",
             "issue_comments",
+            "discussions",
+            "discussion_comments",
         }
         self.assertEqual(set(status_after["existing_tables"]), expected_tables)
 

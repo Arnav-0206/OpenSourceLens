@@ -1,8 +1,8 @@
 # OpenSourceLens — System Architecture
 
-OpenSourceLens is a universal **GitHub Repository Intelligence and Analytics Platform** (see [product-vision.md](./product-vision.md)). The backend is a multi-stage asynchronous pipeline built on **FastAPI**, **SQLAlchemy 2.0**, **Alembic**, **PyTorch / Hugging Face Transformers / Sentence-Transformers**, and a six-domain statistical analytics engine (`methodology_version = "2026.1"`).
+OpenSourceLens is a universal **GitHub Repository Intelligence and Analytics Platform** (see [product-vision.md](./product-vision.md)). The backend is a multi-stage asynchronous pipeline built on **FastAPI**, **SQLAlchemy 2.0**, **Alembic**, **PyTorch / Hugging Face Transformers / Sentence-Transformers**, and a seven-domain statistical analytics engine (`methodology_version = "2026.2"`).
 
-> **System State Post-Stage 1 Cleanup:** The **Phase B** dynamic ingestion subsystem and **Phase C (C.1–C.8.3)** six-domain statistical analytics subsystem are operational in `backend/`. Obsolete 4-repo prototypes, duplicate collectors, legacy Phase A endpoints (`/repos`, `/related`, `/resolution`), and mock frontend registries have been removed. The platform is ready for Stage 2 (schema enrichment for discussions, diffs, assignees), Stage 3 (generalized ML/NLP), and Stage 4 (single-repository workspace UI).
+> **System State Post-Stage 3:** The **Phase B** dynamic ingestion subsystem and multi-domain statistical analytics subsystem are operational in `backend/` across 7 analytical domains (Development Activity, Contributors, Pull Requests, Issues, Release Evolution, Discussions Intelligence, and Cross-Domain Synthesis). Rich PR depth, git tags fallback, and GitHub Discussions (GraphQL API v4) are fully wired and tested. Stage 4 will deliver generalized ML/NLP pipelines and the single-repository workspace UI.
 
 ---
 
@@ -90,19 +90,20 @@ See [workers-and-deployment.md](./workers-and-deployment.md) and [database.md](.
 
 ---
 
-## 5. Analytics Orchestration, Six Domains & Synthesis
+## 5. Analytics Orchestration, Multi-Domain Engines & Synthesis
 
-[`AnalyticsOrchestrator`](../backend/app/services/analytics/orchestrator.py#L256-L1140) coordinates execution for a claimed `AnalysisRun`:
+[`AnalyticsOrchestrator`](../backend/app/services/analytics/orchestrator.py) coordinates execution for a claimed `AnalysisRun`:
 
 1. Opens a snapshot transaction (`AnalyticsJobQueue.open_analysis_snapshot()`) pinning `analytics_source_revision` and freezing `analysis_reference_time` in UTC.
-2. Executes five base calculators implementing [`BaseMetricCalculator`](../backend/app/services/analytics/base.py#L32-L66):
+2. Executes six base calculators implementing [`BaseMetricCalculator`](../backend/app/services/analytics/base.py):
    - `DevelopmentActivityCalculator` (C.2)
    - `ContributorIntelligenceCalculator` (C.3)
    - `PullRequestIntelligenceCalculator` (C.4)
    - `IssueIntelligenceCalculator` (C.5)
    - `ReleaseEvolutionCalculator` (C.6)
-3. Passes the precomputed domain results into `CrossDomainSynthesisCalculator` (C.6), which avoids recomputation while computing the Multi-Domain Diagnostic Scorecard, paired calendar-month Spearman Monte Carlo permutation tests (`B=10,000`, `K>=12`, `|r_AR1| > 0.40` suppression, Benjamini-Hochberg FDR `alpha=0.05`), and cross-domain rules.
-4. Embeds `release_evolution` inside `repository_synthesis` to preserve the 5-key [`AnalysisPayload`](../backend/app/schemas/analytics_v2.py#L59-L66) Pydantic v2 contract, computes aggregated `coverage_summary` and `confidence_summary`, consolidates rules via [`consolidate_rules()`](../backend/app/services/analytics/rule_engine.py#L249-L276), and commits atomically via `publish_and_finalize()`.
+   - `DiscussionsIntelligenceCalculator` (Stage 3 / Module 7)
+3. Passes the precomputed domain results into `CrossDomainSynthesisCalculator` (C.6), which avoids recomputation while computing the Multi-Domain Diagnostic Scorecard (including the `community_discussions` card), paired calendar-month Spearman Monte Carlo permutation tests (`B=10,000`, `K>=12`, `|r_AR1| > 0.40` suppression, Benjamini-Hochberg FDR `alpha=0.05`), and cross-domain rules.
+4. Embeds both `release_evolution` and `discussions_intelligence` inside `repository_synthesis` to strictly preserve the 5-key [`AnalysisPayload`](../backend/app/schemas/analytics_v2.py) Pydantic v2 contract, computes aggregated `coverage_summary` and `confidence_summary` across all 7 domains, consolidates rules via [`consolidate_rules()`](../backend/app/services/analytics/rule_engine.py), and commits atomically via `publish_and_finalize()`.
 
 See [analytics.md](./analytics.md) for exact formulas, thresholds, statistical guards, and rule IDs.
 

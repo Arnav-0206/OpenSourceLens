@@ -20,9 +20,9 @@ Engine creation lives in [`backend/app/database/session.py`](../backend/app/data
 
 ---
 
-## 2. Tables & Relationships (17 ORM Tables)
+## 2. Tables & Relationships (19 ORM Tables)
 
-The live ORM registers **17 data tables** (plus Alembic's `alembic_version`):
+The live ORM registers **19 data tables** (plus Alembic's `alembic_version`):
 
 ```mermaid
 erDiagram
@@ -43,6 +43,8 @@ erDiagram
     repositories ||--o{ issue_comments : owns
     issues ||--o{ issue_comments : thread_on
     pull_requests ||--o{ issue_comments : thread_on
+    repositories ||--o{ discussions : hosts
+    discussions ||--o{ discussion_comments : has
     repositories ||--o{ repository_analytics : legacy_snapshots
     issues ||--o{ predictions : logs
     issues ||--o{ related_issues_cache : source_target
@@ -67,11 +69,13 @@ erDiagram
 | `commits` | Commit metadata (`sha`, `author_name/email/login/id`, `author_date`, `committer_date`, `message`, optional `additions`, `deletions`, `total_changes`). | Unique constraint on `(repository_id, sha)`. |
 | `contributors` | Repository contributors anchored on `github_id` or unlinked `git_email`, with `primary_role`, reconciled counts, `tenure_days`, `is_newcomer`, `is_core`, `is_bot`, `is_unlinked`, `identity_confidence`. | Two partial unique indexes: `uq_contributors_repo_github_id(repository_id, github_id) WHERE github_id IS NOT NULL` and `uq_contributors_repo_unlinked_email(repository_id, git_email) WHERE github_id IS NULL AND git_email IS NOT NULL`. |
 | `contributor_activities` | Normalized per-event log (`commit`, `pr_opened`, `pr_reviewed`, `issue_opened`, `issue_comment`, etc.). | Unique `(repository_id, activity_type, entity_id)`. |
-| `pull_requests` | Pull requests (`pr_number`, `state`, `created_at`, `closed_at`, `merged_at`, turnaround latencies, diff sizes `additions/deletions/changed_files`). | Indexed on `(repository_id, state, merged_at)`. Note: ORM lacks a unique constraint on `(repository_id, pr_number)` although Migration 002 created `uq_pr_repo_number`. |
+| `pull_requests` | Pull requests (`pr_number`, `state`, `created_at`, `closed_at`, `merged_at`, turnaround latencies, diff sizes `additions/deletions/changed_files`, plus PR depth fields `body`, `head_branch`, `base_branch`, `is_draft`, `labels`, `requested_reviewers`). | Indexed on `(repository_id, state, merged_at)`. Unique constraint `uq_pr_repo_number(repository_id, pr_number)`. |
 | `pull_request_reviews` | Formal PR review envelopes (`review_id`, `state`, `submitted_at`, `author`, `author_id`). | Unique `ix_pull_request_reviews_review_id(review_id)`. |
 | `pull_request_review_comments` | Inline diff review comments (`comment_id`, `path`, `line`, `commit_id`). | Unique `ix_pull_request_review_comments_comment_id(comment_id)`. |
-| `releases` | Repository releases (`release_id`, `tag_name`, `name`, `published_at`, `is_prerelease`, `body`). | Unique `ix_releases_release_id(release_id)`. |
+| `releases` | Repository releases (`release_id`, `tag_name`, `name`, `published_at`, `is_prerelease`, `body`, plus git tags fallback columns `is_tag_fallback`, `commit_sha`). | Unique `ix_releases_release_id(release_id)`. |
 | `issue_comments` | Conversation comments attached to either an issue or a PR. | Unique `comment_id`; SQLite/Postgres `CHECK` constraint `NOT (issue_id IS NOT NULL AND pull_request_id IS NOT NULL)`. |
+| `discussions` | GitHub Discussions threads (`discussion_number`, `title`, `body`, `author`, `category_name`, `category_is_answerable`, `is_answered`, `answered_at`, `upvote_count`, `comments_count`). | Indexed on `(repository_id, created_at)` and `(repository_id, is_answered)`. Unique `uq_discussions_repo_number(repository_id, discussion_number)`. |
+| `discussion_comments` | Comments and marked answers on GitHub Discussions (`comment_id`, `author`, `body`, `upvote_count`, `is_answer`). | Unique `ix_discussion_comments_comment_id(comment_id)`. FK: `discussion_id -> discussions.id` (`CASCADE`). |
 
 ### Phase C Analytics Lifecycle Tables
 
@@ -107,6 +111,7 @@ Migrations reside in [`backend/alembic/versions/`](../backend/alembic/versions/)
 1. `001_initial_benchmark_schema` (`<base> -> 001_initial_benchmark_schema`)
 2. `002_add_dynamic_tables` (`001_initial_benchmark_schema -> 002_add_dynamic_tables`)
 3. `003_add_phase_c_analytics_infrastructure` (`002_add_dynamic_tables -> 003_add_phase_c_analytics_infrastructure`)
+4. `004_add_discussions_and_pr_depth` (`003_add_phase_c_analytics_infrastructure -> 004_add_discussions_and_pr_depth`)
 
 [`backend/alembic/env.py`](../backend/alembic/env.py) configures `render_as_batch=True` for SQLite compatibility and supports overriding the target database with `-x db_url=...` or `-x db_path=...`, otherwise falling back to `DATABASE_URL` or `get_database_url()`.
 

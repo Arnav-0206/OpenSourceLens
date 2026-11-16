@@ -77,21 +77,41 @@ The backend core from recent phases is complete on SQLite (PostgreSQL execution 
 
 ---
 
-## Stage 3 — Richer GitHub Entity Depth & GitHub Discussions Integration *(Feature Slice 1)*
+## Stage 3 — Richer GitHub Entity Depth & GitHub Discussions Integration (COMPLETED)
 
 **Goal:** Close the GitHub API collection gaps identified in [product-vision.md](./product-vision.md) so the platform truly extracts deep repository context rather than shallow samples.
 
-1. **Pull Request & Commit Depth Expansion:**
-   - Enrich `PullRequest` model & collector (`Migration 004`) to capture `body`, `head_branch`, `base_branch`, `is_draft`, `labels`, `requested_reviewers`, and fetch per-PR detail (`additions`, `deletions`, `changed_files`) so size-vs-turnaround analysis (`small..xl`) populates on live runs.
-   - Increase/make configurable `commit_details` diff budgets and enrich issue fields (`assignees`, `reactions_count`, configurable pagination depth).
-2. **Release Tags & Notes Support:**
-   - Harvest GitHub `/tags` as fallback when formal `/releases` are unused, and persist release/tag metadata for richer evolution analysis.
-3. **GitHub Discussions & Community Context:**
-   - Add GitHub GraphQL (or Discussions REST/GraphQL client) collection for repository **Discussions** (`discussions`, `discussion_comments` tables: category, title, body, author, is_answered, upvotes/reactions, timestamps, comments).
-   - Add Community/Discussions profile metrics (volume, category mix, Q&A answered rate, engagement, recurring themes hook) to the analytics payload (`methodology_version` bump, e.g. `"2026.2"`).
+**Status:** **COMPLETED** (Commits: `44afbec`, `f8a5616`, `7463ebb`, `f48f8ca`, `a660fcb`)
 
-### What You Can Present After Stage 3
-- **Deep GitHub Data Showcase:** Show that for any submitted repository, OpenSourceLens now captures PR diff sizes, branches, drafts, reviewers, issue reactions/assignees, git tag history, **and live GitHub Discussions insights**—far richer than basic GitHub repo counters.
+### 3.1 Schema & Migration 004 (Completed)
+- Created Alembic Migration `004_add_discussions_and_pr_depth.py` adding PR depth columns (`body`, `head_branch`, `base_branch`, `is_draft`, `labels`, `requested_reviewers`) and release tag fallback columns (`is_tag_fallback`, `commit_sha`).
+- Created new relational tables `discussions` and `discussion_comments` with foreign keys, indexes, and unique constraints.
+- Updated `backend/app/database/models.py` with corresponding SQLAlchemy 2.0 ORM mappings.
+- Verified live SQLite schema upgrade and Alembic tests in `tests/test_alembic_migrations.py`.
+
+### 3.2 PR Depth & Diff Details Ingestion (Completed)
+- Enriched `RepositoryCollector.collect_pull_requests()` to extract `body`, `draft`, `head_branch`, `base_branch`, `labels`, and `requested_reviewers`.
+- Added `pr_details` stream budget to `EntityRateBudgeter` (5 in `standard_diagnostic`, 0 in `fast_snapshot`) to sample individual PR diff metrics (`additions`, `deletions`, `changed_files`).
+- Verified diff-size turnaround classification (`small..xl`) in `PullRequestIntelligenceCalculator`.
+
+### 3.3 Release Tags Fallback Harvesting (Completed)
+- Implemented `/tags` fallback in `RepositoryCollector.collect_releases()` when formal `/releases` returns zero items, querying tag commit dates and marking `is_tag_fallback=True`.
+- Updated `ReleaseEvolutionCalculator` to incorporate tag fallback releases and track `tag_fallback_releases_count` in coverage telemetry.
+
+### 3.4 GitHub Discussions GraphQL Client & Ingestion (Completed)
+- Added `execute_graphql()` method to `AsyncGitHubClient` with query validation, error handling, rate budget accounting, and inter-request pacing.
+- Implemented `RepositoryCollector.collect_discussions()` querying up to 10 discussions per page, extracting categories, question answerability, marked answers, comment threads, and upvotes.
+
+### 3.5 Discussions Intelligence Analytics Engine & Synthesis (Completed)
+- Created `DiscussionsIntelligenceCalculator` (Module 7 / Stage 3) implementing `BaseMetricCalculator`.
+- Computes discussions volume, category breakdown, Q&A resolution dynamics (`qna_answered_rate`, `time_to_answer_hours` quantiles p50/p75/p90/mean), community engagement (median comments & upvotes), and contributor overlap bridging.
+- Generates deterministic rules: `RULE-DISC-EMPTY`, `RULE-DISC-001`, `RULE-DISC-002`, `RULE-DISC-003`, `RULE-DISC-004`.
+- Integrated `community_discussions` card into `CrossDomainSynthesisCalculator` diagnostic scorecard.
+- Bumped `CURRENT_METHODOLOGY_VERSION = "2026.2"` and wired Discussions into `AnalyticsOrchestrator` and V2 domain endpoints.
+- Added comprehensive unit tests in `tests/test_analytics_discussions.py` (6/6 passed).
+
+### 3.6 What You Can Present After Stage 3
+- **Deep GitHub Data Showcase:** Show that for any submitted repository, OpenSourceLens captures PR diff sizes, branches, drafts, reviewers, git tag release history, **and live GitHub Discussions insights** (Q&A resolution rates, answer latency percentiles, and community engagement)—far richer than standard GitHub counters. All 394 project tests pass with 0 failures.
 
 ---
 

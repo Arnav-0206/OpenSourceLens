@@ -1,8 +1,8 @@
 # OpenSourceLens — Dynamic GitHub Ingestion Pipeline
 
-OpenSourceLens dynamically collects commits, contributors, pull requests, PR reviews, inline review comments, pure issues, conversation comments, and releases from **any eligible public GitHub repository** via GitHub REST API v3.
+OpenSourceLens dynamically collects commits, contributors, pull requests, PR reviews, inline review comments, pure issues, conversation comments, releases (with git tags fallback), and GitHub Discussions from **any eligible public GitHub repository** via GitHub REST API v3 and GraphQL API v4.
 
-> **Product Scope & Collection Depth Gaps:** Per [product-vision.md](./product-vision.md), OpenSourceLens targets rich public GitHub API intelligence rather than shallow counters. Current Phase B collection has three known depth gaps scheduled for expansion: (1) `/pulls` list calls do not populate per-PR `additions`, `deletions`, `changed_files`, `body`, `head`/`base` branches, `draft` flag, or requested reviewers; (2) `commit_details` diffs are capped at `0` (`fast_snapshot`) or `5` (`standard_diagnostic`); and (3) issue `reactions_count`/assignees, repository tags fallback, and **GitHub Discussions** (GraphQL/REST) are not yet harvested.
+> **Collection Depth & Coverage Status (Stage 3):** PR depth fields (`body`, `head_branch`, `base_branch`, `draft`, `labels`, `requested_reviewers`), PR diff lines (`additions`, `deletions`, `changed_files` via `pr_details` budget), git tags fallback for unannounced releases (`/tags`), and **GitHub Discussions** GraphQL ingestion are fully implemented and integrated. Planned future expansions include issue reactions and dynamic per-repo embeddings.
 
 ---
 
@@ -40,13 +40,14 @@ GitHub URL / Slug
    1. `collect_repository_metadata`
    2. `collect_commits` + up to `commit_details` detailed diff calls (`/commits/{sha}` for `additions`/`deletions`/`total_changes`)
    3. `collect_contributors` (anchoring strictly on `github_id` or unlinked `git_email` without speculative display-name merging)
-   4. `collect_pull_requests` (`/pulls?state=all&sort=updated&direction=desc`)
-   5. `collect_pr_reviews` (sampled PRs up to 2 or 20; updates `time_to_first_review_hours`)
+   4. `collect_pull_requests` (`/pulls?state=all&sort=updated&direction=desc`, extracting PR depth fields `body`, `head_branch`, `base_branch`, `draft`, `labels`, `requested_reviewers`, plus `pr_details` sampled diff calls for `additions`/`deletions`/`changed_files`)
+   5. `collect_pr_reviews` (sampled PRs up to 2 or 15; updates `time_to_first_review_hours`)
    6. `collect_pr_inline_comments` (`/pulls/comments`; **0** budget in `fast_snapshot`)
    7. `collect_issues` (`/issues?state=all&sort=updated&direction=desc`, discarding items with `"pull_request" in item`, running `IssueTextCleaner`, technical feature flags, canonical regex category extraction, and `speed_tier`)
    8. `collect_issue_comments` (`/issues/comments`, linking exclusively to either `issue_id` OR `pull_request_id` per `chk_issue_comment_parent`)
-   9. `collect_releases` (`/releases`)
-   10. `reconcile_contributor_metrics()` (recomputes distinct commit/PR/review/issue counts, tenure, `is_newcomer <= 30d`, `is_core`).
+   9. `collect_releases` (`/releases`, falling back to `/tags` commits when `/releases` returns zero items)
+   10. `collect_discussions` (GraphQL API v4 querying discussions, authors, categories, Q&A status, answers, and comments)
+   11. `reconcile_contributor_metrics()` (recomputes distinct commit/PR/review/issue counts, tenure, `is_newcomer <= 30d`, `is_core`).
 6. **Atomic Mutation & Revision Tracking:** Every helper populates `mutated_records`. Only when `mutated_records` is non-empty does `collect_repository()` atomically bump `repositories.analytics_source_revision += 1`.
 7. **Completion & Post-Ingestion Analytics Enqueue:**
    - `DurableJobQueue.complete_job()` assigns terminal `CollectionRun.status`:
@@ -69,11 +70,13 @@ Defined in [`BUDGET_CONFIGS`](../backend/app/services/rate_budgeter.py#L17-L50):
 | `commit_details` | `0` | `5` | Individual `/commits/{sha}` diff calls |
 | `contributors` | `1` | `2` | `/contributors?per_page=100` |
 | `pull_requests` | `1` | `3` | `/pulls?state=all&per_page=100` |
-| `pr_reviews` | `2` | `20` | Sampled per-PR `/pulls/{n}/reviews` |
+| `pr_details` | `0` | `5` | Individual `/pulls/{n}` diff stats (`additions`/`deletions`/`changed_files`) |
+| `pr_reviews` | `2` | `15` | Sampled per-PR `/pulls/{n}/reviews` |
 | `pr_inline_comments` | `0` | `2` | `/pulls/comments` (`0` = skipped by mode) |
-| `issues` | `1` | `5` | `/issues?state=all&per_page=100` |
-| `issue_comments` | `1` | `3` | `/issues/comments?per_page=100` |
-| `releases` | `1` | `1` | `/releases?per_page=100` |
+| `issues` | `1` | `4` | `/issues?state=all&per_page=100` |
+| `issue_comments` | `1` | `2` | `/issues/comments?per_page=100` |
+| `releases` | `1` | `2` | `/releases?per_page=100` (or `/tags` fallback) |
+| `discussions` | `1` | `3` | GraphQL API v4 discussions query |
 | `headroom` | `1` | `5` | Reserved headroom buffer |
 
 *(Note: `CollectionRun.mode` column also accommodates `"full_history"` as recognized by analytics calculators, though `IngestionSubmitRequest` pattern and `BUDGET_CONFIGS` currently accept only `fast_snapshot` and `standard_diagnostic`.)*
