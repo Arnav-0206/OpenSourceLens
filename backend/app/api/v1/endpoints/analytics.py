@@ -15,7 +15,7 @@ from backend.app.core.exceptions import (
     InvalidParameterException,
     RepositoryNotFoundException,
 )
-from backend.app.database.models import AnalysisRun, Repository
+from backend.app.database.models import AnalysisRun, Issue, Repository
 from backend.app.database.session import get_db
 from backend.app.schemas.analytics_v2 import (
     AnalysisDomainSliceResponse,
@@ -30,7 +30,13 @@ from backend.app.schemas.analytics_v2 import (
     AnalysisStatusResponse,
     CURRENT_METHODOLOGY_VERSION,
     RepositoryFreshnessEnvelope,
+    SimilarCandidateItem,
+    SimilarQueryRequest,
+    SimilarQueryResponse,
+    TopicDiscoveryResponse,
 )
+from backend.app.services.nlp.semantic_index_service import semantic_index_service
+from backend.app.services.nlp.topic_discovery_service import topic_discovery_service
 from backend.app.services.analytics.orchestrator import ALL_ANALYTICS_DOMAINS
 from backend.app.services.analytics_queue import AnalyticsJobQueue
 
@@ -594,6 +600,108 @@ def get_repository_analysis_domain_slice(
         confidence_breakdown=domain_breakdown.get(domain_key),
         rules=domain_rules,
     )
+
+
+@router.post(
+    "/{owner}/{name}/similar",
+    response_model=SimilarQueryResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Semantic Issue & Duplicate Search",
+    tags=["analytics-v2", "applied-intelligence"],
+)
+def find_similar_issues(
+    owner: str,
+    name: str,
+    payload: SimilarQueryRequest,
+    db: Session = Depends(get_db),
+) -> SimilarQueryResponse:
+    """Find semantically related issues and potential duplicate candidates within a repository.
+
+    Supports querying by natural language text or by existing issue_number.
+    Uses unit-normalized dense vectors (all-MiniLM-L6-v2) and dot product cosine similarity.
+    """
+    repo = _resolve_repository_ci(owner=owner, name=name, db=db)
+
+    query_text = payload.query_text
+    exclude_issue_id: Optional[int] = None
+
+    if payload.issue_number is not None:
+        target_issue = db.scalar(
+            select(Issue).where(
+                Issue.repository_id == repo.id,
+                Issue.issue_number == payload.issue_number,
+            )
+        )
+        if not target_issue:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Issue #{payload.issue_number} not found in {owner}/{name}.",
+            )
+        exclude_issue_id = target_issue.id
+        if not query_text:
+            query_text = f"Title: {target_issue.title} | Description: {target_issue.clean_body or target_issue.body or ''}"
+
+    if not query_text or not query_text.strip():
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Either query_text or a valid issue_number must be provided.",
+        )
+
+    result = semantic_index_service.query_similar(
+        repository_id=repo.id,
+        query_text=query_text.strip(),
+        db=db,
+        top_k=payload.top_k,
+        threshold=payload.threshold,
+        include_discussions=payload.include_discussions,
+    )
+
+    # Filter out self-match if issue_number was queried
+    if exclude_issue_id is not None:
+        candidates = [
+            c for c in result["candidates"]
+            if not (c.get("entity_type") == "issue" and c.get("id") == exclude_issue_id)
+        ]
+        result["candidates"] = candidates
+        result["total_candidates_found"] = len(candidates)
+        result["has_potential_duplicate"] = (
+            len(candidates) > 0
+            and candidates[0]["similarity_score"] >= 0.70
+        )
+
+    return SimilarQueryResponse(
+        query=result["query"],
+        total_candidates_found=result["total_candidates_found"],
+        has_potential_duplicate=result["has_potential_duplicate"],
+        highest_similarity_score=result["highest_similarity_score"],
+        primary_recommendation=result["primary_recommendation"],
+        latency_ms=result["latency_ms"],
+        candidates=result["candidates"],
+    )
+
+
+@router.get(
+    "/{owner}/{name}/topics",
+    response_model=TopicDiscoveryResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Unsupervised Topic & Theme Discovery",
+    tags=["analytics-v2", "applied-intelligence"],
+)
+def discover_topics(
+    owner: str,
+    name: str,
+    max_clusters: int = Query(default=8, ge=2, le=15, description="Max topic clusters to extract"),
+    db: Session = Depends(get_db),
+) -> TopicDiscoveryResponse:
+    """Discover recurring bug/feature themes and discussion topics across a repository."""
+    repo = _resolve_repository_ci(owner=owner, name=name, db=db)
+    return topic_discovery_service.discover_repository_topics(
+        repository_id=repo.id,
+        repo_name=repo.repo_name,
+        db=db,
+        max_clusters=max_clusters,
+    )
+
 
 
 

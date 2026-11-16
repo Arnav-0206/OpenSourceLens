@@ -259,3 +259,81 @@ class AnalysisDomainSliceResponse(BaseModel):
         description="Domain confidence score and applied penalties",
     )
     rules: List[Dict[str, Any]] = Field(default_factory=list, description="Consolidated rule interpretations for this domain")
+
+
+class SimilarQueryRequest(BaseModel):
+    """Request payload for finding semantically similar issues or duplicates."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    query_text: Optional[str] = Field(
+        default=None,
+        max_length=2000,
+        description="Natural language query string or issue text to match against",
+        examples=["CUDA out of memory error during backward pass"],
+    )
+    issue_number: Optional[int] = Field(
+        default=None,
+        description="Optional existing issue number to match against",
+    )
+    top_k: int = Field(default=5, ge=1, le=50, description="Maximum candidate matches to return")
+    threshold: float = Field(default=0.45, ge=0.0, le=1.0, description="Minimum cosine similarity cutoff")
+    include_discussions: bool = Field(default=True, description="Whether to include GitHub discussions in search")
+
+
+class SimilarCandidateItem(BaseModel):
+    """Individual ranked similar candidate item."""
+
+    rank: int = Field(..., description="Similarity rank index [1..k]")
+    entity_type: str = Field(..., description="'issue' or 'discussion'")
+    id: int = Field(..., description="Entity primary key ID")
+    number: int = Field(..., description="Issue or discussion number")
+    title: str = Field(..., description="Title of the candidate match")
+    state: str = Field(..., description="Lifecycle state (e.g. open, closed, answered)")
+    similarity_score: float = Field(..., description="Cosine similarity score [0.0, 1.0]")
+    confidence_tier: str = Field(..., description="'HIGH' (>=0.70), 'MEDIUM' (>=0.55), or 'LOW' (>=0.45)")
+    duplicate_candidate: bool = Field(..., description="True if score indicates a probable duplicate (>=0.70)")
+    canonical_label: Optional[str] = Field(default=None, description="Issue canonical category if applicable")
+    category: Optional[str] = Field(default=None, description="Discussion category if applicable")
+    author: Optional[str] = Field(default=None, description="Author login")
+    comments_count: Optional[int] = Field(default=None, description="Comment count")
+    created_at: Optional[str] = Field(default=None, description="Creation timestamp in ISO format")
+
+
+class SimilarQueryResponse(BaseModel):
+    """Response payload for semantic similarity queries."""
+
+    query: str = Field(..., description="Sanitized query text executed")
+    total_candidates_found: int = Field(..., description="Count of candidate items meeting threshold")
+    has_potential_duplicate: bool = Field(..., description="True if any candidate meets duplicate threshold (>=0.70)")
+    highest_similarity_score: float = Field(..., description="Highest cosine score found in repository")
+    primary_recommendation: str = Field(..., description="Actionable summary or duplicate recommendation")
+    latency_ms: float = Field(..., description="Query execution latency in milliseconds")
+    candidates: List[SimilarCandidateItem] = Field(default_factory=list, description="Ranked candidate matches")
+
+
+class DiscoveredTopicItem(BaseModel):
+    """An unsupervised discovered topic cluster across issues and discussions."""
+
+    cluster_id: int = Field(..., description="Cluster identifier index [0..k-1]")
+    title: str = Field(..., description="Synthesized human-readable topic title")
+    keywords: List[str] = Field(default_factory=list, description="Top c-TF-IDF keyword tokens")
+    total_count: int = Field(..., description="Total items in this topic cluster")
+    open_count: int = Field(..., description="Open issues/discussions in this topic")
+    closed_count: int = Field(..., description="Closed or answered issues/discussions")
+    representative_items: List[Dict[str, Any]] = Field(
+        default_factory=list,
+        description="Top representative items closest to cluster centroid",
+    )
+
+
+class TopicDiscoveryResponse(BaseModel):
+    """Response payload for unsupervised topic discovery across repository items."""
+
+    repo_name: str = Field(..., description="Repository owner/name")
+    total_topics_discovered: int = Field(..., description="Count of distinct clusters discovered")
+    total_items_clustered: int = Field(..., description="Count of issues and discussions analyzed")
+    methodology: str = Field(..., description="Algorithm used (e.g. 'KMeans + c-TF-IDF')")
+    topics: List[DiscoveredTopicItem] = Field(default_factory=list, description="Discovered topic clusters")
+    execution_time_ms: float = Field(..., description="Discovery execution time in milliseconds")
+
