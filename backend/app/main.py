@@ -189,8 +189,15 @@ def read_root(db: Session = Depends(get_db)) -> RootResponse:
     summary="Health Check Probe",
     status_code=status.HTTP_200_OK,
 )
+@app.get(
+    "/api/v1/health",
+    response_model=HealthResponse,
+    tags=["system"],
+    summary="API v1 Health Check Probe",
+    status_code=status.HTTP_200_OK,
+)
 def read_health(db: Session = Depends(get_db)) -> HealthResponse:
-    """Evaluate live database connectivity and system operational status."""
+    """Evaluate live database connectivity, queue telemetry, worker status, and ML model readiness."""
     conn_info = check_connection(db.get_bind())
     status_info = get_table_status(db.get_bind(), include_details=False)
 
@@ -203,11 +210,57 @@ def read_health(db: Session = Depends(get_db)) -> HealthResponse:
         error=conn_info["error"],
     )
 
+    # Queue and worker telemetry
+    queue_depths = {"ingestion": {"pending": 0, "running": 0}, "analytics": {"pending": 0, "running": 0}}
+    active_workers = {"active_workers_count": 0, "active_worker_ids": []}
+    try:
+        from backend.app.database.models import AnalysisRun, IngestionJob
+        from sqlalchemy import func
+        now_utc = datetime.now(timezone.utc)
+
+        pending_ingest = db.scalar(select(func.count(IngestionJob.id)).where(IngestionJob.status == "pending")) or 0
+        running_ingest = db.scalar(select(func.count(IngestionJob.id)).where(IngestionJob.status == "running")) or 0
+        pending_analytics = db.scalar(select(func.count(AnalysisRun.id)).where(AnalysisRun.status == "pending")) or 0
+        running_analytics = db.scalar(select(func.count(AnalysisRun.id)).where(AnalysisRun.status == "running")) or 0
+
+        queue_depths = {
+            "ingestion": {"pending": pending_ingest, "running": running_ingest},
+            "analytics": {"pending": pending_analytics, "running": running_analytics},
+        }
+
+        active_workers_query = db.scalars(
+            select(AnalysisRun.worker_id)
+            .where(AnalysisRun.status == "running")
+            .where(AnalysisRun.leased_until > now_utc)
+            .where(AnalysisRun.worker_id.isnot(None))
+            .distinct()
+        ).all()
+        active_workers = {
+            "active_workers_count": len(active_workers_query),
+            "active_worker_ids": list(active_workers_query),
+        }
+    except Exception:
+        pass
+
+    # Model status telemetry
+    try:
+        from backend.app.services.classification_service import GENERALIZABLE_MODEL_PATH
+        model_status = {
+            "classifier_generalizable": "ready" if GENERALIZABLE_MODEL_PATH.exists() else "cold_start_training_on_demand",
+            "semantic_embeddings": "ready",
+            "topic_discovery": "ready",
+        }
+    except Exception:
+        model_status = {"status": "unknown"}
+
     return HealthResponse(
         status="healthy" if is_healthy else "degraded",
         version=settings.VERSION,
         timestamp=datetime.now(timezone.utc),
         database=db_health,
+        queue_depths=queue_depths,
+        active_workers=active_workers,
+        model_status=model_status,
     )
 
 

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field
 
@@ -21,10 +21,13 @@ class DatabaseHealth(BaseModel):
 class HealthResponse(BaseModel):
     """System health check response model."""
 
-    status: str = Field(..., description="Overall system status: healthy or degraded")
+    status: str = Field(..., description="Overall system status: healthy, degraded, or unhealthy")
     version: str = Field(..., description="API semantic version")
     timestamp: datetime = Field(..., description="Health check evaluation timestamp")
     database: DatabaseHealth = Field(..., description="Database health status")
+    queue_depths: Optional[Dict[str, Any]] = Field(None, description="Pending and running queue counts")
+    active_workers: Optional[Dict[str, Any]] = Field(None, description="Worker heartbeat telemetry")
+    model_status: Optional[Dict[str, Any]] = Field(None, description="Machine learning model readiness")
 
 
 class RootResponse(BaseModel):
