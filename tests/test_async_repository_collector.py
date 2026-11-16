@@ -34,6 +34,8 @@ from backend.app.database.models import (
     Commit,
     Contributor,
     ContributorActivity,
+    Discussion,
+    DiscussionComment,
     Issue,
     IssueComment,
     IssueLabel,
@@ -1127,6 +1129,131 @@ class TestReleasesCollection:
             )
             assert res.metrics["cadence"]["status"] in ("sufficient", "limited")
             assert res.coverage.details["tag_fallback_releases_count"] == 2
+
+        asyncio.run(_run())
+
+
+class TestDiscussionsCollection:
+    """Tests for GitHub Discussions GraphQL harvesting and normalization."""
+
+    def test_collect_discussions_disabled(self, in_memory_db, mock_client):
+        """When discussions are disabled, collector returns 0 without errors."""
+        async def _run():
+            collector = RepositoryCollector(client=mock_client)
+            budgeter = EntityRateBudgeter(mode="standard_diagnostic")
+
+            repo = Repository(id=1011, repo_name="org/no-disc", owner="org", name="no-disc")
+            in_memory_db.add(repo)
+            in_memory_db.commit()
+
+            mock_client.execute_graphql.return_value = {
+                "data": {
+                    "repository": {
+                        "hasDiscussionsEnabled": False,
+                    }
+                }
+            }
+
+            count, is_part, reason = await collector.collect_discussions(
+                repo=repo,
+                budgeter=budgeter,
+                db=in_memory_db,
+            )
+
+            assert count == 0
+            assert is_part is False
+            assert reason is None
+
+        asyncio.run(_run())
+
+    def test_collect_discussions_enabled_with_threads_and_answers(self, in_memory_db, mock_client):
+        """When discussions are enabled, threads, categories, answers, and comments are persisted."""
+        async def _run():
+            collector = RepositoryCollector(client=mock_client)
+            budgeter = EntityRateBudgeter(mode="standard_diagnostic")
+
+            repo = Repository(id=1012, repo_name="org/has-disc", owner="org", name="has-disc")
+            in_memory_db.add(repo)
+            in_memory_db.commit()
+
+            mock_client.execute_graphql.return_value = {
+                "data": {
+                    "repository": {
+                        "hasDiscussionsEnabled": True,
+                        "discussions": {
+                            "totalCount": 1,
+                            "nodes": [
+                                {
+                                    "number": 55,
+                                    "title": "How to deploy to production?",
+                                    "body": "Need standard guidance for setup.",
+                                    "createdAt": "2026-10-01T10:00:00Z",
+                                    "updatedAt": "2026-10-01T12:00:00Z",
+                                    "upvoteCount": 8,
+                                    "author": {"login": "dev_alex"},
+                                    "category": {
+                                        "id": "CAT_1",
+                                        "name": "Q&A",
+                                        "isAnswerable": True,
+                                    },
+                                    "isAnswered": True,
+                                    "answeredAt": "2026-10-01T11:00:00Z",
+                                    "answer": {
+                                        "id": "DC_ANS_1",
+                                        "body": "Use docker compose up -d",
+                                        "createdAt": "2026-10-01T11:00:00Z",
+                                        "author": {"login": "core_maintainer"},
+                                    },
+                                    "comments": {
+                                        "totalCount": 2,
+                                        "nodes": [
+                                            {
+                                                "id": "DC_COMM_2",
+                                                "body": "Worked for me as well, thanks!",
+                                                "createdAt": "2026-10-01T11:30:00Z",
+                                                "upvoteCount": 3,
+                                                "author": {"login": "community_user"},
+                                            }
+                                        ],
+                                    },
+                                }
+                            ],
+                        },
+                    }
+                }
+            }
+
+            count, is_part, reason = await collector.collect_discussions(
+                repo=repo,
+                budgeter=budgeter,
+                db=in_memory_db,
+            )
+
+            assert count == 1
+            assert is_part is False
+
+            disc = in_memory_db.scalar(
+                select(Discussion).where(Discussion.repository_id == repo.id)
+            )
+            assert disc is not None
+            assert disc.discussion_number == 55
+            assert disc.title == "How to deploy to production?"
+            assert disc.author == "dev_alex"
+            assert disc.category_name == "Q&A"
+            assert disc.is_answered is True
+            assert disc.answer_author == "core_maintainer"
+            assert disc.upvote_count == 8
+
+            comments = in_memory_db.scalars(
+                select(DiscussionComment).where(DiscussionComment.discussion_id == disc.id)
+            ).all()
+            assert len(comments) == 2
+            ans = next(c for c in comments if c.is_answer)
+            assert ans.comment_id == "DC_ANS_1"
+            assert ans.author == "core_maintainer"
+            non_ans = next(c for c in comments if not c.is_answer)
+            assert non_ans.comment_id == "DC_COMM_2"
+            assert non_ans.upvote_count == 3
 
         asyncio.run(_run())
 

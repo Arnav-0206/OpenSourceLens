@@ -36,6 +36,8 @@ from backend.app.database.models import (
     Commit,
     Contributor,
     ContributorActivity,
+    Discussion,
+    DiscussionComment,
     Issue,
     IssueComment,
     IssueLabel,
@@ -163,6 +165,7 @@ class RepositoryCollector:
             "issues": 0,
             "issue_comments": 0,
             "releases": 0,
+            "discussions": 0,
         }
         entity_status: Dict[str, str] = {
             "repository": "pending",
@@ -174,6 +177,7 @@ class RepositoryCollector:
             "issues": "pending",
             "issue_comments": "pending",
             "releases": "pending",
+            "discussions": "pending",
         }
         errors: List[str] = []
         is_partial = False
@@ -311,7 +315,20 @@ class RepositoryCollector:
                 is_partial = True
                 partial_reason = partial_reason or rel_reason
 
-            # 10. Contributor SQL Metric Reconciliation (eliminates counter inflation)
+            # 10. Discussions (GraphQL API v4)
+            disc_count, disc_part, disc_reason = await self.collect_discussions(
+                repo=repo,
+                budgeter=active_budgeter,
+                db=db,
+                mutated_records=mutated_records,
+            )
+            items_collected["discussions"] = disc_count
+            entity_status["discussions"] = "truncated" if disc_part else "completed"
+            if disc_part:
+                is_partial = True
+                partial_reason = partial_reason or disc_reason
+
+            # 11. Contributor SQL Metric Reconciliation (eliminates counter inflation)
             self.reconcile_contributor_metrics(
                 repository_id=repo.id,
                 db=db,
@@ -1622,6 +1639,223 @@ class RepositoryCollector:
 
         db.flush()
         return count, res.is_partial, res.partial_reason
+
+    async def collect_discussions(
+        self,
+        repo: Repository,
+        budgeter: EntityRateBudgeter,
+        db: Session,
+        mutated_records: Optional[Set[Tuple[str, Any]]] = None,
+    ) -> Tuple[int, bool, Optional[str]]:
+        """Harvest GitHub repository discussions via GraphQL API v4."""
+        if not budgeter.can_consume("discussions", 1):
+            return 0, False, None
+
+        gql_query = """
+        query GetRepoDiscussions($owner: String!, $name: String!, $first: Int!) {
+          repository(owner: $owner, name: $name) {
+            hasDiscussionsEnabled
+            discussions(first: $first, orderBy: {field: CREATED_AT, direction: DESC}) {
+              totalCount
+              nodes {
+                id
+                number
+                title
+                body
+                createdAt
+                updatedAt
+                upvoteCount
+                author {
+                  login
+                }
+                category {
+                  id
+                  name
+                  isAnswerable
+                }
+                isAnswered
+                answeredAt
+                answer {
+                  id
+                  body
+                  createdAt
+                  author {
+                    login
+                  }
+                }
+                comments(first: 10) {
+                  totalCount
+                  nodes {
+                    id
+                    body
+                    createdAt
+                    upvoteCount
+                    author {
+                      login
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+        """
+
+        first_count = 50
+        count = 0
+        is_partial = False
+        partial_reason = None
+
+        try:
+            data = await self.client.execute_graphql(
+                query=gql_query,
+                variables={"owner": repo.owner, "name": repo.name, "first": first_count},
+                budgeter=budgeter,
+                entity="discussions",
+            )
+            if not isinstance(data, dict):
+                return 0, False, None
+            data_dict = data.get("data")
+            if not isinstance(data_dict, dict):
+                return 0, False, None
+            repo_data = data_dict.get("repository")
+            if not isinstance(repo_data, dict) or not repo_data.get("hasDiscussionsEnabled", False):
+                return 0, False, None
+
+            disc_conn = repo_data.get("discussions")
+            if not isinstance(disc_conn, dict):
+                return 0, False, None
+            nodes = disc_conn.get("nodes") or []
+
+            for node in nodes:
+                disc_num = node.get("number")
+                if not disc_num:
+                    continue
+
+                title = node.get("title", "")
+                body = node.get("body")
+                author_login = (node.get("author") or {}).get("login")
+                cat_info = node.get("category") or {}
+                cat_id = cat_info.get("id")
+                cat_name = cat_info.get("name") or "General"
+                cat_is_ans = bool(cat_info.get("isAnswerable", False))
+                is_ans = bool(node.get("isAnswered", False))
+                ans_at = parse_datetime(node.get("answeredAt"))
+                ans_obj = node.get("answer") or {}
+                ans_author = (ans_obj.get("author") or {}).get("login")
+                created_at = parse_datetime(node.get("createdAt")) or datetime.now(timezone.utc)
+                updated_at = parse_datetime(node.get("updatedAt"))
+                upvotes = node.get("upvoteCount", 0)
+                comments_obj = node.get("comments") or {}
+                comments_count = comments_obj.get("totalCount", 0)
+
+                disc = db.scalar(
+                    select(Discussion).where(
+                        Discussion.repository_id == repo.id,
+                        Discussion.discussion_number == disc_num,
+                    )
+                )
+
+                if disc is None:
+                    disc = Discussion(
+                        repository_id=repo.id,
+                        discussion_number=disc_num,
+                        title=title,
+                        body=body,
+                        author=author_login,
+                        category_id=cat_id,
+                        category_name=cat_name,
+                        category_is_answerable=cat_is_ans,
+                        is_answered=is_ans,
+                        answered_at=ans_at,
+                        answer_author=ans_author,
+                        created_at=created_at,
+                        updated_at=updated_at,
+                        comments_count=comments_count,
+                        upvote_count=upvotes,
+                    )
+                    db.add(disc)
+                    count += 1
+                    if mutated_records is not None:
+                        mutated_records.add(("discussion", disc_num))
+                else:
+                    changed = (
+                        disc.title != title
+                        or disc.body != body
+                        or disc.is_answered != is_ans
+                        or not _datetimes_equal(disc.answered_at, ans_at)
+                        or not _datetimes_equal(disc.updated_at, updated_at)
+                        or disc.comments_count != comments_count
+                        or disc.upvote_count != upvotes
+                    )
+                    if changed:
+                        disc.title = title
+                        disc.body = body
+                        disc.is_answered = is_ans
+                        disc.answered_at = ans_at
+                        disc.updated_at = updated_at
+                        disc.comments_count = comments_count
+                        disc.upvote_count = upvotes
+                        if mutated_records is not None:
+                            mutated_records.add(("discussion", disc_num))
+
+                db.flush()
+
+                # Save discussion answer if exists
+                if ans_obj.get("id"):
+                    ans_id = str(ans_obj["id"])
+                    ans_body = ans_obj.get("body")
+                    ans_created = parse_datetime(ans_obj.get("createdAt")) or created_at
+                    ans_comm = db.scalar(
+                        select(DiscussionComment).where(DiscussionComment.comment_id == ans_id)
+                    )
+                    if ans_comm is None:
+                        ans_comm = DiscussionComment(
+                            discussion_id=disc.id,
+                            repository_id=repo.id,
+                            comment_id=ans_id,
+                            author=ans_author,
+                            body=ans_body,
+                            created_at=ans_created,
+                            is_answer=True,
+                            upvote_count=0,
+                        )
+                        db.add(ans_comm)
+
+                # Save comments
+                comment_nodes = comments_obj.get("nodes") or []
+                for c_node in comment_nodes:
+                    c_id = str(c_node.get("id", ""))
+                    if not c_id or (ans_obj.get("id") and c_id == str(ans_obj["id"])):
+                        continue
+                    c_author = (c_node.get("author") or {}).get("login")
+                    c_body = c_node.get("body")
+                    c_created = parse_datetime(c_node.get("createdAt")) or created_at
+                    c_upvotes = c_node.get("upvoteCount", 0)
+
+                    existing_c = db.scalar(
+                        select(DiscussionComment).where(DiscussionComment.comment_id == c_id)
+                    )
+                    if existing_c is None:
+                        existing_c = DiscussionComment(
+                            discussion_id=disc.id,
+                            repository_id=repo.id,
+                            comment_id=c_id,
+                            author=c_author,
+                            body=c_body,
+                            created_at=c_created,
+                            is_answer=False,
+                            upvote_count=c_upvotes,
+                        )
+                        db.add(existing_c)
+
+            db.flush()
+
+        except Exception as exc:
+            logger.debug("GraphQL discussions harvesting error on %s: %s", repo.repo_name, exc)
+            return count, False, None
+
+        return count, is_partial, partial_reason
 
     def reconcile_contributor_metrics(
         self,

@@ -478,6 +478,36 @@ class AsyncGitHubClient:
             resumes_at=self.resumes_at,
         )
 
+    async def execute_graphql(
+        self,
+        query: str,
+        variables: Optional[Dict[str, Any]] = None,
+        budgeter: Optional[EntityRateBudgeter] = None,
+        entity: str = "discussions",
+    ) -> Dict[str, Any]:
+        """Execute a GraphQL API v4 query with rate budgeting and error handling.
+
+        Args:
+            query: GraphQL query string.
+            variables: Optional variables mapping.
+            budgeter: Optional EntityRateBudgeter to consume quota from.
+            entity: Entity category for budgeting (default 'discussions').
+
+        Returns:
+            Dict[str, Any]: Parsed JSON response.
+        """
+        resp = await self.request(
+            method="POST",
+            endpoint_or_url="https://api.github.com/graphql",
+            entity=entity,
+            budgeter=budgeter,
+            json_data={"query": query, "variables": variables or {}},
+        )
+        data = resp.json()
+        if "errors" in data and not data.get("data"):
+            logger.warning("GraphQL query returned errors: %s", data.get("errors"))
+        return data
+
     async def close(self) -> None:
         """Close the underlying HTTP client session if created."""
         if self._external_client and not self._external_client.is_closed:
