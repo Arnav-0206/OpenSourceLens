@@ -66,14 +66,20 @@ class ReportGeneratorService:
         rules = getattr(run, "rule_interpretations", []) or []
 
         # Domain slices
-        activity = payload.get("development_activity", {})
-        contributors = payload.get("contributor_ecosystem", {})
-        prs = payload.get("pull_request_intelligence", {})
-        issues = payload.get("issue_intelligence", {})
-        synthesis = payload.get("repository_synthesis", {})
-        releases = synthesis.get("release_evolution", {})
-        discussions = synthesis.get("discussions_intelligence", {})
-        correlations = synthesis.get("cross_domain_correlations", [])
+        activity = payload.get("development_activity", {}) or {}
+        contributors = payload.get("contributor_ecosystem", {}) or {}
+        prs = payload.get("pull_request_intelligence", {}) or {}
+        issues = payload.get("issue_intelligence", {}) or {}
+        synthesis = payload.get("repository_synthesis", {}) or {}
+        releases = synthesis.get("release_evolution", {}) or {}
+        discussions = synthesis.get("discussions_intelligence", {}) or {}
+        raw_correlations = synthesis.get("cross_domain_correlations", [])
+        if isinstance(raw_correlations, dict):
+            correlations = raw_correlations.get("pairs", []) or []
+        elif isinstance(raw_correlations, list):
+            correlations = raw_correlations
+        else:
+            correlations = []
 
         # Start Markdown buffer
         md: List[str] = []
@@ -93,41 +99,75 @@ class ReportGeneratorService:
         md.append("|---|---|---|---|")
 
         # Activity row
-        act_summary = activity.get("summary", {})
-        vel_trend = act_summary.get("velocity_trend", "stable").capitalize()
-        tot_commits = act_summary.get("total_commits", 0)
+        act_summary = activity.get("summary", {}) or {}
+        vel_trend = (act_summary.get("velocity_trend") or "active").capitalize()
+        tot_commits = act_summary.get("total_commits", 0) or 0
         md.append(f"| **Development Activity** | Commit Velocity | {tot_commits:,} commits across evaluated window | `{vel_trend}` |")
 
         # Contributors row
-        gini = contributors.get("gini_coefficient")
-        bf50 = contributors.get("bus_factors", {}).get("bf50", "N/A")
-        gini_str = f"Gini {gini:.2f}" if gini is not None else "Gini N/A"
-        md.append(f"| **Contributor Ecosystem** | Inequality & Bus Factor | {gini_str}; BF50 = {bf50} contributors | `Analyzed` |")
+        contrib_conc = contributors.get("concentration", {}) or {}
+        contrib_part = contributors.get("participation", {}) or {}
+        gini = contrib_conc.get("gini_coefficient")
+        if gini is None:
+            gini = contributors.get("gini_coefficient")
+        bf50 = contrib_conc.get("bf50")
+        if bf50 is None:
+            bf50 = (contributors.get("bus_factors", {}) or {}).get("bf50", "N/A")
+        tot_contribs = (
+            contrib_part.get("directory_contributors_count")
+            or contributors.get("total_contributors")
+            or contrib_conc.get("active_human_commit_authors_count")
+            or 0
+        )
+        gini_str = f"Gini {gini:.2f}" if isinstance(gini, (int, float)) else "Gini N/A"
+        md.append(f"| **Contributor Ecosystem** | Inequality & Bus Factor | {tot_contribs:,} contributors; {gini_str}; BF50 = {bf50} | `Analyzed` |")
 
         # PR row
-        tot_prs = prs.get("total_prs", 0)
-        merge_rate = _format_pct(prs.get("outcomes", {}).get("merge_rate"))
-        ttf_p50 = _format_hours(prs.get("turnaround_hours", {}).get("p50"))
-        md.append(f"| **Pull Requests & Reviews** | Merge Rate & Turnaround | {tot_prs:,} PRs ({merge_rate} merged); p50 = {ttf_p50} | `Analyzed` |")
+        pr_outcomes = prs.get("outcome_distribution", {}) or prs.get("outcomes", {}) or {}
+        tot_prs = pr_outcomes.get("total_eligible_prs") or prs.get("total_prs") or 0
+        merge_rate = _format_pct(pr_outcomes.get("merge_rate"))
+        pr_merge_lat = prs.get("merge_latency", {}) or {}
+        pr_turnaround = prs.get("turnaround_hours", {}) or {}
+        ttf_p50_val = pr_merge_lat.get("p50_hours")
+        if ttf_p50_val is None:
+            ttf_p50_val = pr_turnaround.get("p50")
+        first_resp_val = ((prs.get("responsiveness", {}) or {}).get("ttf_resp", {}) or {}).get("p50_hours")
+        pr_speed_str = (
+            f"merge p50 = {_format_hours(ttf_p50_val)}"
+            if ttf_p50_val is not None
+            else (f"first reply p50 = {_format_hours(first_resp_val)}" if first_resp_val is not None else "N/A")
+        )
+        md.append(f"| **Pull Requests & Reviews** | Merge Rate & Speed | {tot_prs:,} PRs ({merge_rate} merged); {pr_speed_str} | `Analyzed` |")
 
         # Issues row
-        tot_issues = issues.get("total_issues", 0)
-        sla_p50 = _format_hours(issues.get("resolution_sla_hours", {}).get("p50"))
-        stale_count = issues.get("aging", {}).get("open_stale_count", 0)
-        md.append(f"| **Issues & Backlog** | Resolution SLA & Dormancy | {tot_issues:,} issues; SLA p50 = {sla_p50}; {stale_count} stale | `Analyzed` |")
-
-        # Discussions row
-        disc_status = discussions.get("status", "not_enabled")
-        if disc_status not in ("not_enabled", "disabled") and discussions.get("total_discussions", 0) > 0:
-            qna_rate = _format_pct(discussions.get("qna", {}).get("qna_answered_rate"))
-            tot_disc = discussions.get("total_discussions", 0)
-            md.append(f"| **Community Discussions** | Q&A Resolution Rate | {tot_disc:,} threads; {qna_rate} Q&A answered | `Active` |")
-        else:
-            md.append(f"| **Community Discussions** | Feature Status | Discussions inactive or not enabled | `Inactive` |")
+        iss_flow = issues.get("observed_flow", {}) or {}
+        iss_res = issues.get("resolution_distribution", {}) or {}
+        iss_aging = issues.get("backlog_aging", {}) or issues.get("aging", {}) or {}
+        tot_issues = (
+            (issues.get("scope", {}) or {}).get("eligible_issues_count")
+            or iss_flow.get("total_created_observed")
+            or issues.get("total_issues")
+            or 0
+        )
+        sla_p50_val = iss_res.get("p50_hours")
+        if sla_p50_val is None:
+            sla_p50_val = (issues.get("resolution_sla_hours", {}) or {}).get("p50")
+        sla_p50 = _format_hours(sla_p50_val)
+        stale_count = iss_aging.get("stale_gt_90d_count")
+        if stale_count is None:
+            stale_count = iss_aging.get("open_stale_count", 0)
+        md.append(f"| **Issues & Backlog** | Resolution Time & Backlog | {tot_issues:,} issues; close p50 = {sla_p50}; {stale_count} stale | `Analyzed` |")
 
         # Releases row
-        semver_pct = _format_pct(releases.get("semver_adoption_rate"))
-        tot_releases = releases.get("total_releases", 0)
+        rel_cadence = releases.get("cadence", {}) or {}
+        rel_semver = releases.get("semver_adoption", {}) or {}
+        semver_val = rel_semver.get("semver_adoption_rate")
+        if semver_val is None:
+            semver_val = releases.get("semver_adoption_rate")
+        semver_pct = _format_pct(semver_val)
+        tot_releases = rel_cadence.get("total_releases")
+        if tot_releases is None:
+            tot_releases = releases.get("total_releases", 0)
         md.append(f"| **Release Evolution** | SemVer 2.0.0 Adoption | {tot_releases} releases; {semver_pct} SemVer compliance | `Analyzed` |")
 
         md.append("")
@@ -139,7 +179,9 @@ class ReportGeneratorService:
         if conf_penalties:
             md.append("- **Applied Penalties:**")
             for pen in conf_penalties:
-                desc = pen.get("description", "Data penalty applied")
+                if not isinstance(pen, dict):
+                    continue
+                desc = pen.get("reason") or pen.get("description") or pen.get("rule") or "Data penalty applied"
                 val = pen.get("penalty", 0.0)
                 md.append(f"  - `{desc}`: `-{val * 100.0:.0f}%`")
         else:
@@ -152,15 +194,18 @@ class ReportGeneratorService:
         if rules:
             md.append("| Severity | Rule Identifier | Domain | Finding & Recommendation |")
             md.append("|---|---|---|---|")
-            # Sort critical -> warning -> info
-            sev_order = {"critical": 0, "warning": 1, "info": 2}
-            sorted_rules = sorted(rules, key=lambda r: sev_order.get(r.get("severity", "info"), 3))
+            # Sort critical -> warning -> positive -> info
+            sev_order = {"critical": 0, "high": 0, "warning": 1, "positive": 2, "info": 3}
+            dict_rules = [r for r in rules if isinstance(r, dict)]
+            sorted_rules = sorted(dict_rules, key=lambda r: sev_order.get(str(r.get("severity", "info")).lower(), 4))
             for r in sorted_rules:
-                sev = r.get("severity", "info").upper()
+                sev = str(r.get("severity", "info")).upper()
                 rid = r.get("rule_id", "RULE")
-                domain = r.get("domain", "").replace("_", " ").title()
-                msg = r.get("message", "")
-                md.append(f"| `{sev}` | `{rid}` | {domain} | {msg} |")
+                domain = str(r.get("domain", "")).replace("_", " ").title()
+                msg = r.get("finding") or r.get("message") or ""
+                rec = r.get("recommendation")
+                full_msg = f"{msg} — *Action: {rec}*" if rec else msg
+                md.append(f"| `{sev}` | `{rid}` | {domain} | {full_msg} |")
         else:
             md.append("*No critical anomalies or threshold violations detected.*")
         md.append("")
@@ -170,23 +215,29 @@ class ReportGeneratorService:
         md.append("")
         md.append("> **Scientific Disclaimer:** Associations reported below measure monotonic descriptive alignment over completed calendar months. They do **not** imply direct causality.")
         md.append("")
-        if correlations:
+        dict_correlations = [c for c in correlations if isinstance(c, dict)]
+        if dict_correlations:
             md.append("| Pair ID | Evaluated Metrics | Spearman $r_s$ | Permutation $p$-val | FDR $q$-val | Autocorrelation $|r_{\\text{AR1}}|$ | Significance |")
             md.append("|---|---|---|---|---|---|---|")
-            for c in correlations:
+            for c in dict_correlations:
                 pid = c.get("pair_id", "")
-                lx = c.get("label_x", "")
-                ly = c.get("label_y", "")
-                rs = c.get("spearman_rho")
-                rs_str = f"{rs:.3f}" if rs is not None else "N/A"
-                pval = c.get("permutation_p_value")
-                pval_str = f"{pval:.4f}" if pval is not None else "N/A"
+                lx = c.get("label_x") or c.get("metric_x") or ""
+                ly = c.get("label_y") or c.get("metric_y") or ""
+                pair_label = c.get("name") or f"{lx} vs. {ly}"
+                rs = c.get("spearman_r")
+                if rs is None:
+                    rs = c.get("spearman_rho")
+                rs_str = f"{rs:.3f}" if isinstance(rs, (int, float)) else "N/A"
+                pval = c.get("p_value")
+                if pval is None:
+                    pval = c.get("permutation_p_value")
+                pval_str = f"{pval:.4f}" if isinstance(pval, (int, float)) else "N/A"
                 qval = c.get("q_value")
-                qval_str = f"{qval:.4f}" if qval is not None else "N/A"
+                qval_str = f"{qval:.4f}" if isinstance(qval, (int, float)) else "N/A"
                 ar1 = c.get("max_abs_ar1")
-                ar1_str = f"{ar1:.2f}" if ar1 is not None else "N/A"
+                ar1_str = f"{ar1:.2f}" if isinstance(ar1, (int, float)) else "N/A"
                 sig = "Significant" if c.get("significant_fdr_05") else "Not Significant"
-                md.append(f"| `{pid}` | {lx} vs. {ly} | `{rs_str}` | `{pval_str}` | `{qval_str}` | `{ar1_str}` | `{sig}` |")
+                md.append(f"| `{pid}` | {pair_label} | `{rs_str}` | `{pval_str}` | `{qval_str}` | `{ar1_str}` | `{sig}` |")
         else:
             md.append("*Insufficient overlapping monthly history to evaluate paired permutation tests.*")
         md.append("")
