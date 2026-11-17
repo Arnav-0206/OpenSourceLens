@@ -13,18 +13,15 @@ flowchart TD
     subgraph Frontend["Interactive Presentation Layer (Next.js 15.5 App Router)"]
         SearchFlow["RepoSearchFlow (Pre-flight Preview & Live Ingestion Tracker)"]
         Workspace["Repository Intelligence Workspace (/repo/[owner]/[name])"]
-        Header["WorkspaceHeader (Audit Export Dropdown & Recompute Trigger)"]
-        T1["TabOverview (Scorecard & Consolidated Findings)"]
-        T2["TabActivity (Commit Trajectories, Rhythms, Anomalies)"]
-        T3["TabContributors (Gini Gauge, Lorenz Curve, Bus Factor)"]
-        T4["TabPullRequests (Latency Donut, TTFResp, Diff Turnaround)"]
-        T5["TabIssues (AI Explorer: Duplicate Finder & Topic Themes)"]
-        T6["TabDiscussions (Q&A Resolution Meter, Engagement, Categories)"]
-        T7["TabReleases (Cadence Predictability, Surges, SemVer 2.0.0)"]
-        CrossEx["Cross-Domain Discovery Explorer (PAIR-01..03 Trends)"]
+        Header["WorkspaceHeader (Export Report Dropdown & Refresh Trigger)"]
+        T1["TabOverview (Executive Health Summary, Long-Term Patterns & Plain-English Insights)"]
+        T2["TabActivity (Daily/Weekly Commits, 7x24 UTC Heatmap & Release Cadence)"]
+        T3["TabContributors (Team Workload Balance, Share Curve & Top Authors)"]
+        T4["TabPullRequests (Review Speed, Outcomes Donut & Active Reviewers)"]
+        T5["TabIssues (Auto ML-Classified Open Issues Feed & Deep Learning Topic Themes)"]
 
         Workspace --> Header
-        Workspace --> T1 & T2 & T3 & T4 & T5 & T6 & T7 & CrossEx
+        Workspace --> T1 & T2 & T3 & T4 & T5
     end
 
     Frontend -->|HTTP / JSON| FastAPI["FastAPI Application (backend/app/main.py)"]

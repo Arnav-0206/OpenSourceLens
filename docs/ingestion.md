@@ -47,7 +47,7 @@ GitHub URL / Slug
    6. `collect_pr_inline_comments`: Harvests inline diff comments via `/pulls/comments`.
    7. `collect_issues`: Harvests pure issues (filtering `"pull_request" in item`), applying text cleaning, feature extraction, and speed tiers.
    8. `collect_issue_comments`: Harvests conversation comments, enforcing mutual exclusivity to either an issue or a PR.
-   9. `collect_releases`: Queries `/releases`; if zero releases are found, automatically falls back to `/tags` commits, tagging them with `is_tag_fallback=True`.
+   9. `collect_releases`: Queries `/releases`; if zero formal releases are found, automatically falls back to `/tags` (drawing from `releases` or reserved `headroom` budget so tag harvesting works in both `fast_snapshot` and `standard_diagnostic` modes) and marks records with `is_tag_fallback=True`.
    10. `collect_discussions`: Executes GraphQL API v4 queries to harvest repository discussions, categories, Q&A status, marked answers (`answerChosenAt` / `answer { createdAt }`), and comment threads.
    11. `reconcile_contributor_metrics`: Computes participation counts, tenure, and core/newcomer cohorts.
 6. **Atomic Mutation Tracking:** Populates `mutated_records`. If at least one row was inserted or modified, `repositories.analytics_source_revision` is atomically incremented (+1).

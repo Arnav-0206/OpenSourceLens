@@ -336,6 +336,40 @@ Implemented in [`backend/app/api/v1/endpoints/analytics.py`](../backend/app/api/
   }
   ```
 
+### `GET /api/v1/analytics/{owner}/{name}/issues/classified?state=open&limit=60`
+- **Summary:** Automatically fetch stored repository issues and classify each into `bug`, `feature`, `documentation`, `question`, or `other` using the prior-calibrated 5-class ML classifier (`GeneralizableIssueClassifier`) combined with canonical GitHub label normalization.
+- **Query Parameters:**
+  - `state`: `"open"` (default), `"closed"`, or `"all"`.
+  - `limit`: Maximum number of recent issues to fetch and classify (`1`–`200`, default `60`).
+- **Response (`200 OK`):**
+  ```json
+  {
+    "repository": "microsoft/vscode",
+    "state_filter": "open",
+    "total_open": 294,
+    "total_closed": 242,
+    "total_matching": 294,
+    "classified_count": 60,
+    "model_used": "Generalizable 5-Class ML Classifier (TF-IDF + Calibrated Linear)",
+    "category_counts": { "bug": 38, "feature": 14, "documentation": 3, "question": 2, "other": 3 },
+    "items": [
+      {
+        "issue_number": 342520,
+        "title": "Cannot update while running on a read-only volume.",
+        "state": "open",
+        "author": "octocat",
+        "created_at": "2026-11-15T10:12:00+00:00",
+        "comments_count": 4,
+        "html_url": "https://github.com/microsoft/vscode/issues/342520",
+        "github_labels": ["install-update"],
+        "predicted_category": "bug",
+        "confidence": 0.80,
+        "is_uncertain": false
+      }
+    ]
+  }
+  ```
+
 ### `GET /api/v1/analytics/{owner}/{name}/topics?k=5&min_cluster_size=3`
 - **Summary:** Unsupervised backlog theme discovery using Spherical KMeans clustering and c-TF-IDF keyword extraction.
 - **Query Parameters:**
