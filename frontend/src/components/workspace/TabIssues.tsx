@@ -50,19 +50,52 @@ interface TabIssuesProps {
   name?: string;
 }
 
+function formatSlaHours(hours?: number | null): string {
+  if (hours == null || Number.isNaN(hours)) return "N/A";
+  if (hours < 1) {
+    const mins = Math.round(hours * 60);
+    return mins <= 1 ? "< 1 min" : `${mins} mins`;
+  }
+  if (hours >= 48) {
+    return `${(hours / 24).toFixed(1)} days`;
+  }
+  return `${hours.toFixed(1)} hrs`;
+}
+
 export default function TabIssues({ issues, owner, name }: TabIssuesProps) {
-  const total = issues?.total_issues ?? 0;
-  const flow = issues?.flow;
-  const sla = issues?.resolution_sla_hours;
-  const aging = issues?.aging;
+  const obsFlow = issues?.observed_flow;
+  const legacyFlow = issues?.flow;
+  const resDist = issues?.resolution_distribution;
+  const legacySla = issues?.resolution_sla_hours;
+  const aging = issues?.backlog_aging;
+  const legacyAging = issues?.aging;
   const discussion = issues?.discussion_intensity;
 
-  const monthlyFlow = flow?.monthly_flow || [];
-  const chartData = monthlyFlow.map((m) => ({
+  const totalOpened = obsFlow?.total_created_observed ?? legacyFlow?.total_opened ?? 0;
+  const totalClosed = obsFlow?.total_closed_observed ?? legacyFlow?.total_closed ?? 0;
+  const total =
+    issues?.scope?.eligible_issues_count ??
+    obsFlow?.total_created_observed ??
+    issues?.total_issues ??
+    0;
+
+  const slaP50 = resDist?.p50_hours ?? legacySla?.p50;
+  const slaP75 = resDist?.p75_hours ?? legacySla?.p75;
+  const slaP90 = resDist?.p90_hours ?? legacySla?.p90;
+
+  const staleCount = aging?.stale_gt_90d_count ?? legacyAging?.open_stale_count ?? 0;
+  const openCount = aging?.open_issues_count ?? legacyAging?.open_count ?? 0;
+  const medianComments = discussion?.median_comments_per_issue;
+
+  const rawMonthly: Array<{ month: string; created?: number; opened?: number; closed: number }> =
+    obsFlow?.monthly_series || legacyFlow?.monthly_flow || [];
+  const chartData = rawMonthly.map((m) => ({
     month: m.month,
-    opened: m.opened,
-    closed: m.closed,
+    opened: m.created ?? m.opened ?? 0,
+    closed: m.closed ?? 0,
   }));
+
+  const isIssuesEmpty = total === 0 && totalOpened === 0 && openCount === 0;
 
   // ─── Semantic Duplicate Search State ─────────────────────────────────────────
   const [queryText, setQueryText] = useState("");
@@ -119,58 +152,68 @@ export default function TabIssues({ issues, owner, name }: TabIssuesProps) {
 
   return (
     <div className="space-y-8">
+      {/* Empty Issues Notice (e.g., GitHub Issues disabled on git/git) */}
+      {isIssuesEmpty && (
+        <div className="p-4 rounded-xl border border-indigo-500/30 bg-indigo-500/10 flex items-start gap-3">
+          <HelpCircle className="w-5 h-5 text-indigo-400 shrink-0 mt-0.5" />
+          <div className="text-xs text-indigo-200/90 leading-relaxed">
+            <strong className="text-indigo-100 font-semibold">GitHub Issues Disabled or Unused:</strong>{" "}
+            This repository has 0 issues tracked on GitHub. Many large open-source projects (such as Git, Linux, and GCC) manage bug reports and feature tracking on external issue trackers or developer mailing lists.
+          </div>
+        </div>
+      )}
+
       {/* 1. High-Level Backlog Indicators */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
         <div className="p-4 rounded-xl border border-slate-800 bg-slate-900/60">
           <div className="flex items-center gap-2 text-xs text-slate-400">
             <Inbox className="w-4 h-4 text-indigo-400" />
-            <span>Total Tracked Issues</span>
+            <span>Tracked GitHub Issues</span>
           </div>
           <div className="text-2xl font-bold text-white mt-1.5">
             {total.toLocaleString()}
           </div>
           <div className="text-[11px] text-slate-500 mt-0.5">
-            Excludes PR envelopes
+            {isIssuesEmpty ? "External tracker / disabled" : `${openCount.toLocaleString()} currently open`}
           </div>
         </div>
 
         <div className="p-4 rounded-xl border border-slate-800 bg-slate-900/60">
           <div className="flex items-center gap-2 text-xs text-slate-400">
             <Clock className="w-4 h-4 text-cyan-400" />
-            <span>Resolution SLA (p50)</span>
+            <span>Median Close Time</span>
           </div>
           <div className="text-2xl font-bold text-white mt-1.5">
-            {sla?.p50 != null ? `${sla.p50.toFixed(1)}h` : "N/A"}
+            {formatSlaHours(slaP50)}
           </div>
           <div className="text-[11px] text-slate-500 mt-0.5">
-            p75: {sla?.p75 != null ? `${sla.p75.toFixed(1)}h` : "N/A"} &middot;
-            p90: {sla?.p90 != null ? `${sla.p90.toFixed(1)}h` : "N/A"}
+            75th: {formatSlaHours(slaP75)} &middot; 90th: {formatSlaHours(slaP90)}
           </div>
         </div>
 
         <div className="p-4 rounded-xl border border-slate-800 bg-slate-900/60">
           <div className="flex items-center gap-2 text-xs text-slate-400">
             <AlertCircle className="w-4 h-4 text-rose-400" />
-            <span>Stale Backlog</span>
+            <span>Stale Open Backlog</span>
           </div>
           <div className="text-2xl font-bold text-rose-400 mt-1.5">
-            {aging?.open_stale_count ?? 0}
+            {staleCount.toLocaleString()}
           </div>
           <div className="text-[11px] text-slate-500 mt-0.5">
-            &gt; 90 days dormant
+            Open &gt; 90 days without close
           </div>
         </div>
 
         <div className="p-4 rounded-xl border border-slate-800 bg-slate-900/60">
           <div className="flex items-center gap-2 text-xs text-slate-400">
             <MessageCircle className="w-4 h-4 text-amber-400" />
-            <span>Discussion Intensity</span>
+            <span>Comments per Issue</span>
           </div>
           <div className="text-2xl font-bold text-amber-300 mt-1.5">
-            {discussion?.comments_per_issue_p50 ?? "N/A"}
+            {medianComments != null ? medianComments.toFixed(1) : "N/A"}
           </div>
           <div className="text-[11px] text-slate-500 mt-0.5">
-            Median comments per issue
+            Median comments per thread
           </div>
         </div>
       </div>
@@ -181,30 +224,32 @@ export default function TabIssues({ issues, owner, name }: TabIssuesProps) {
           <div>
             <h2 className="text-lg font-bold text-white tracking-tight flex items-center gap-2">
               <TrendingUp className="w-5 h-5 text-indigo-400" />
-              <span>Monthly Issue Inflow vs. Close Flow</span>
+              <span>Monthly Issue Opened vs. Closed Flow</span>
             </h2>
             <p className="text-xs text-slate-400 mt-0.5">
-              Net backlog growth rate and maintainer resolution velocity over time
+              Compares incoming issue volume against maintainer resolution velocity over time
             </p>
           </div>
 
-          {flow && (
+          {!isIssuesEmpty && (
             <div className="flex items-center gap-3 text-xs">
               <span className="px-3 py-1 rounded-full bg-slate-800 text-slate-300 font-mono border border-slate-700">
                 Opened:{" "}
-                <strong className="text-white">{flow.total_opened}</strong>
+                <strong className="text-white">{totalOpened.toLocaleString()}</strong>
               </span>
               <span className="px-3 py-1 rounded-full bg-slate-800 text-slate-300 font-mono border border-slate-700">
                 Closed:{" "}
-                <strong className="text-white">{flow.total_closed}</strong>
+                <strong className="text-white">{totalClosed.toLocaleString()}</strong>
               </span>
             </div>
           )}
         </div>
 
         {chartData.length === 0 ? (
-          <div className="h-64 flex items-center justify-center text-slate-500 text-sm">
-            Insufficient monthly issue records to plot timeline.
+          <div className="h-56 flex items-center justify-center text-slate-400 text-xs bg-slate-950/40 rounded-xl border border-slate-800/70">
+            {isIssuesEmpty
+              ? "No GitHub issues exist for this repository."
+              : "Insufficient monthly issue records to plot timeline."}
           </div>
         ) : (
           <div className="h-72 w-full pt-4">
@@ -638,14 +683,18 @@ export default function TabIssues({ issues, owner, name }: TabIssuesProps) {
               <div className="text-lg font-bold text-white mt-1">
                 {aging?.median_age_days != null
                   ? `${aging.median_age_days.toFixed(0)} days`
+                  : legacyAging?.median_age_days != null
+                  ? `${legacyAging.median_age_days.toFixed(0)} days`
                   : "N/A"}
               </div>
             </div>
             <div className="p-3 rounded-xl bg-slate-950/70 border border-slate-800">
               <div className="text-[10px] text-slate-400">Stale Ratio</div>
               <div className="text-lg font-bold text-rose-400 mt-1">
-                {total > 0 && aging?.open_stale_count != null
-                  ? `${((aging.open_stale_count / total) * 100).toFixed(0)}%`
+                {aging?.stale_fraction != null
+                  ? `${(aging.stale_fraction * 100).toFixed(0)}%`
+                  : openCount > 0
+                  ? `${((staleCount / openCount) * 100).toFixed(0)}%`
                   : "N/A"}
               </div>
             </div>
@@ -665,16 +714,16 @@ export default function TabIssues({ issues, owner, name }: TabIssuesProps) {
             <div className="p-3 rounded-xl bg-slate-950/70 border border-slate-800">
               <div className="text-[10px] text-slate-400">Mean Comments</div>
               <div className="text-lg font-bold text-white mt-1">
-                {discussion?.comments_per_issue_mean != null
-                  ? discussion.comments_per_issue_mean.toFixed(1)
+                {discussion?.mean_comments_per_issue != null
+                  ? discussion.mean_comments_per_issue.toFixed(1)
                   : "N/A"}
               </div>
             </div>
             <div className="p-3 rounded-xl bg-slate-950/70 border border-slate-800">
               <div className="text-[10px] text-slate-400">Median Comments</div>
               <div className="text-lg font-bold text-white mt-1">
-                {discussion?.comments_per_issue_p50 != null
-                  ? discussion.comments_per_issue_p50.toFixed(1)
+                {medianComments != null
+                  ? medianComments.toFixed(1)
                   : "N/A"}
               </div>
             </div>

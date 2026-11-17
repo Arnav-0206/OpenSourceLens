@@ -1565,13 +1565,20 @@ class RepositoryCollector:
                     if mutated_records is not None:
                         mutated_records.add(("release", rel_id))
 
-        # Fallback to git tags if formal releases returned 0 and budget allows
-        if count == 0 and len(res.items) == 0 and budgeter.can_consume("releases", 1):
+        # Fallback to git tags if formal releases returned 0 and budget allows (releases or headroom)
+        tag_budget_entity = None
+        if count == 0 and len(res.items) == 0:
+            if budgeter.can_consume("releases", 1):
+                tag_budget_entity = "releases"
+            elif budgeter.can_consume("headroom", 1):
+                tag_budget_entity = "headroom"
+
+        if tag_budget_entity is not None:
             try:
                 tags_endpoint = f"/repos/{repo.owner}/{repo.name}/tags"
                 tags_res = await self.client.paginate(
                     endpoint_or_url=tags_endpoint,
-                    entity="releases",
+                    entity=tag_budget_entity,
                     budgeter=budgeter,
                     params={"per_page": 100},
                 )

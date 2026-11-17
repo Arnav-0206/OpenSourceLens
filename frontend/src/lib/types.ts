@@ -167,7 +167,7 @@ export interface ConfidenceSummary {
 export interface RuleInterpretation {
   rule_id: string;
   domain: string;
-  severity: "high" | "medium" | "low" | "info" | "warning" | "positive";
+  severity: "critical" | "high" | "medium" | "low" | "info" | "warning" | "positive";
   finding: string;
   evidence?: Record<string, any>;
   recommendation?: string | null;
@@ -190,11 +190,21 @@ export interface AnalysisRunAttemptRead {
 
 export interface WeeklyActivityPoint {
   week_start: string;
-  count: number;
+  commit_count?: number;
+  count?: number;
+  additions?: number;
+  deletions?: number;
+  total_changes?: number;
+  active_contributors_count?: number;
   sma_4w?: number | null;
   sma_12w?: number | null;
   ewma_12w?: number | null;
   is_anomaly?: boolean;
+}
+
+export interface DailyActivityPoint {
+  date: string;
+  commit_count: number;
 }
 
 export interface DevelopmentActivityData {
@@ -202,22 +212,88 @@ export interface DevelopmentActivityData {
   summary: {
     total_commits: number;
     active_weeks_count: number;
-    completed_weeks_evaluated: number;
+    active_days_count?: number;
+    completed_weeks_evaluated?: number;
+    completed_weeks_count?: number;
     velocity_trend?: string;
     current_cadence_days?: number | null;
   };
-  weekly_series: WeeklyActivityPoint[];
+  velocity?: {
+    trailing_4w_velocity?: number | null;
+    trailing_12w_velocity?: number | null;
+    trailing_52w_velocity?: number | null;
+    velocity_trend_ratio?: number | null;
+  };
+  velocity_metrics?: {
+    trailing_4w_velocity?: number | null;
+    trailing_12w_velocity?: number | null;
+    trailing_52w_velocity?: number | null;
+    velocity_trend_ratio?: number | null;
+  };
+  weekly_time_series?: WeeklyActivityPoint[];
+  weekly_series?: WeeklyActivityPoint[];
+  daily_time_series_90d?: DailyActivityPoint[];
+  rolling_statistics?: {
+    status?: string;
+    series?: Array<{
+      week_start: string;
+      commit_count: number;
+      rolling_4w_mean?: number | null;
+      rolling_12w_mean?: number | null;
+      ewma_4w?: number | null;
+      window_4w_complete?: boolean;
+      window_12w_complete?: boolean;
+    }>;
+  };
+  anomalies?: {
+    status?: string;
+    total_anomalies_detected?: number;
+    high_activity_anomalies_count?: number;
+    low_activity_anomalies_count?: number;
+    items?: any[];
+  };
+  activity_rhythms?: {
+    status?: string;
+    total_commits?: number;
+    weekday_names?: string[];
+    weekday_hour_matrix: number[][]; // 7 days x 24 hours
+    weekday_totals?: number[];
+    hour_totals_utc?: number[];
+    weekday_commits?: number;
+    weekend_commits?: number;
+    weekday_ratio?: number;
+    weekend_ratio?: number;
+    peak_weekday?: { index: number; name: string; commit_count: number };
+    peak_utc_hour?: { hour_utc: number; commit_count: number };
+  };
   utc_rhythm?: {
-    matrix: number[][]; // 7 days x 24 hours
+    matrix: number[][];
     peak_day?: number;
     peak_hour?: number;
     concentration_ratio?: number;
+  };
+  commit_landing_latency?: {
+    status?: string;
+    p25_hours?: number | null;
+    p50_hours?: number | null;
+    p75_hours?: number | null;
+    p90_hours?: number | null;
+    mean_hours?: number | null;
+    valid_merged_count?: number;
+    sample_size?: number;
   };
   landing_latency?: {
     p50?: number | null;
     p75?: number | null;
     p90?: number | null;
     sample_size?: number;
+  };
+  code_churn?: {
+    status?: string;
+    total_additions?: number;
+    total_deletions?: number;
+    net_churn?: number;
+    diff_coverage_ratio?: number;
   };
   churn_metrics?: {
     total_additions?: number;
@@ -227,26 +303,72 @@ export interface DevelopmentActivityData {
 }
 
 export interface LorenzPoint {
-  contributor_percentile: number;
-  contribution_percentile: number;
+  population_share?: number;
+  contribution_share?: number;
+  contributor_percentile?: number;
+  contribution_percentile?: number;
 }
 
 export interface ContributorLeaderboardItem {
-  login: string;
+  contributor?: string;
+  login?: string;
   avatar_url?: string | null;
-  total_commits: number;
+  commits?: number;
+  total_commits?: number;
+  commit_share?: number;
+  prs_authored?: number;
   total_prs_authored?: number;
+  prs_reviewed?: number;
   total_prs_reviewed?: number;
-  primary_role: string;
+  issues_opened?: number;
+  primary_role?: string;
   is_core?: boolean;
   is_newcomer?: boolean;
   is_bot?: boolean;
+  is_unlinked?: boolean;
   tenure_days?: number | null;
 }
 
 export interface ContributorEcosystemData {
   status: string;
-  total_contributors: number;
+  scope?: {
+    mode?: string;
+    directory_contributors_count?: number;
+  };
+  concentration?: {
+    status?: string;
+    active_human_commit_authors_count?: number;
+    total_attributed_human_commits?: number;
+    gini_coefficient?: number | null;
+    bf50?: number | null;
+    bf80?: number | null;
+    top1_share?: number | null;
+    top5_share?: number | null;
+    shannon_entropy_bits?: number | null;
+    normalized_entropy?: number | null;
+    lorenz_curve?: LorenzPoint[];
+  };
+  participation?: {
+    directory_contributors_count?: number;
+    directory_human_contributors_count?: number;
+    directory_bot_contributors_count?: number;
+    active_human_commit_authors_count?: number;
+    active_human_multi_role_contributors_count?: number;
+  };
+  tenure?: {
+    newcomers_30d_count?: number;
+    core_contributors_count?: number;
+    established_gt_30d_count?: number;
+    mean_tenure_days?: number | null;
+    median_tenure_days?: number | null;
+  };
+  bot_isolation?: {
+    bot_accounts_detected?: number;
+    bot_commits_excluded?: number;
+  };
+  top_contributors?: ContributorLeaderboardItem[];
+  // Legacy aliases
+  total_contributors?: number;
   gini_coefficient?: number | null;
   lorenz_curve?: LorenzPoint[];
   bus_factors?: {
@@ -265,7 +387,74 @@ export interface ContributorEcosystemData {
 
 export interface PullRequestIntelligenceData {
   status: string;
-  total_prs: number;
+  scope?: {
+    mode?: string;
+    is_partial?: boolean;
+  };
+  outcome_distribution?: {
+    status?: string;
+    total_eligible_prs: number;
+    merged_count: number;
+    closed_unmerged_count: number;
+    open_count: number;
+    resolved_count: number;
+    merge_rate?: number | null;
+    abandonment_rate?: number | null;
+    open_ratio?: number | null;
+  };
+  responsiveness?: {
+    ttf_resp?: {
+      sample_count?: number;
+      p25_hours?: number | null;
+      p50_hours?: number | null;
+      p75_hours?: number | null;
+      p90_hours?: number | null;
+      mean_hours?: number | null;
+    };
+    ttfr_formal?: {
+      sample_count?: number;
+      p50_hours?: number | null;
+    };
+    ttfr_inline?: {
+      sample_count?: number;
+      p50_hours?: number | null;
+    };
+  };
+  merge_latency?: {
+    status?: string;
+    sample_count?: number;
+    p25_hours?: number | null;
+    p50_hours?: number | null;
+    p75_hours?: number | null;
+    p90_hours?: number | null;
+    mean_hours?: number | null;
+    valid_merged_count?: number;
+  };
+  survival_km?: {
+    status?: string;
+    s7d?: number | null;
+    s30d?: number | null;
+    median_survival_days?: number | null;
+    survival_curve?: Array<{ time_days: number; survival_probability: number }>;
+  };
+  size_vs_turnaround?: {
+    status?: string;
+    diff_coverage_ratio?: number;
+    bins?: Record<string, { count: number; p50_hours?: number | null; mean_hours?: number | null }>;
+  };
+  review_bottlenecks?: {
+    status?: string;
+    review_latency_share?: number | null;
+    maintainer_review_load?: {
+      top_reviewers?: Array<{ reviewer: string; reviews_count: number }>;
+    };
+    unreviewed_open_prs?: {
+      count: number;
+      median_age_days?: number | null;
+    };
+  };
+  // Legacy aliases
+  total_prs?: number;
   turnaround_hours?: {
     p50?: number | null;
     p75?: number | null;
@@ -292,7 +481,65 @@ export interface PullRequestIntelligenceData {
 
 export interface IssueIntelligenceData {
   status: string;
-  total_issues: number;
+  scope?: {
+    mode?: string;
+    eligible_issues_count?: number;
+  };
+  observed_flow?: {
+    status?: string;
+    eligible_issues_count?: number;
+    total_created_observed: number;
+    total_closed_observed: number;
+    flow_ratio?: number | null;
+    net_flow_differential?: number;
+    monthly_series?: Array<{ month: string; created: number; closed: number; net: number }>;
+  };
+  backlog_stock_summary?: {
+    status?: string;
+    github_metadata_snapshot?: {
+      open_issues_and_prs_count?: number;
+    };
+  };
+  resolution_distribution?: {
+    status?: string;
+    valid_resolved_count?: number;
+    p25_hours?: number | null;
+    p50_hours?: number | null;
+    p75_hours?: number | null;
+    p90_hours?: number | null;
+    mean_hours?: number | null;
+    speed_tier_distribution?: Record<string, number>;
+  };
+  survival_km?: {
+    status?: string;
+    s30d?: number | null;
+    s60d?: number | null;
+    s90d?: number | null;
+    median_survival_days?: number | null;
+    survival_curve?: Array<{ time_days: number; survival_probability: number }>;
+  };
+  backlog_aging?: {
+    status?: string;
+    open_issues_count: number;
+    median_age_days?: number | null;
+    stale_gt_90d_count?: number;
+    stale_fraction?: number | null;
+    bins?: Record<string, number>;
+  };
+  discussion_intensity?: {
+    status?: string;
+    mean_comments_per_issue?: number | null;
+    median_comments_per_issue?: number | null;
+    p90_comments_per_issue?: number | null;
+  };
+  canonical_categories?: {
+    status?: string;
+    categories?: Record<string, number>;
+    top_raw_labels?: Array<{ label: string; count: number }>;
+    unlabeled_share?: number | null;
+  };
+  // Legacy aliases
+  total_issues?: number;
   flow?: {
     total_opened: number;
     total_closed: number;
@@ -305,12 +552,9 @@ export interface IssueIntelligenceData {
     p90?: number | null;
   };
   aging?: {
+    open_count?: number;
     open_stale_count?: number;
     median_age_days?: number | null;
-  };
-  discussion_intensity?: {
-    comments_per_issue_mean?: number | null;
-    comments_per_issue_p50?: number | null;
   };
 }
 
@@ -326,15 +570,24 @@ export interface ReleaseEvolutionData {
     regularity_classification?: string;
     days_since_last_release?: number | null;
     latest_release_tag?: string | null;
+    annualized_release_frequency?: number | null;
+    mean_interval_days?: number | null;
+    median_interval_days?: number | null;
   };
   semver_adoption?: {
     semver_adoption_rate?: number | null;
+    major_releases_count?: number;
+    minor_releases_count?: number;
+    patch_releases_count?: number;
     major_releases?: number;
     minor_releases?: number;
     patch_releases?: number;
     prerelease_count?: number;
   };
   prerelease_surges?: {
+    status?: string;
+    mean_surge_ratio?: number | null;
+    median_surge_ratio?: number | null;
     surge_detected?: boolean;
     surge_ratio?: number | null;
     valid_surge_releases_count?: number;
@@ -344,18 +597,19 @@ export interface ReleaseEvolutionData {
 export interface DiscussionsIntelligenceData {
   status: string;
   total_discussions: number;
-  total_comments: number;
-  total_upvotes: number;
+  total_comments?: number;
+  total_upvotes?: number;
   active_discussions_window?: number;
   dominant_category?: string | null;
-  categories?: Record<string, number>;
+  categories?: any;
   qna?: {
-    total_qna_threads: number;
-    answered_qna_threads: number;
-    unanswered_qna_threads: number;
+    total_qna_threads?: number;
+    answered_qna_threads?: number;
+    unanswered_qna_threads?: number;
     qna_answered_rate?: number | null;
     time_to_answer_hours?: {
       p50?: number | null;
+      p50_hours?: number | null;
       p75?: number | null;
       p90?: number | null;
       mean?: number | null;

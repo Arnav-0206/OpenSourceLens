@@ -147,6 +147,20 @@ export default function RepoWorkspacePage({ params }: PageProps) {
   const payload: AnalysisPayload | undefined | null =
     latestData?.run?.metrics_payload;
 
+  const contributorCount =
+    payload?.contributor_ecosystem?.participation?.directory_contributors_count ??
+    payload?.contributor_ecosystem?.concentration?.active_human_commit_authors_count ??
+    payload?.contributor_ecosystem?.total_contributors;
+
+  const prCount =
+    payload?.pull_request_intelligence?.outcome_distribution?.total_eligible_prs ??
+    payload?.pull_request_intelligence?.total_prs;
+
+  const issueCount =
+    payload?.issue_intelligence?.scope?.eligible_issues_count ??
+    payload?.issue_intelligence?.observed_flow?.total_created_observed ??
+    payload?.issue_intelligence?.total_issues;
+
   const discussionCount =
     payload?.repository_synthesis?.discussions_intelligence?.total_discussions;
 
@@ -162,19 +176,19 @@ export default function RepoWorkspacePage({ params }: PageProps) {
       id: "contributors",
       label: "Contributor Ecosystem",
       icon: Users,
-      badge: payload?.contributor_ecosystem?.total_contributors,
+      badge: contributorCount !== undefined && contributorCount > 0 ? contributorCount : undefined,
     },
     {
       id: "pull_requests",
       label: "Pull Requests",
       icon: GitPullRequest,
-      badge: payload?.pull_request_intelligence?.total_prs,
+      badge: prCount !== undefined && prCount > 0 ? prCount : undefined,
     },
     {
       id: "issues",
       label: "Issues & Backlog",
       icon: Inbox,
-      badge: payload?.issue_intelligence?.total_issues,
+      badge: issueCount !== undefined && issueCount > 0 ? issueCount : undefined,
     },
     {
       id: "discussions",

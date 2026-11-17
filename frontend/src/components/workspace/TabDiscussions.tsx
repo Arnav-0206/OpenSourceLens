@@ -82,7 +82,10 @@ export default function TabDiscussions({ discussions }: TabDiscussionsProps) {
   const engagement = discussions.engagement;
   const categoriesRecord = discussions.categories || {};
   const categoryData = Object.entries(categoriesRecord)
-    .map(([name, count]) => ({ name, count }))
+    .map(([name, val]) => ({
+      name,
+      count: typeof val === "number" ? val : (val as { count?: number })?.count ?? 0,
+    }))
     .sort((a, b) => b.count - a.count);
 
   const answeredRatePct =
@@ -107,14 +110,14 @@ export default function TabDiscussions({ discussions }: TabDiscussionsProps) {
             <MessageSquare className="w-4 h-4 text-blue-400" />
           </div>
           <div className="text-2xl font-bold text-neutral-100 font-mono">
-            {discussions.total_discussions.toLocaleString()}
+            {(discussions.total_discussions ?? 0).toLocaleString()}
           </div>
           <div className="text-xs text-neutral-400 mt-1 flex items-center gap-1.5">
-            <span>{discussions.total_comments.toLocaleString()} total comments</span>
+            <span>{(discussions.total_comments ?? 0).toLocaleString()} total comments</span>
             <span>•</span>
             <span className="flex items-center gap-0.5 text-neutral-300">
               <ThumbsUp className="w-3 h-3 text-amber-400" />
-              {discussions.total_upvotes}
+              {discussions.total_upvotes ?? 0}
             </span>
           </div>
         </div>
