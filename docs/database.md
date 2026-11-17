@@ -1,28 +1,26 @@
 # OpenSourceLens — Database Architecture & Migrations
 
-OpenSourceLens persists repository metadata, ingested GitHub entities, durable job queues, analytical snapshots, and Phase A ML audit logs in a relational schema defined with **SQLAlchemy 2.0** ([`backend/app/database/models.py`](../backend/app/database/models.py)) and managed across both **SQLite** (local/testing) and **PostgreSQL** (configured Docker target).
-
-> **Scope & Cleanup Note:** See [product-vision.md](./product-vision.md) for target data expansion (GitHub Discussions tables, richer PR/issue/commit attributes, dynamic per-repo embeddings) and legacy Phase A persistence slated for later cleanup (`repository_analytics`, static `related_issues_cache`, [`ingest.py`](../backend/app/database/ingest.py), [`schema.sql`](../backend/app/database/schema.sql), [`schema_generator.py`](../backend/app/database/schema_generator.py)).
+OpenSourceLens persists repository metadata, ingested GitHub entities, durable job queues, analytical snapshots, dense vector embeddings, and ML audit logs in a relational schema defined with **SQLAlchemy 2.0** ([`backend/app/database/models.py`](../backend/app/database/models.py)) and managed across both **SQLite** (local development/testing) and **PostgreSQL 16** (production Docker container target).
 
 ---
 
 ## 1. Engine & Session Configuration
 
-Engine creation lives in [`backend/app/database/session.py`](../backend/app/database/session.py#L25-L98):
+Engine creation lives in [`backend/app/database/session.py`](../backend/app/database/session.py):
 
-- **Connection URL Resolution (`get_database_url()`):** Reads `DATABASE_URL` (normalizing `postgres://` to `postgresql://`), falling back to local SQLite at `data/opensource_lens.db`.
-- **SQLite Configuration (`build_engine()`):** Sets `check_same_thread=False` and attaches a `connect` event listener applying:
-  - `PRAGMA journal_mode=WAL`
-  - `PRAGMA synchronous=NORMAL`
-  - `PRAGMA foreign_keys=ON`
-  - `PRAGMA cache_size=-64000`
-- **PostgreSQL Configuration:** Uses connection pooling (`pool_size=10`, `max_overflow=20`, `pool_pre_ping=True`).
+- **Connection URL Resolution (`get_database_url()`):** Reads `DATABASE_URL` from the environment (normalizing `postgres://` to `postgresql://`), defaulting to local SQLite at `data/opensource_lens.db`.
+- **SQLite Configuration (`build_engine()`):** Sets `check_same_thread=False` and attaches a connection listener applying:
+  - `PRAGMA journal_mode=WAL` (Write-Ahead Logging for non-blocking concurrent reads)
+  - `PRAGMA synchronous=NORMAL` (balanced durability and high write throughput)
+  - `PRAGMA foreign_keys=ON` (enforces relational referential integrity)
+  - `PRAGMA cache_size=-64000` (64 MB page cache)
+- **PostgreSQL Configuration:** Configures SQLAlchemy connection pooling (`pool_size=10`, `max_overflow=20`, `pool_pre_ping=True`) for the `postgres:16-alpine` Docker service.
 
 ---
 
-## 2. Tables & Relationships (19 ORM Tables)
+## 2. Tables & Relationships (21 ORM Tables)
 
-The live ORM registers **19 data tables** (plus Alembic's `alembic_version`):
+The live ORM registers **21 data tables** (plus Alembic's `alembic_version` metadata table):
 
 ```mermaid
 erDiagram
@@ -45,94 +43,85 @@ erDiagram
     pull_requests ||--o{ issue_comments : thread_on
     repositories ||--o{ discussions : hosts
     discussions ||--o{ discussion_comments : has
+    issues ||--o{ issue_embeddings : embeds
+    discussions ||--o{ discussion_embeddings : embeds
     repositories ||--o{ repository_analytics : legacy_snapshots
     issues ||--o{ predictions : logs
     issues ||--o{ related_issues_cache : source_target
 ```
 
-### Core & Phase A Tables
+---
 
-| Table | Purpose | Key Constraints / Notes |
+## 3. Comprehensive Table Inventory
+
+### 3.1 Core Repository & Queues
+
+| Table | Purpose | Key Constraints & Indices |
 |---|---|---|
-| `repositories` | Repository metadata, lifecycle flags (`is_active`, `is_archived`, `is_fork`, `upstream_repo`), sync timestamps (`last_synced_at`, `last_analyzed_at`), and `analytics_source_revision` (`Integer`, default `1`). | PK: `id` (GitHub ID or hash fallback on pending submit); Unique `ix_repositories_repo_name(repo_name)`. |
-| `issues` | Pure GitHub issues (`39` cols: raw + cleaned text, evidence flags, canonical labels, resolution timing, censoring flags). | PK: `id`; FK: `repository_id -> repositories.id` (`CASCADE`); Unique index `ix_issues_repo_number(repo_name, issue_number)`. |
-| `issue_labels` | Raw and mapped canonical labels per issue. | FK: `issue_id -> issues.id` (`CASCADE`). |
-| `repository_analytics` | **Legacy Phase A** summary statistics snapshot consumed by legacy `/api/v1/repos/{owner}/{name}` and `/api/v1/analytics/*`. | FK: `repository_id -> repositories.id` (`CASCADE`). |
-| `predictions` | Inference audit log for classification and resolution velocity calls. | FK: `issue_id -> issues.id` (`SET NULL`). |
-| `related_issues_cache` | Precomputed top-K benchmark similarity edges. | FKs: `source_issue_id`, `target_issue_id -> issues.id` (`CASCADE`). |
+| `repositories` | Repository metadata, lifecycle flags (`is_active`, `is_archived`, `is_fork`, `upstream_repo`), sync timestamps, and monotonic revision tracking (`analytics_source_revision`, default `1`). | PK: `id`; Unique `ix_repositories_repo_name(repo_name)`. |
+| `collection_runs` | Durable dynamic ingestion job queue and coverage/rate telemetry (`mode`, `status`, `worker_id`, `leased_until`, `lease_version`, `retry_count`, `max_retries=2`, `is_partial`, `coverage_summary`, `items_collected`, `rate_limit_consumed`). | Partial unique index `uq_collection_runs_active_repo` on `(repository_id) WHERE status IN ('pending', 'running')`. |
+| `analysis_runs` | Durable Phase C analytics job queue, methodology lineage (`requested_source_revision`, `analytics_source_revision`, `requested_methodology_version`, `methodology_version`, `analysis_reference_time`, `source_content_digest`), leasing (`worker_id`, `leased_until`, `lease_version`), and JSON metrics outputs (`metrics_payload`, `coverage_summary`, `confidence_summary`, `rule_interpretations`). | FK: `repository_id` (`CASCADE`), `collection_run_id` (`SET NULL`). Partial unique index `uq_analysis_runs_active_repo` on `(repository_id) WHERE status IN ('pending', 'running')`. |
+| `analysis_run_attempts` | Append-only execution audit log (`attempt_number`, `worker_id`, `started_at`, `completed_at`, `outcome`, `error_category`, `error_message`, `interruption_reason`). | FK: `analysis_run_id` (`CASCADE`). CHECK constraint on `outcome`. Completed attempts reject subsequent mutation (`AttemptImmutableException`). |
 
-### Phase B Ingestion & Multi-Entity Tables
+### 3.2 Dynamic Ingestion & Rich Entity Streams
 
-| Table | Purpose | Key Constraints / Notes |
+| Table | Purpose | Key Constraints & Indices |
 |---|---|---|
-| `collection_runs` | Durable ingestion job queue and coverage/rate telemetry (`mode`, `status`, `worker_id`, `leased_until`, `lease_version`, `retry_count`, `max_retries=2`, `is_partial`, `coverage_summary`, `items_collected`, `rate_limit_consumed`). | Partial unique index `uq_collection_runs_active_repo` on `(repository_id) WHERE status IN ('pending', 'running')`. |
-| `commits` | Commit metadata (`sha`, `author_name/email/login/id`, `author_date`, `committer_date`, `message`, optional `additions`, `deletions`, `total_changes`). | Unique constraint on `(repository_id, sha)`. |
-| `contributors` | Repository contributors anchored on `github_id` or unlinked `git_email`, with `primary_role`, reconciled counts, `tenure_days`, `is_newcomer`, `is_core`, `is_bot`, `is_unlinked`, `identity_confidence`. | Two partial unique indexes: `uq_contributors_repo_github_id(repository_id, github_id) WHERE github_id IS NOT NULL` and `uq_contributors_repo_unlinked_email(repository_id, git_email) WHERE github_id IS NULL AND git_email IS NOT NULL`. |
-| `contributor_activities` | Normalized per-event log (`commit`, `pr_opened`, `pr_reviewed`, `issue_opened`, `issue_comment`, etc.). | Unique `(repository_id, activity_type, entity_id)`. |
-| `pull_requests` | Pull requests (`pr_number`, `state`, `created_at`, `closed_at`, `merged_at`, turnaround latencies, diff sizes `additions/deletions/changed_files`, plus PR depth fields `body`, `head_branch`, `base_branch`, `is_draft`, `labels`, `requested_reviewers`). | Indexed on `(repository_id, state, merged_at)`. Unique constraint `uq_pr_repo_number(repository_id, pr_number)`. |
-| `pull_request_reviews` | Formal PR review envelopes (`review_id`, `state`, `submitted_at`, `author`, `author_id`). | Unique `ix_pull_request_reviews_review_id(review_id)`. |
+| `commits` | Commits with author timestamps and diff statistics (`sha`, `author_name/email/login/id`, `author_date`, `committer_date`, `message`, `additions`, `deletions`, `total_changes`). | Unique `uq_commits_repo_sha(repository_id, sha)`. |
+| `contributors` | Clean contributor directory anchored on `github_id` or unlinked `git_email`, tracking `primary_role`, counts, `tenure_days`, `is_newcomer`, `is_core`, `is_bot`, `is_unlinked`. | Partial unique indices on `(repository_id, github_id)` and `(repository_id, git_email)`. |
+| `contributor_activities` | Normalized event log (`commit`, `pr_opened`, `pr_reviewed`, `issue_opened`, `issue_comment`, etc.). | Unique `(repository_id, activity_type, entity_id)`. |
+| `pull_requests` | Pull requests (`pr_number`, `state`, `created_at`, `closed_at`, `merged_at`, turnaround hours, diff stats `additions/deletions/changed_files`, PR depth fields `body`, `head_branch`, `base_branch`, `is_draft`, `labels`, `requested_reviewers`). | Indexed on `(repository_id, state, merged_at)`. Unique `uq_pr_repo_number(repository_id, pr_number)`. |
+| `pull_request_reviews` | Formal PR review records (`review_id`, `state`, `submitted_at`, `author`, `author_id`). | Unique `ix_pull_request_reviews_review_id(review_id)`. |
 | `pull_request_review_comments` | Inline diff review comments (`comment_id`, `path`, `line`, `commit_id`). | Unique `ix_pull_request_review_comments_comment_id(comment_id)`. |
-| `releases` | Repository releases (`release_id`, `tag_name`, `name`, `published_at`, `is_prerelease`, `body`, plus git tags fallback columns `is_tag_fallback`, `commit_sha`). | Unique `ix_releases_release_id(release_id)`. |
-| `issue_comments` | Conversation comments attached to either an issue or a PR. | Unique `comment_id`; SQLite/Postgres `CHECK` constraint `NOT (issue_id IS NOT NULL AND pull_request_id IS NOT NULL)`. |
+| `issues` | Pure GitHub issues (`39` columns: cleaned text, evidence flags, speed tiers, SLA resolution hours, censoring flags, assignees, reactions). | Unique `ix_issues_repo_number(repo_name, issue_number)`. FK: `repository_id` (`CASCADE`). |
+| `issue_labels` | Mapped canonical labels per issue. | FK: `issue_id -> issues.id` (`CASCADE`). |
+| `issue_comments` | Conversation comments linked exclusively to either an issue or a PR. | Unique `comment_id`; CHECK constraint `NOT (issue_id IS NOT NULL AND pull_request_id IS NOT NULL)`. |
+| `releases` | Releases and git tags fallback (`release_id`, `tag_name`, `name`, `published_at`, `is_prerelease`, `body`, `is_tag_fallback`, `commit_sha`). | Unique `ix_releases_release_id(release_id)`. |
 | `discussions` | GitHub Discussions threads (`discussion_number`, `title`, `body`, `author`, `category_name`, `category_is_answerable`, `is_answered`, `answered_at`, `upvote_count`, `comments_count`). | Indexed on `(repository_id, created_at)` and `(repository_id, is_answered)`. Unique `uq_discussions_repo_number(repository_id, discussion_number)`. |
 | `discussion_comments` | Comments and marked answers on GitHub Discussions (`comment_id`, `author`, `body`, `upvote_count`, `is_answer`). | Unique `ix_discussion_comments_comment_id(comment_id)`. FK: `discussion_id -> discussions.id` (`CASCADE`). |
 
-### Phase C Analytics Lifecycle Tables
+### 3.3 Applied Machine Learning & Embeddings Tables
 
-| Table | Purpose | Key Constraints / Notes |
+| Table | Purpose | Key Constraints & Indices |
 |---|---|---|
-| `analysis_runs` | Durable Phase C analytics job queue, methodology/revision lineage (`requested_source_revision`, `analytics_source_revision`, `requested_methodology_version`, `methodology_version`, `analysis_reference_time`, `source_content_digest`), leasing (`worker_id`, `leased_until`, `lease_version`, `retry_count`, `max_retries=3`), and JSON outputs (`metrics_payload`, `coverage_summary`, `confidence_summary`, `rule_interpretations`). | FK: `repository_id` (`CASCADE`), `collection_run_id` (`SET NULL`). Partial unique index `uq_analysis_runs_active_repo` on `(repository_id) WHERE status IN ('pending', 'running')`. |
-| `analysis_run_attempts` | Append-only attempt audit log (`attempt_number`, `worker_id`, `started_at`, `completed_at`, `outcome`, `error_category`, `error_message`, `interruption_reason`). | FK: `analysis_run_id` (`CASCADE`). CHECK constraint on `outcome`. Completed attempts reject later modification (`AttemptImmutableException`). |
+| `issue_embeddings` | Dense 384-dimensional sentence embeddings (`all-MiniLM-L6-v2`) for issue text similarity and topic discovery. Stored as raw IEEE-754 binary BLOBs (1,536 bytes). | PK: `id`; FK: `issue_id -> issues.id` (`CASCADE`). Unique `uq_issue_embeddings_issue_id(issue_id)`. |
+| `discussion_embeddings` | Dense 384-dimensional sentence embeddings for discussion threads. | PK: `id`; FK: `discussion_id -> discussions.id` (`CASCADE`). Unique `uq_discussion_embeddings_discussion_id(discussion_id)`. |
+| `predictions` | Real-time classification inference audit log (`issue_id`, `model_type`, `predicted_label`, `confidence`, `probabilities`, `latency_ms`). | FK: `issue_id -> issues.id` (`SET NULL`). |
+| `repository_analytics` | Historical summary statistics cache. | FK: `repository_id -> repositories.id` (`CASCADE`). |
+| `related_issues_cache` | Precomputed benchmark similarity edges. | FKs: `source_issue_id`, `target_issue_id -> issues.id` (`CASCADE`). |
 
 ---
 
-## 3. Source Revisions, Runs, Deduplication & Fencing
+## 4. Source Revisioning & Lease Fencing Protocol
 
-### 3.1 Repository Source Revision Tracking
-- `repositories.analytics_source_revision` begins at `1` and advances **atomically** (+1) at the end of [`RepositoryCollector.collect_repository()`](../backend/app/services/repository_collector.py#L132-L396) **only if** `mutated_records` is non-empty (meaning at least one insert or tracked field change occurred) or when historical rows exist under conditions requiring invalidation. Idempotent re-collections with zero data changes leave `analytics_source_revision` unchanged.
-- An analysis is considered **stale** whenever `latest_completed_run.analytics_source_revision < repo.analytics_source_revision` (computed dynamically on V2 API reads in [`analytics.py`](../backend/app/api/v1/endpoints/analytics.py)).
+### 4.1 Monotonic Revision Tracking
+- Every repository initializes with `repositories.analytics_source_revision = 1`.
+- When [`RepositoryCollector`](../backend/app/services/repository_collector.py) ingests data, it tracks mutated records (`mutated_records`). Only when at least one insert or tracked attribute modification occurs does it atomically increment `repositories.analytics_source_revision += 1`.
+- API reads compare `latest_completed_run.analytics_source_revision < repo.analytics_source_revision` to determine `is_stale`.
 
-### 3.2 Active Job Deduplication
-- Both queues enforce **at most one active (`pending` or `running`) job per `repository_id`** via SQL partial unique indexes (`uq_collection_runs_active_repo` and `uq_analysis_runs_active_repo`) plus pre-insert integrity checks.
-- **No-op suppression:** `AnalyticsJobQueue.enqueue_analysis()` inspects whether a completed `AnalysisRun` already exists matching both the repository's current `analytics_source_revision` and the requested `methodology_version`. If `force=False` and a match exists, it returns the existing completed run instead of creating duplicate work.
-
-### 3.3 Lease & Fencing Mechanisms
-- **Claiming:** On PostgreSQL, `claim_job()` / `claim_next_job()` issues `SELECT ... FOR UPDATE SKIP LOCKED`. On SQLite, it executes inside `BEGIN IMMEDIATE` or dialect-safe locking (single-writer semantics).
-- **Optimistic Lease-Version Fencing:** Every claim increments `lease_version += 1`, sets `worker_id`, and sets `leased_until = now + lease_duration_seconds` (`600s` default in both workers).
-- Every heartbeat renewal, publication, failure recording, or stale abortion verifies `(id, worker_id, lease_version, status == 'running')` via a conditional `UPDATE ... WHERE ...` rowcount check. If `rowcount == 0`, a ghost worker is rejected (`JobLeaseLostException` / `GhostWorkerRejectedException`).
-- **Mid-Run Source Revision Protection:** During `AnalyticsOrchestrator.process_claimed_run()`, after computation finishes and right before `publish_and_finalize()`, if the repository's `analytics_source_revision` advanced beyond the run's pinned snapshot revision (and a newer completed run already superseded it), `_abort_superseded_stale_run()` aborts the older snapshot run with `status="cancelled"` (and attempt `outcome="interrupted"`) and allows replacement work rather than overwriting newer repository truth.
-
----
-
-## 4. Alembic Migrations & Known Schema Drift Warning
-
-Migrations reside in [`backend/alembic/versions/`](../backend/alembic/versions/) and run in this order:
-
-1. `001_initial_benchmark_schema` (`<base> -> 001_initial_benchmark_schema`)
-2. `002_add_dynamic_tables` (`001_initial_benchmark_schema -> 002_add_dynamic_tables`)
-3. `003_add_phase_c_analytics_infrastructure` (`002_add_dynamic_tables -> 003_add_phase_c_analytics_infrastructure`)
-4. `004_add_discussions_and_pr_depth` (`003_add_phase_c_analytics_infrastructure -> 004_add_discussions_and_pr_depth`)
-
-[`backend/alembic/env.py`](../backend/alembic/env.py) configures `render_as_batch=True` for SQLite compatibility and supports overriding the target database with `-x db_url=...` or `-x db_path=...`, otherwise falling back to `DATABASE_URL` or `get_database_url()`.
-
-> [!NOTE]
-> **Migration 001 vs. ORM Alignment (Resolved in Stage 2.1):** In earlier iterations, [`001_initial_benchmark_schema.py`](../backend/alembic/versions/001_initial_benchmark_schema.py) had column discrepancies on three Phase A tables (`issue_labels`, `repository_analytics`, `predictions`). In Stage 2.1, Migration 001 was updated to match [`backend/app/database/models.py`](../backend/app/database/models.py) exactly. Running `alembic upgrade head` on a completely empty database now provisions a pristine schema identical to the ORM, as verified by `test_fresh_database_upgrade_head_and_orm_queries()` in [`tests/test_alembic_migrations.py`](../tests/test_alembic_migrations.py).
+### 4.2 Optimistic Lease-Version Fencing
+- Workers claim jobs via `claim_next_job()` / `claim_job()`, incrementing `lease_version += 1`, recording `worker_id`, and extending `leased_until = now + 600s`.
+- All heartbeat renewals, status completions, and failure recordings execute conditional updates:
+  ```sql
+  UPDATE analysis_runs
+  SET status = :new_status, ...
+  WHERE id = :run_id AND worker_id = :worker_id AND lease_version = :lease_version AND status = 'running';
+  ```
+- If `rowcount == 0`, the lease was lost or claimed by another worker; the operation is immediately rejected (`JobLeaseLostException`), preventing split-brain writes.
 
 ---
 
-## 5. SQLite vs. PostgreSQL Behavior
+## 5. Alembic Migrations
 
-| Capability | SQLite (`WAL`) — Local Default | PostgreSQL — Target Production Engine |
-|---|---|---|
-| **Driver / Dependencies** | Built into Python stdlib (`sqlite3`). | Requires installing commented-out `psycopg2-binary` from [`backend/requirements.txt`](../backend/requirements.txt). |
-| **Queue Locking** | File-level writer serialization (`BEGIN IMMEDIATE` / single-writer); multi-worker claim contention returns lock/busy errors if heavily concurrent. | Row-level `FOR UPDATE SKIP LOCKED` in `DurableJobQueue.claim_next_job` and `AnalyticsJobQueue.claim_job`. |
-| **Snapshot Reads** | Tested in WAL mode (`tests/test_analytics_queue.py`) using a dedicated read connection/session. | Tested only via SQL compilation/unit mocks; **live multi-worker PostgreSQL execution is currently unverified**. |
-| **BigInteger PKs** | Mapped with `.with_variant(Integer, "sqlite")` in migrations (`PK_TYPE`) for autoincrement compatibility. | Native 64-bit `BIGINT` identity sequences. |
+Migrations are stored in [`backend/alembic/versions/`](../backend/alembic/versions/):
 
-### Migration Verification Commands
-Note: On Windows environments where `alembic.exe` may be restricted or when invoking inside the repository virtualenv, run Alembic as a Python module:
+1. **`001_initial_benchmark_schema.py`:** Core repository, issue, label, and prediction schemas.
+2. **`002_add_dynamic_tables.py`:** Dynamic ingestion queue (`collection_runs`), commits, contributors, PRs, reviews, releases, and issue comments.
+3. **`003_add_phase_c_analytics_infrastructure.py`:** Phase C durable analytics queue (`analysis_runs`, `analysis_run_attempts`), source revision tracking, and snapshot isolation columns.
+4. **`004_add_discussions_and_pr_depth.py`:** PR depth columns (`body`, `head_branch`, `base_branch`, `is_draft`, `labels`, `requested_reviewers`), release tag fallback columns (`is_tag_fallback`, `commit_sha`), and GitHub Discussions (`discussions`, `discussion_comments`).
+5. **`005_issue_and_discussion_embeddings.py`:** Dense vector embeddings tables (`issue_embeddings`, `discussion_embeddings`) storing 384-dimensional float32 IEEE-754 BLOBs with cascade foreign keys.
 
+To run migrations:
 ```powershell
-.\.venv\Scripts\python.exe -m alembic -c alembic.ini current
-.\.venv\Scripts\python.exe -m alembic -c alembic.ini history
+.\.venv\Scripts\python.exe -m alembic -c alembic.ini upgrade head
 ```

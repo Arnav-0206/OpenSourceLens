@@ -1,6 +1,6 @@
-# OpenSourceLens — Data Storage
+# OpenSourceLens — Data Storage Architecture
 
-This directory manages all datasets for OpenSourceLens, maintaining strict separation between raw API responses and processed datasets.
+This directory manages all local database files, backup baselines, and historical datasets for OpenSourceLens.
 
 ---
 
@@ -8,13 +8,20 @@ This directory manages all datasets for OpenSourceLens, maintaining strict separ
 
 ```text
 data/
-├── raw/                      # Unmodified GitHub REST API responses (Git-ignored)
+├── opensource_lens.db        # Primary SQLite database (WAL mode, 21 ORM tables)
+├── opensource_lens.db-wal    # SQLite Write-Ahead Log
+├── opensource_lens.db-shm    # SQLite shared-memory index
+│
+├── backups/                  # Immutable benchmark baseline backups
+│   └── benchmark_baseline.db # Baseline SQLite database for offline research
+│
+├── raw/                      # Historical raw GitHub REST API responses (Git-ignored)
 │   ├── repositories/         # Repository metadata ({owner}__{repo}.json)
 │   ├── issues/               # Issue batches ({owner}__{repo}__issues_{batch}.json)
 │   ├── comments/             # Discussion threads ({owner}__{repo}__issue_{number}__comments.json)
 │   └── events/               # Lifecycle activity ({owner}__{repo}__issue_{number}__events.json)
 │
-├── processed/                # Cleaned and normalized datasets for ML/NLP (Phase 2+)
+├── processed/                # Normalized datasets for benchmark evaluation
 │   ├── issues.parquet        # Master processed issue table
 │   └── label_mappings.json   # Repository-to-canonical label taxonomy maps
 │
@@ -23,15 +30,17 @@ data/
 
 ---
 
-## Data Pipeline Principles
+## Data Persistence & Principles
 
-1. **Separation of Raw and Processed:**
-   - Raw data represents the original truth as returned by GitHub.
-   - Processing, cleaning, label normalization, and feature extraction (Phase 2) read from `raw/` and write to `processed/`.
-   - Raw files are **never modified in-place**.
-2. **Version Control Exclusion:**
-   - `data/raw/` and `data/processed/` are git-ignored via `.gitignore` to prevent committing large data files.
-3. **Encoding Standard:**
-   - All JSON files must be encoded in `UTF-8` (`ensure_ascii=False`) to preserve technical symbols, international text, and emojis (e.g. Kubernetes labels `¯\_(ツ)_/¯`).
-4. **Atomic Writes:**
-   - Files are written to a temporary buffer before atomic replacement to prevent partial or corrupted files during interruption.
+1. **Relational Database (`opensource_lens.db`):**
+   - Managed via SQLAlchemy 2.0 and Alembic migrations (`001` through `005`).
+   - Runs in SQLite `WAL` mode (`PRAGMA journal_mode=WAL`) with foreign key constraints enabled.
+   - Holds repository entities, collection runs, analytics runs, attempt logs, and dense vector embeddings.
+2. **Dense Vector Embeddings Storage:**
+   - Dense sentence embeddings (`all-MiniLM-L6-v2`, 384 dimensions) are stored directly inside the relational database in `issue_embeddings` and `discussion_embeddings` as raw IEEE-754 binary BLOBs (1,536 bytes per vector).
+   - This enables portable, zero-external-vector-database operation on both SQLite and PostgreSQL.
+3. **Separation of Raw API Data and Benchmark Datasets:**
+   - `data/raw/` stores unmodified GitHub JSON responses for benchmark baseline analysis.
+   - Production dynamic ingestion operates directly through `RepositoryCollector` into the relational database.
+4. **Encoding Standard:**
+   - All text and JSON processing enforces `UTF-8` encoding to preserve technical symbols, international text, and emojis.
