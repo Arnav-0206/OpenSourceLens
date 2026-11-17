@@ -31,7 +31,6 @@ import TabActivity from "@/components/workspace/TabActivity";
 import TabContributors from "@/components/workspace/TabContributors";
 import TabPullRequests from "@/components/workspace/TabPullRequests";
 import TabIssues from "@/components/workspace/TabIssues";
-import TabDiscussions from "@/components/workspace/TabDiscussions";
 
 interface PageProps {
   params: Promise<{
@@ -45,8 +44,7 @@ type TabKey =
   | "activity"
   | "contributors"
   | "pull_requests"
-  | "issues"
-  | "discussions";
+  | "issues";
 
 interface TabItem {
   id: TabKey;
@@ -161,20 +159,17 @@ export default function RepoWorkspacePage({ params }: PageProps) {
     payload?.issue_intelligence?.observed_flow?.total_created_observed ??
     payload?.issue_intelligence?.total_issues;
 
-  const discussionCount =
-    payload?.repository_synthesis?.discussions_intelligence?.total_discussions;
-
   const tabs: TabItem[] = [
-    { id: "overview", label: "Overview & Scorecard", icon: Layers },
+    { id: "overview", label: "Overview", icon: Layers },
     {
       id: "activity",
-      label: "Development Activity",
+      label: "Code Activity",
       icon: GitCommit,
       badge: payload?.development_activity?.summary?.total_commits,
     },
     {
       id: "contributors",
-      label: "Contributor Ecosystem",
+      label: "Contributors",
       icon: Users,
       badge: contributorCount !== undefined && contributorCount > 0 ? contributorCount : undefined,
     },
@@ -186,18 +181,9 @@ export default function RepoWorkspacePage({ params }: PageProps) {
     },
     {
       id: "issues",
-      label: "Issues & Backlog",
+      label: "Issues (AI)",
       icon: Inbox,
       badge: issueCount !== undefined && issueCount > 0 ? issueCount : undefined,
-    },
-    {
-      id: "discussions",
-      label: "Discussions",
-      icon: MessageSquare,
-      badge:
-        discussionCount !== undefined && discussionCount > 0
-          ? discussionCount
-          : undefined,
     },
   ];
 
@@ -413,14 +399,6 @@ export default function RepoWorkspacePage({ params }: PageProps) {
                   issues={payload?.issue_intelligence}
                   owner={owner}
                   name={name}
-                />
-              )}
-
-              {activeTab === "discussions" && (
-                <TabDiscussions
-                  discussions={
-                    payload?.repository_synthesis?.discussions_intelligence
-                  }
                 />
               )}
             </div>

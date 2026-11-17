@@ -13,6 +13,7 @@ import {
   AnalysisStatusResponse,
   ClassificationRequest,
   ClassificationResponse,
+  ClassifiedIssuesResponse,
   ErrorResponse,
   HealthResponse,
   IngestJobStatusResponse,
@@ -319,6 +320,21 @@ export async function getDiscoveredTopics(
 ): Promise<TopicDiscoveryResponse> {
   return fetchJson<TopicDiscoveryResponse>(
     `${API_BASE_URL}/analytics/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/topics?max_clusters=${maxClusters}`
+  );
+}
+
+export async function getClassifiedIssues(
+  owner: string,
+  name: string,
+  state: "open" | "closed" | "all" = "open",
+  limit: number = 60
+): Promise<ClassifiedIssuesResponse> {
+  return fetchJson<ClassifiedIssuesResponse>(
+    `${API_BASE_URL}/analytics/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/issues/classified?state=${state}&limit=${limit}`,
+    {
+      cache: "no-store",
+      timeoutMs: 25000,
+    }
   );
 }
 

@@ -105,9 +105,9 @@ export default function WorkspaceHeader({ data, onRefresh }: WorkspaceHeaderProp
                 <ExternalLink className="w-5 h-5" />
               </a>
 
-              {/* Confidence Band Pill */}
+              {/* Data Coverage Pill */}
               <div
-                className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full border text-xs font-semibold capitalize ${
+                className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full border text-xs font-semibold ${
                   bandColors[confBand]
                 }`}
               >
@@ -116,15 +116,8 @@ export default function WorkspaceHeader({ data, onRefresh }: WorkspaceHeaderProp
                 ) : (
                   <ShieldAlert className="w-4 h-4" />
                 )}
-                <span>
-                  {confBand} Confidence ({confScorePct}%)
-                </span>
+                <span>Data Coverage: {confScorePct}%</span>
               </div>
-
-              {/* Methodology Pill */}
-              <span className="px-2.5 py-1 rounded-full text-xs font-mono bg-indigo-500/10 text-indigo-300 border border-indigo-500/20">
-                Methodology {run.methodology_version || "2026.2"}
-              </span>
 
               {repository.is_archived && (
                 <span className="px-2 py-0.5 rounded text-xs bg-amber-500/10 text-amber-300 border border-amber-500/20">
@@ -135,10 +128,12 @@ export default function WorkspaceHeader({ data, onRefresh }: WorkspaceHeaderProp
 
             {/* Surface Indicators */}
             <div className="flex flex-wrap items-center gap-4 text-xs text-slate-400">
-              <span className="flex items-center gap-1.5">
-                <span className="w-2 h-2 rounded-full bg-indigo-400" />
-                Language: <strong className="text-slate-200">{repository.primary_language || "N/A"}</strong>
-              </span>
+              {repository.primary_language && (
+                <span className="flex items-center gap-1.5">
+                  <span className="w-2 h-2 rounded-full bg-indigo-400" />
+                  <strong className="text-slate-200">{repository.primary_language}</strong>
+                </span>
+              )}
               <span className="flex items-center gap-1">
                 <Star className="w-3.5 h-3.5 text-amber-400" />
                 {repository.stars_count.toLocaleString()} stars
@@ -146,9 +141,6 @@ export default function WorkspaceHeader({ data, onRefresh }: WorkspaceHeaderProp
               <span className="flex items-center gap-1">
                 <GitFork className="w-3.5 h-3.5 text-cyan-400" />
                 {repository.forks_count.toLocaleString()} forks
-              </span>
-              <span className="flex items-center gap-1 font-mono text-[11px] text-slate-500">
-                Source Rev #{repository.analytics_source_revision} &middot; Snapshot Rev #{run.analytics_source_revision}
               </span>
             </div>
           </div>
@@ -161,14 +153,14 @@ export default function WorkspaceHeader({ data, onRefresh }: WorkspaceHeaderProp
                 onClick={() => setIsExportOpen(!isExportOpen)}
                 disabled={!!exportingFormat}
                 className="inline-flex items-center gap-2 px-3.5 py-2.5 rounded-xl bg-indigo-600/90 hover:bg-indigo-600 text-white border border-indigo-500/40 text-xs font-semibold transition-all cursor-pointer disabled:opacity-50 shadow-sm shadow-indigo-950"
-                title="Download full intelligence audit report"
+                title="Download repository report"
               >
                 {exportingFormat ? (
                   <Loader2 className="w-3.5 h-3.5 animate-spin" />
                 ) : (
                   <Download className="w-3.5 h-3.5" />
                 )}
-                <span>{exportingFormat ? `Exporting ${exportingFormat.toUpperCase()}...` : "Export Audit Report"}</span>
+                <span>{exportingFormat ? `Exporting...` : "Export Report"}</span>
                 <ChevronDown className="w-3 h-3 text-indigo-200" />
               </button>
 
@@ -180,8 +172,8 @@ export default function WorkspaceHeader({ data, onRefresh }: WorkspaceHeaderProp
                   >
                     <FileText className="w-4 h-4 text-indigo-400 flex-shrink-0 mt-0.5" />
                     <div>
-                      <div className="font-semibold text-white">Executive Markdown (.md)</div>
-                      <div className="text-[10px] text-slate-400">Download report with tables, audits & themes</div>
+                      <div className="font-semibold text-white">Summary Report (.md)</div>
+                      <div className="text-[10px] text-slate-400">Readable Markdown report with insights &amp; tables</div>
                     </div>
                   </button>
                   <button
@@ -190,8 +182,8 @@ export default function WorkspaceHeader({ data, onRefresh }: WorkspaceHeaderProp
                   >
                     <Code className="w-4 h-4 text-cyan-400 flex-shrink-0 mt-0.5" />
                     <div>
-                      <div className="font-semibold text-white">Machine Audit (.json)</div>
-                      <div className="text-[10px] text-slate-400">Export structured payload, metadata & scores</div>
+                      <div className="font-semibold text-white">Raw Data (.json)</div>
+                      <div className="text-[10px] text-slate-400">Structured JSON metrics &amp; insights</div>
                     </div>
                   </button>
                 </div>
@@ -202,10 +194,10 @@ export default function WorkspaceHeader({ data, onRefresh }: WorkspaceHeaderProp
               onClick={() => handleRecompute(true)}
               disabled={isRecomputing}
               className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-750 text-slate-200 hover:text-white border border-slate-700 hover:border-slate-600 text-xs font-semibold transition-all cursor-pointer disabled:opacity-50"
-              title="Force full recomputation of analytical snapshot"
+              title="Re-run analytics on the latest collected data"
             >
               <RotateCw className={`w-3.5 h-3.5 ${isRecomputing ? "animate-spin text-indigo-400" : ""}`} />
-              <span>{isRecomputing ? "Recomputing..." : "Recompute Snapshot"}</span>
+              <span>{isRecomputing ? "Refreshing..." : "Refresh Analysis"}</span>
             </button>
           </div>
         </div>

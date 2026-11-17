@@ -129,10 +129,10 @@ export default function TabContributors({ contributors }: TabContributorsProps) 
         <div className="p-4 rounded-xl border border-slate-800 bg-slate-900/60">
           <div className="flex items-center gap-2 text-xs text-slate-400">
             <Users className="w-4 h-4 text-cyan-400" />
-            <span>Tracked Contributors</span>
+            <span>Total Contributors</span>
           </div>
           <div className="text-2xl font-bold text-white mt-1.5">{directoryTotal.toLocaleString()}</div>
-          <div className="text-[11px] text-slate-500 mt-0.5">
+          <div className="text-[11px] text-slate-400 mt-0.5">
             {activeAuthors} active committers in sample
           </div>
         </div>
@@ -140,34 +140,34 @@ export default function TabContributors({ contributors }: TabContributorsProps) 
         <div className="p-4 rounded-xl border border-slate-800 bg-slate-900/60">
           <div className="flex items-center gap-2 text-xs text-slate-400">
             <Scale className="w-4 h-4 text-indigo-400" />
-            <span>Workload Concentration (Gini)</span>
+            <span>Workload Balance</span>
           </div>
           <div className="text-2xl font-bold text-white mt-1.5">
-            {gini != null ? gini.toFixed(3) : "N/A"}
-          </div>
-          <div className="text-[11px] text-slate-500 mt-0.5">
             {gini == null
-              ? "Insufficient authors"
-              : gini > 0.8
-              ? "Heavily concentrated on top maintainers"
-              : gini > 0.6
-              ? "Moderately concentrated"
-              : "Well-distributed across team"}
+              ? "Active"
+              : gini > 0.75
+              ? "Concentrated"
+              : gini > 0.55
+              ? "Moderate"
+              : "Balanced"}
+          </div>
+          <div className="text-[11px] text-slate-400 mt-0.5">
+            {gini != null ? `Inequality index: ${gini.toFixed(2)} (0 = equal)` : "Across recent commits"}
           </div>
         </div>
 
         <div className="p-4 rounded-xl border border-slate-800 bg-slate-900/60">
           <div className="flex items-center gap-2 text-xs text-slate-400">
             <ShieldAlert className="w-4 h-4 text-amber-400" />
-            <span>Key-Person Risk (Bus Factor)</span>
+            <span>Key-Person Dependency</span>
           </div>
           <div className="text-2xl font-bold text-amber-300 mt-1.5">
-            {bf50 != null ? `${bf50} ${bf50 === 1 ? "person" : "people"}` : "N/A"}
+            {bf50 != null ? `${bf50} ${bf50 === 1 ? "person" : "people"}` : `${activeAuthors} authors`}
           </div>
-          <div className="text-[11px] text-slate-500 mt-0.5">
+          <div className="text-[11px] text-slate-400 mt-0.5">
             {top1Share != null
-              ? `Top author accounts for ${(top1Share * 100).toFixed(0)}% of commits`
-              : "Produce 50% of total activity"}
+              ? `Top author wrote ${(top1Share * 100).toFixed(0)}% of commits`
+              : "Drives half of all code changes"}
           </div>
         </div>
 
@@ -179,8 +179,8 @@ export default function TabContributors({ contributors }: TabContributorsProps) 
           <div className="text-2xl font-bold text-emerald-400 mt-1.5">
             {coreCount}
           </div>
-          <div className="text-[11px] text-slate-500 mt-0.5">
-            Newcomers: {newcomers30d} &middot; Bots isolated: {botCount}
+          <div className="text-[11px] text-slate-400 mt-0.5">
+            Newcomers: {newcomers30d} &middot; Bots filtered: {botCount}
           </div>
         </div>
       </div>
@@ -192,20 +192,22 @@ export default function TabContributors({ contributors }: TabContributorsProps) 
             <div>
               <h3 className="text-base font-bold text-white flex items-center gap-2">
                 <Scale className="w-4 h-4 text-indigo-400" />
-                <span>Contribution Distribution Curve (Lorenz)</span>
+                <span>How Evenly Work Is Shared</span>
               </h3>
               <p className="text-xs text-slate-400 mt-0.5">
-                Compares observed commit distribution against perfectly equal contribution sharing
+                Closer to the dashed line means work is spread evenly; a deeper curve means a few core authors do most commits
               </p>
             </div>
-            <span className="text-xs px-2.5 py-1 rounded-full bg-slate-800 text-slate-300 font-mono">
-              Gini = {gini != null ? gini.toFixed(3) : "N/A"}
-            </span>
+            {gini != null && (
+              <span className="text-xs px-2.5 py-1 rounded-full bg-slate-800 text-slate-300 font-mono">
+                Index: {gini.toFixed(2)}
+              </span>
+            )}
           </div>
 
           {lorenzData.length === 0 ? (
-            <div className="h-64 flex items-center justify-center text-slate-500 text-xs">
-              Distribution curve requires at least 2 active human commit authors.
+            <div className="h-64 flex items-center justify-center text-slate-400 text-xs">
+              Distribution chart appears when at least 2 authors contribute commits.
             </div>
           ) : (
             <div className="h-72 w-full pt-2">
@@ -218,7 +220,7 @@ export default function TabContributors({ contributors }: TabContributorsProps) 
                     fontSize={11}
                     unit="%"
                     tickLine={false}
-                    label={{ value: "Cumulative Contributors %", position: "insideBottom", offset: -5, fontSize: 11, fill: "#64748b" }}
+                    label={{ value: "% of Contributors", position: "insideBottom", offset: -5, fontSize: 11, fill: "#64748b" }}
                   />
                   <YAxis
                     stroke="#94a3b8"
@@ -237,62 +239,66 @@ export default function TabContributors({ contributors }: TabContributorsProps) 
                     }}
                   />
                   <Legend wrapperStyle={{ fontSize: "12px", paddingTop: "10px" }} />
-                  <Line type="monotone" dataKey="equality" name="Perfect Equality Baseline" stroke="#64748b" strokeDasharray="5 5" strokeWidth={1.5} dot={false} />
-                  <Line type="monotone" dataKey="observed" name="Observed Commit Share" stroke="#6366f1" strokeWidth={2.5} dot={false} />
+                  <Line type="monotone" dataKey="equality" name="Evenly Shared Ideal" stroke="#64748b" strokeDasharray="5 5" strokeWidth={1.5} dot={false} />
+                  <Line type="monotone" dataKey="observed" name="Actual Commit Share" stroke="#6366f1" strokeWidth={2.5} dot={false} />
                 </LineChart>
               </ResponsiveContainer>
             </div>
           )}
         </div>
 
-        {/* Bus Factor Analysis Card */}
+        {/* Team Resilience Card */}
         <div className="space-y-4 rounded-2xl border border-slate-800 bg-slate-900/60 p-6 flex flex-col justify-between">
           <div className="space-y-3">
             <h3 className="text-sm font-bold text-white flex items-center gap-2">
               <ShieldAlert className="w-4 h-4 text-amber-400" />
-              <span>Bus Factor & Resilience Breakdown</span>
+              <span>Team Resilience Summary</span>
             </h3>
             <p className="text-xs text-slate-400 leading-relaxed">
-              Counts the smallest number of maintainers who produced 50% and 80% of recent commits. Lower numbers mean higher reliance on a few individuals.
+              Shows how many people are responsible for the bulk of recent code changes. Higher numbers mean lower risk if one maintainer steps away.
             </p>
 
             <div className="space-y-2.5 pt-2">
-              <div className="p-3 rounded-xl bg-slate-950/70 border border-slate-800 flex items-center justify-between">
-                <div>
-                  <div className="text-xs font-semibold text-white">50% Output Threshold (BF50)</div>
-                  <div className="text-[11px] text-slate-400">Maintainers covering half of all commits</div>
+              {bf50 != null && (
+                <div className="p-3 rounded-xl bg-slate-950/70 border border-slate-800 flex items-center justify-between">
+                  <div>
+                    <div className="text-xs font-semibold text-white">50% of Commits</div>
+                    <div className="text-[11px] text-slate-400">Smallest group writing half the code</div>
+                  </div>
+                  <div className="text-xl font-bold text-amber-400 font-mono">
+                    {bf50}
+                  </div>
                 </div>
-                <div className="text-xl font-bold text-amber-400 font-mono">
-                  {bf50 ?? "N/A"}
-                </div>
-              </div>
+              )}
 
-              <div className="p-3 rounded-xl bg-slate-950/70 border border-slate-800 flex items-center justify-between">
-                <div>
-                  <div className="text-xs font-semibold text-white">80% Output Threshold (BF80)</div>
-                  <div className="text-[11px] text-slate-400">Maintainers covering 80% of all commits</div>
+              {bf80 != null && (
+                <div className="p-3 rounded-xl bg-slate-950/70 border border-slate-800 flex items-center justify-between">
+                  <div>
+                    <div className="text-xs font-semibold text-white">80% of Commits</div>
+                    <div className="text-[11px] text-slate-400">Smallest group writing 80% of code</div>
+                  </div>
+                  <div className="text-xl font-bold text-indigo-400 font-mono">
+                    {bf80}
+                  </div>
                 </div>
-                <div className="text-xl font-bold text-indigo-400 font-mono">
-                  {bf80 ?? "N/A"}
-                </div>
-              </div>
+              )}
 
               {top5Share != null && (
                 <div className="p-3 rounded-xl bg-slate-950/70 border border-slate-800 flex items-center justify-between">
                   <div>
-                    <div className="text-xs font-semibold text-white">Top 5 Share</div>
-                    <div className="text-[11px] text-slate-400">Multi-role active: {multiRoleActive}</div>
+                    <div className="text-xs font-semibold text-white">Top 5 Authors Share</div>
+                    <div className="text-[11px] text-slate-400">Active participants: {multiRoleActive}</div>
                   </div>
                   <div className="text-lg font-bold text-cyan-400 font-mono">
-                    {(top5Share * 100).toFixed(1)}%
+                    {(top5Share * 100).toFixed(0)}%
                   </div>
                 </div>
               )}
             </div>
           </div>
 
-          <div className="p-3 rounded-xl bg-indigo-500/10 border border-indigo-500/20 text-indigo-300 text-xs leading-relaxed">
-            <strong>Automated Bot Filtering:</strong> CI bots and automated dependency accounts ({botCount} detected) are excluded from human concentration metrics.
+          <div className="p-3 rounded-xl bg-indigo-500/10 border border-indigo-500/20 text-indigo-200 text-xs leading-relaxed">
+            <strong>Human-Only Metrics:</strong> Automated bots and CI accounts are automatically excluded so numbers reflect real developers.
           </div>
         </div>
       </div>

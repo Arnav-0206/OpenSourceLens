@@ -2,8 +2,19 @@
 
 import React, { useState } from "react";
 import {
-  CartesianGrid,
-  Legend,
+  Activity,
+  AlertTriangle,
+  CheckCircle2,
+  Compass,
+  GitCommit,
+  GitPullRequest,
+  Inbox,
+  Info,
+  Package,
+  Sparkles,
+  Users,
+} from "lucide-react";
+import {
   Line,
   LineChart,
   ResponsiveContainer,
@@ -12,33 +23,11 @@ import {
   YAxis,
 } from "recharts";
 import {
-  Activity,
-  AlertCircle,
-  AlertTriangle,
-  Award,
-  BarChart3,
-  CheckCircle2,
-  ChevronDown,
-  ChevronRight,
-  Clock,
-  Compass,
-  Cpu,
-  GitCommit,
-  GitPullRequest,
-  HelpCircle,
-  Info,
-  Layers,
-  Lightbulb,
-  MessageSquare,
-  Package,
-  ShieldAlert,
-  ShieldCheck,
-  Sparkles,
-  TrendingUp,
-  Users,
-  Zap,
-} from "lucide-react";
-import { AnalysisPayload, ConfidenceSummary, CrossDomainCorrelationPair, RuleInterpretation } from "@/lib/types";
+  AnalysisPayload,
+  ConfidenceSummary,
+  CrossDomainCorrelationPair,
+  RuleInterpretation,
+} from "@/lib/types";
 
 interface TabOverviewProps {
   payload?: AnalysisPayload | null;
@@ -46,532 +35,569 @@ interface TabOverviewProps {
   rules?: RuleInterpretation[] | null;
 }
 
-export default function TabOverview({ payload, confidence, rules = [] }: TabOverviewProps) {
-  const [severityFilter, setSeverityFilter] = useState<string>("all");
+function formatDuration(hours?: number | null): string | null {
+  if (hours == null || Number.isNaN(hours)) return null;
+  if (hours < 1) {
+    const mins = Math.round(hours * 60);
+    return mins <= 1 ? "< 1 min" : `${mins} mins`;
+  }
+  if (hours >= 48) {
+    return `${(hours / 24).toFixed(1)} days`;
+  }
+  return `${hours.toFixed(1)} hrs`;
+}
 
-  const syn = payload?.repository_synthesis;
-  const scorecard = syn?.diagnostic_scorecard || {};
-  const rel = syn?.release_evolution || payload?.repository_synthesis?.release_evolution;
-  const disc = syn?.discussions_intelligence || payload?.repository_synthesis?.discussions_intelligence;
-  const correlations = syn?.cross_domain_correlations;
-  const pairs: CrossDomainCorrelationPair[] = correlations?.pairs || [];
+function cleanFindingText(text: string): string {
+  return text
+    .replace(/\s*\(observed\s+'[^']+'\s+sample\)/gi, "")
+    .replace(/\(BF50=(\d+),\s*BF80=(\d+)\)/gi, "($1 core contributor drives half of commits)")
+    .replace(/TTFResp/gi, "first response time")
+    .replace(/non-author human feedback/gi, "maintainer feedback")
+    .replace(/\(reflects UTC timestamps, not contributor local hours\)/gi, "(in UTC time)")
+    .trim();
+}
 
-  // Domain scorecards from backend diagnostic_scorecard
-  const devCard = scorecard["activity_profile"] || scorecard["development_activity"] || {};
-  const contribCard = scorecard["contributor_resilience"] || scorecard["contributor_ecosystem"] || {};
-  const prCard = scorecard["pr_responsiveness"] || scorecard["pull_request_intelligence"] || {};
-  const issueCard = scorecard["issue_health"] || scorecard["issue_intelligence"] || {};
-  const relCard = scorecard["release_cadence"] || scorecard["release_evolution"] || {};
-  const discCard = scorecard["community_discussions"] || {};
+function friendlyDomainName(domain?: string): string {
+  const map: Record<string, string> = {
+    development_activity: "Code Activity",
+    contributor_ecosystem: "Contributors",
+    pull_request_intelligence: "Pull Requests",
+    issue_intelligence: "Issues",
+    release_evolution: "Releases",
+    repository_synthesis: "Overall Health",
+  };
+  if (!domain) return "General";
+  const key = domain.toLowerCase().replace(/\s+/g, "_");
+  return map[key] || domain.replace(/_/g, " ");
+}
 
-  const allRules = rules || [];
-  const filteredRules = severityFilter === "all"
-    ? allRules
-    : allRules.filter((r) => r.severity === severityFilter || (severityFilter === "warning" && (r.severity === "high" || r.severity === "warning")));
+const NOISY_RULE_IDS = new Set([
+  "RULE-DISC-EMPTY",
+  "RULE-CON-004",
+  "RULE-SYN-004",
+  "RULE-REL-EMPTY",
+  "RULE-PR-005",
+]);
 
-  // Derive human-readable metrics with safe fallbacks
-  const devTotalCommits = devCard.total_commits ?? payload?.development_activity?.summary?.total_commits ?? 0;
-  const devVelocityTrend = devCard.velocity_trend ?? payload?.development_activity?.summary?.velocity_trend ?? "Stable";
-  const devCompletedWeeks = devCard.completed_weeks ?? payload?.development_activity?.summary?.completed_weeks_count ?? "N/A";
-  const devCadence = devCard.cadence_days ? `${devCard.cadence_days}d` : (payload?.development_activity?.summary?.current_cadence_days ? `${payload.development_activity.summary.current_cadence_days}d` : "N/A");
+export default function TabOverview({
+  payload,
+  rules,
+}: TabOverviewProps) {
+  const [filterSeverity, setFilterSeverity] = useState<string>("all");
 
-  const contribTotal = payload?.contributor_ecosystem?.participation?.directory_contributors_count
-    ?? payload?.contributor_ecosystem?.scope?.directory_contributors_count
-    ?? contribCard.active_human_commit_authors_count
-    ?? payload?.contributor_ecosystem?.total_contributors
-    ?? 0;
-  const contribGini = contribCard.gini_coefficient ?? payload?.contributor_ecosystem?.concentration?.gini_coefficient;
-  const contribBf50 = contribCard.bf50 ?? payload?.contributor_ecosystem?.concentration?.bf50;
-  const contribTop1 = contribCard.top1_share ?? payload?.contributor_ecosystem?.concentration?.top1_share;
+  const synthesis = payload?.repository_synthesis;
+  const scorecard = synthesis?.diagnostic_scorecard;
+  const crossDomain = synthesis?.cross_domain_correlations;
 
-  const prTotal = prCard.eligible_prs_count ?? payload?.pull_request_intelligence?.outcome_distribution?.total_eligible_prs ?? 0;
-  const prMergeRate = prCard.merge_rate ?? payload?.pull_request_intelligence?.outcome_distribution?.merge_rate;
-  const prTurnaroundP50 = prCard.merge_latency_p50_hours ?? payload?.pull_request_intelligence?.merge_latency?.p50_hours;
-  const prTtfRespP50 = prCard.ttf_resp_p50_hours ?? payload?.pull_request_intelligence?.responsiveness?.ttf_resp?.p50_hours;
+  // Domain raw slices
+  const actData = payload?.development_activity;
+  const contribData = payload?.contributor_ecosystem;
+  const prData = payload?.pull_request_intelligence;
+  const issueData = payload?.issue_intelligence;
+  const relData = synthesis?.release_evolution;
 
-  const isIssueEmpty = issueCard.coverage_status === "empty" || (payload?.issue_intelligence?.observed_flow?.total_created_observed === 0 && payload?.issue_intelligence?.scope?.mode !== undefined);
-  const isDiscEmpty = discCard.coverage_status === "empty" || (disc?.total_discussions === 0);
+  // Scorecard sub-objects
+  const actCard = scorecard?.activity_profile;
+  const contribCard = scorecard?.contributor_resilience;
+  const prCard = scorecard?.pr_responsiveness;
+  const issueCard = scorecard?.issue_health;
+  const relCard = scorecard?.release_cadence;
+
+  // 1. Code Activity metrics (real values only)
+  const totalCommits = actData?.summary?.total_commits ?? 0;
+  const activeWeeks = actData?.summary?.active_weeks_count ?? 0;
+  const trailing4w = actCard?.trailing_4w_velocity ?? actData?.velocity?.trailing_4w_velocity;
+  const velocityRatio = actCard?.velocity_trend_ratio ?? actData?.velocity?.velocity_trend_ratio;
+  const trendLabel =
+    velocityRatio != null
+      ? velocityRatio >= 1.25
+        ? "Accelerating"
+        : velocityRatio <= 0.75
+        ? "Slowing"
+        : "Steady"
+      : totalCommits > 0
+      ? "Active"
+      : "Quiet";
+
+  // 2. Contributors metrics
+  const totalContributors =
+    contribData?.participation?.directory_contributors_count ??
+    contribData?.total_contributors ??
+    0;
+  const activeAuthors =
+    contribCard?.active_human_commit_authors_count ??
+    contribData?.concentration?.active_human_commit_authors_count ??
+    0;
+  const top1Share =
+    contribCard?.top1_share ?? contribData?.concentration?.top1_share;
+  const bf50 = contribCard?.bf50 ?? contribData?.concentration?.bf50;
+
+  // 3. Pull Requests metrics
+  const totalPRs =
+    prCard?.eligible_prs_count ??
+    prData?.outcome_distribution?.total_eligible_prs ??
+    prData?.total_prs ??
+    0;
+  const mergeRate = prCard?.merge_rate ?? prData?.outcome_distribution?.merge_rate;
+  const firstResp = formatDuration(
+    prCard?.ttf_resp_p50_hours ?? prData?.responsiveness?.ttf_resp?.p50_hours
+  );
+  const mergeMedian = formatDuration(
+    prCard?.merge_latency_p50_hours ?? prData?.merge_latency?.p50_hours
+  );
+  const openPRs = prData?.outcome_distribution?.open_count ?? 0;
+
+  // 4. Issues metrics (only show full card if repository actually has issues)
+  const totalIssues =
+    issueCard?.eligible_issues_count ??
+    issueData?.observed_flow?.total_created_observed ??
+    issueData?.total_issues ??
+    0;
+  const issueCloseTime = formatDuration(
+    issueCard?.resolution_p50_hours ?? issueData?.resolution_distribution?.p50_hours
+  );
+  const openIssues = issueData?.backlog_aging?.open_issues_count ?? 0;
+  const closeRatio = issueCard?.flow_ratio ?? issueData?.observed_flow?.flow_ratio;
+
+  // 5. Releases metrics (only show card if releases exist)
+  const totalReleases =
+    relCard?.total_releases ?? relData?.cadence?.total_releases ?? 0;
+  const semverRate =
+    relCard?.semver_adoption_rate ?? relData?.semver_adoption?.semver_adoption_rate;
+  const latestTag = relData?.cadence?.latest_release_tag;
+  const daysSinceRelease =
+    relCard?.days_since_last_release ?? relData?.cadence?.days_since_last_release;
+
+  // Filter Cross-Domain pairs: ONLY show section if at least one pair actually has a computed correlation!
+  const testablePairs: CrossDomainCorrelationPair[] = (
+    crossDomain?.pairs || []
+  ).filter((p) => p.spearman_r != null);
+
+  // Filter & humanize findings
+  const rawRules = (rules || []).filter((r) => !NOISY_RULE_IDS.has(r.rule_id));
+  const warningRules = rawRules.filter(
+    (r) => r.severity === "warning" || r.severity === "high" || r.severity === "critical"
+  );
+  const positiveRules = rawRules.filter((r) => r.severity === "positive");
+  const infoRules = rawRules.filter(
+    (r) =>
+      r.severity !== "warning" &&
+      r.severity !== "high" &&
+      r.severity !== "critical" &&
+      r.severity !== "positive"
+  );
+
+  const visibleRules =
+    filterSeverity === "warnings"
+      ? warningRules
+      : filterSeverity === "positive"
+      ? positiveRules
+      : filterSeverity === "info"
+      ? infoRules
+      : rawRules;
 
   return (
     <div className="space-y-8">
-      {/* 1. Multi-Domain Diagnostic Scorecard Grid */}
-      <section className="space-y-3">
-        <div className="flex items-center justify-between">
-          <div>
-            <h2 className="text-lg font-bold text-white tracking-tight flex items-center gap-2">
-              <Sparkles className="w-5 h-5 text-indigo-400" />
-              <span>Multi-Domain Diagnostic Scorecard</span>
-            </h2>
-            <p className="text-xs text-slate-400 mt-0.5">
-              Objective operational indicators synthesized across all 7 analytical domains
-            </p>
-          </div>
-          <span className="text-[11px] font-mono px-2.5 py-1 rounded-md bg-slate-800 text-slate-300 border border-slate-700">
-            Evidence-Based Diagnostics
-          </span>
-        </div>
-
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-          {/* Card 1: Development Activity */}
-          <div className="p-4 rounded-xl border border-slate-800 bg-slate-900/60 hover:border-slate-700 transition-all space-y-3">
-            <div className="flex items-center justify-between">
-              <span className="flex items-center gap-2 text-xs font-semibold text-slate-300">
-                <GitCommit className="w-4 h-4 text-indigo-400" />
-                <span>Development Activity</span>
-              </span>
-              <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-indigo-500/10 text-indigo-300 capitalize">
-                {devCard.consistency_classification ? devCard.consistency_classification.replace(/_/g, " ") : "Active"}
-              </span>
-            </div>
-            <div className="grid grid-cols-2 gap-2 text-xs">
-              <div className="p-2 rounded-lg bg-slate-950/60 border border-slate-800/80">
-                <div className="text-[10px] text-slate-400">Total Commits</div>
-                <div className="text-base font-bold text-white mt-0.5">
-                  {devTotalCommits.toLocaleString()}
-                </div>
-              </div>
-              <div className="p-2 rounded-lg bg-slate-950/60 border border-slate-800/80">
-                <div className="text-[10px] text-slate-400">Velocity Trend</div>
-                <div className="text-base font-bold text-white mt-0.5 capitalize">
-                  {devVelocityTrend}
-                </div>
-              </div>
-            </div>
-            <div className="text-[11px] text-slate-400 flex items-center justify-between pt-1 border-t border-slate-800/60">
-              <span>Completed Weeks: {devCompletedWeeks}</span>
-              <span>Cadence: {devCadence}</span>
-            </div>
-          </div>
-
-          {/* Card 2: Contributor Ecosystem */}
-          <div className="p-4 rounded-xl border border-slate-800 bg-slate-900/60 hover:border-slate-700 transition-all space-y-3">
-            <div className="flex items-center justify-between">
-              <span className="flex items-center gap-2 text-xs font-semibold text-slate-300">
-                <Users className="w-4 h-4 text-cyan-400" />
-                <span>Contributor Ecosystem</span>
-              </span>
-              <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-cyan-500/10 text-cyan-300">
-                {contribBf50 != null ? `Bus Factor: ${contribBf50}` : "Analyzed"}
-              </span>
-            </div>
-            <div className="grid grid-cols-2 gap-2 text-xs">
-              <div className="p-2 rounded-lg bg-slate-950/60 border border-slate-800/80">
-                <div className="text-[10px] text-slate-400">Total Contributors</div>
-                <div className="text-base font-bold text-white mt-0.5">
-                  {contribTotal.toLocaleString()}
-                </div>
-              </div>
-              <div className="p-2 rounded-lg bg-slate-950/60 border border-slate-800/80">
-                <div className="text-[10px] text-slate-400">Gini Inequality</div>
-                <div className="text-base font-bold text-white mt-0.5">
-                  {contribGini != null ? contribGini.toFixed(3) : "N/A"}
-                </div>
-              </div>
-            </div>
-            <div className="text-[11px] text-slate-400 flex items-center justify-between pt-1 border-t border-slate-800/60">
-              <span>Active Committers: {contribCard.active_human_commit_authors_count ?? "N/A"}</span>
-              <span>Top Author Share: {contribTop1 != null ? `${(contribTop1 * 100).toFixed(0)}%` : "N/A"}</span>
-            </div>
-          </div>
-
-          {/* Card 3: Pull Request Turnaround */}
-          <div className="p-4 rounded-xl border border-slate-800 bg-slate-900/60 hover:border-slate-700 transition-all space-y-3">
-            <div className="flex items-center justify-between">
-              <span className="flex items-center gap-2 text-xs font-semibold text-slate-300">
-                <GitPullRequest className="w-4 h-4 text-indigo-400" />
-                <span>Pull Request Intelligence</span>
-              </span>
-              <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-indigo-500/10 text-indigo-300">
-                {prTotal > 0 ? `${prTotal} Tracked` : "Tracked"}
-              </span>
-            </div>
-            <div className="grid grid-cols-2 gap-2 text-xs">
-              <div className="p-2 rounded-lg bg-slate-950/60 border border-slate-800/80">
-                <div className="text-[10px] text-slate-400">Turnaround p50</div>
-                <div className="text-base font-bold text-white mt-0.5">
-                  {prTurnaroundP50 != null ? `${prTurnaroundP50.toFixed(1)}h` : "N/A (Pending)"}
-                </div>
-              </div>
-              <div className="p-2 rounded-lg bg-slate-950/60 border border-slate-800/80">
-                <div className="text-[10px] text-slate-400">Merge Rate</div>
-                <div className="text-base font-bold text-white mt-0.5">
-                  {prMergeRate != null ? `${(prMergeRate * 100).toFixed(1)}%` : "N/A"}
-                </div>
-              </div>
-            </div>
-            <div className="text-[11px] text-slate-400 flex items-center justify-between pt-1 border-t border-slate-800/60">
-              <span>First Response p50: {prTtfRespP50 != null ? `${prTtfRespP50.toFixed(1)}h` : "N/A"}</span>
-              <span>Sampled: {prTotal} PRs</span>
-            </div>
-          </div>
-
-          {/* Card 4: Issue Intelligence & SLA */}
-          <div className="p-4 rounded-xl border border-slate-800 bg-slate-900/60 hover:border-slate-700 transition-all space-y-3">
-            <div className="flex items-center justify-between">
-              <span className="flex items-center gap-2 text-xs font-semibold text-slate-300">
-                <AlertCircle className="w-4 h-4 text-rose-400" />
-                <span>Issue & Backlog Intelligence</span>
-              </span>
-              <span className={`text-[10px] font-mono px-2 py-0.5 rounded ${isIssueEmpty ? "bg-slate-800 text-slate-400" : "bg-rose-500/10 text-rose-300"}`}>
-                {isIssueEmpty ? "Not Active" : (issueCard.backlog_health || "Gauged")}
-              </span>
-            </div>
-            <div className="grid grid-cols-2 gap-2 text-xs">
-              <div className="p-2 rounded-lg bg-slate-950/60 border border-slate-800/80">
-                <div className="text-[10px] text-slate-400">Resolution SLA p50</div>
-                <div className="text-base font-bold text-white mt-0.5">
-                  {issueCard.resolution_p50_hours != null
-                    ? `${issueCard.resolution_p50_hours.toFixed(1)}h`
-                    : (isIssueEmpty ? "External / 0" : "N/A")}
-                </div>
-              </div>
-              <div className="p-2 rounded-lg bg-slate-950/60 border border-slate-800/80">
-                <div className="text-[10px] text-slate-400">Close Ratio</div>
-                <div className="text-base font-bold text-white mt-0.5">
-                  {issueCard.flow_ratio != null
-                    ? `${(issueCard.flow_ratio * 100).toFixed(0)}%`
-                    : (isIssueEmpty ? "N/A" : "N/A")}
-                </div>
-              </div>
-            </div>
-            <div className="text-[11px] text-slate-400 flex items-center justify-between pt-1 border-t border-slate-800/60">
-              <span>{isIssueEmpty ? "GitHub Issues Disabled" : `Stale Backlog: ${issueCard.stale_fraction ? `${(issueCard.stale_fraction * 100).toFixed(0)}%` : "0"}`}</span>
-              <span>{isIssueEmpty ? "Mailing List Driven" : "Active"}</span>
-            </div>
-          </div>
-
-          {/* Card 5: Release Evolution */}
-          <div className="p-4 rounded-xl border border-slate-800 bg-slate-900/60 hover:border-slate-700 transition-all space-y-3">
-            <div className="flex items-center justify-between">
-              <span className="flex items-center gap-2 text-xs font-semibold text-slate-300">
-                <Package className="w-4 h-4 text-amber-400" />
-                <span>Release Evolution</span>
-              </span>
-              <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-amber-500/10 text-amber-300 capitalize">
-                {relCard.regularity_classification ? relCard.regularity_classification.replace(/_/g, " ") : "Recorded"}
-              </span>
-            </div>
-            <div className="grid grid-cols-2 gap-2 text-xs">
-              <div className="p-2 rounded-lg bg-slate-950/60 border border-slate-800/80">
-                <div className="text-[10px] text-slate-400">Total Releases</div>
-                <div className="text-base font-bold text-white mt-0.5">
-                  {relCard.total_releases ?? rel?.cadence?.total_releases ?? 0}
-                </div>
-              </div>
-              <div className="p-2 rounded-lg bg-slate-950/60 border border-slate-800/80">
-                <div className="text-[10px] text-slate-400">SemVer Adoption</div>
-                <div className="text-base font-bold text-white mt-0.5">
-                  {relCard.semver_adoption_rate != null
-                    ? `${(relCard.semver_adoption_rate * 100).toFixed(0)}%`
-                    : (rel?.semver_adoption?.semver_adoption_rate != null ? `${(rel.semver_adoption.semver_adoption_rate * 100).toFixed(0)}%` : "N/A")}
-                </div>
-              </div>
-            </div>
-            <div className="text-[11px] text-slate-400 flex items-center justify-between pt-1 border-t border-slate-800/60">
-              <span>Cadence CV: {relCard.cv_release != null ? relCard.cv_release.toFixed(2) : "N/A"}</span>
-              <span>Last: {relCard.days_since_last_release ? `${relCard.days_since_last_release}d ago` : "N/A"}</span>
-            </div>
-          </div>
-
-          {/* Card 6: Community Discussions */}
-          <div className="p-4 rounded-xl border border-slate-800 bg-slate-900/60 hover:border-slate-700 transition-all space-y-3">
-            <div className="flex items-center justify-between">
-              <span className="flex items-center gap-2 text-xs font-semibold text-slate-300">
-                <MessageSquare className="w-4 h-4 text-emerald-400" />
-                <span>Community Discussions</span>
-              </span>
-              <span className={`text-[10px] font-mono px-2 py-0.5 rounded capitalize ${isDiscEmpty ? "bg-slate-800 text-slate-400" : "bg-emerald-500/10 text-emerald-300"}`}>
-                {isDiscEmpty ? "Not Enabled" : (discCard.coverage_status || "Active")}
-              </span>
-            </div>
-            <div className="grid grid-cols-2 gap-2 text-xs">
-              <div className="p-2 rounded-lg bg-slate-950/60 border border-slate-800/80">
-                <div className="text-[10px] text-slate-400">Total Discussions</div>
-                <div className="text-base font-bold text-white mt-0.5">
-                  {discCard.total_discussions ?? disc?.total_discussions ?? 0}
-                </div>
-              </div>
-              <div className="p-2 rounded-lg bg-slate-950/60 border border-slate-800/80">
-                <div className="text-[10px] text-slate-400">Q&A Answered Rate</div>
-                <div className="text-base font-bold text-white mt-0.5">
-                  {discCard.qna_answered_rate != null
-                    ? `${(discCard.qna_answered_rate * 100).toFixed(0)}%`
-                    : (disc?.qna?.qna_answered_rate != null ? `${(disc.qna.qna_answered_rate * 100).toFixed(0)}%` : "N/A")}
-                </div>
-              </div>
-            </div>
-            <div className="text-[11px] text-slate-400 flex items-center justify-between pt-1 border-t border-slate-800/60">
-              <span>Time-to-Answer: {discCard.time_to_answer_p50_hours ? `${discCard.time_to_answer_p50_hours.toFixed(1)}h` : "N/A"}</span>
-              <span>Category: {discCard.dominant_category || disc?.dominant_category || "N/A"}</span>
-            </div>
-          </div>
-        </div>
-      </section>
-
-      {/* 2. Cross-Domain Discovery Explorer */}
+      {/* 1. Executive Summary Grid (Zero N/A cards) */}
       <section className="space-y-4">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
           <div>
             <h2 className="text-lg font-bold text-white tracking-tight flex items-center gap-2">
-              <Compass className="w-5 h-5 text-indigo-400" />
-              <span>Cross-Domain Discovery Explorer</span>
-              <span className="text-[10px] uppercase font-bold tracking-wider px-2 py-0.5 rounded bg-indigo-500/10 text-indigo-300 border border-indigo-500/20">
-                Longitudinal Modeling
-              </span>
+              <Sparkles className="w-5 h-5 text-indigo-400" />
+              <span>Repository Health at a Glance</span>
             </h2>
             <p className="text-xs text-slate-400 mt-0.5">
-              Spearman monotonic alignment testing with Monte Carlo permutations (B=10,000), BH FDR correction (α=0.05), and AR(1) serial dependence guardrails
+              Key metrics extracted from commits, contributors, pull requests, and issues
             </p>
           </div>
-          <span className="text-[11px] font-mono px-2.5 py-1 rounded-md bg-slate-800 text-slate-300 border border-slate-700">
-            {pairs.length} Evaluated Pairs
+          <span className="inline-flex items-center gap-1.5 text-[11px] px-3 py-1 rounded-full bg-indigo-500/10 border border-indigo-500/20 text-indigo-300 font-medium">
+            <Activity className="w-3.5 h-3.5" />
+            Live Repository Telemetry
           </span>
         </div>
 
-        {/* Scientific Disclaimer Banner */}
-        <div className="p-3.5 rounded-xl border border-indigo-500/20 bg-indigo-950/20 text-xs text-indigo-200/90 flex items-start gap-3">
-          <Info className="w-4 h-4 text-indigo-400 mt-0.5 shrink-0" />
-          <p className="leading-relaxed">
-            <strong>Scientific Association Guardrail:</strong> Statistical association does not establish direct operational causation. Correlation estimates reflect calendar-month alignment and may be influenced by seasonal cadence, team expansion, or external repository events.
-          </p>
-        </div>
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+          {/* Card 1: Code Activity */}
+          <div className="p-5 rounded-2xl border border-slate-800 bg-slate-900/60 space-y-4 hover:border-slate-700 transition-colors">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2 text-sm font-semibold text-white">
+                <GitCommit className="w-4 h-4 text-indigo-400" />
+                <span>Code Activity</span>
+              </div>
+              <span className="text-[11px] px-2.5 py-0.5 rounded-full bg-emerald-500/15 text-emerald-300 border border-emerald-500/25 font-medium">
+                {trendLabel}
+              </span>
+            </div>
 
-        {/* 3 Aligned Correlation Cards Grid */}
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-          {pairs.map((pair) => {
-            const isSignificant = pair.significant_fdr_05;
-            const isGuarded = pair.serial_dependence_guardrail_tripped;
-            const isCoverageGuard = pair.status === "incomplete_review_coverage";
-            const isInsufficientPeriods = pair.status === "insufficient_temporal_periods";
-            const rVal = pair.spearman_r;
-
-            const friendlyStatus = isSignificant
-              ? "Significant (FDR 5%)"
-              : isGuarded
-              ? "AR(1) Guarded"
-              : isCoverageGuard
-              ? "Incomplete Reviews"
-              : isInsufficientPeriods
-              ? "Requires 12+ Months"
-              : pair.status;
-
-            return (
-              <div
-                key={pair.pair_id}
-                className="p-4 rounded-xl border border-slate-800 bg-slate-900/60 hover:border-slate-700 transition-all flex flex-col justify-between space-y-3"
-              >
-                <div className="space-y-2">
-                  <div className="flex items-center justify-between">
-                    <span className="text-[11px] font-mono px-2 py-0.5 rounded bg-slate-800 text-slate-300 font-bold border border-slate-700">
-                      {pair.pair_id}
-                    </span>
-                    <span
-                      className={`text-[10px] font-bold px-2 py-0.5 rounded ${
-                        isSignificant
-                          ? "bg-emerald-500/20 text-emerald-300"
-                          : isGuarded
-                          ? "bg-amber-500/20 text-amber-300"
-                          : isCoverageGuard
-                          ? "bg-amber-500/20 text-amber-300"
-                          : "bg-slate-800 text-slate-400"
-                      }`}
-                    >
-                      {friendlyStatus}
-                    </span>
-                  </div>
-
-                  <div>
-                    <h3 className="text-sm font-bold text-white">
-                      {pair.label_x || pair.metric_x} vs {pair.label_y || pair.metric_y}
-                    </h3>
-                    <p className="text-[11px] text-slate-400 mt-0.5">
-                      Aligned Window: {pair.k_months || pair.overlapping_months?.length || 0} overlapping months
-                    </p>
-                  </div>
-
-                  {/* Stats Grid */}
-                  <div className="grid grid-cols-4 gap-1.5 p-2 rounded-lg bg-slate-950/70 border border-slate-800/80 text-center">
-                    <div>
-                      <div className="text-[9px] text-slate-400">Spearman r</div>
-                      <div
-                        className={`text-xs font-mono font-bold mt-0.5 ${
-                          rVal != null
-                            ? rVal > 0.3
-                              ? "text-emerald-400"
-                              : rVal < -0.3
-                              ? "text-rose-400"
-                              : "text-slate-200"
-                            : "text-slate-500"
-                        }`}
-                      >
-                        {rVal != null ? (rVal > 0 ? `+${rVal.toFixed(2)}` : rVal.toFixed(2)) : "N/A"}
-                      </div>
-                    </div>
-                    <div>
-                      <div className="text-[9px] text-slate-400">p-value</div>
-                      <div className="text-xs font-mono font-bold text-slate-200 mt-0.5">
-                        {pair.p_value != null ? pair.p_value.toFixed(3) : "Suppr."}
-                      </div>
-                    </div>
-                    <div>
-                      <div className="text-[9px] text-slate-400">q (FDR)</div>
-                      <div className="text-xs font-mono font-bold text-slate-200 mt-0.5">
-                        {pair.q_value != null ? pair.q_value.toFixed(3) : "N/A"}
-                      </div>
-                    </div>
-                    <div>
-                      <div className="text-[9px] text-slate-400">|r_AR1|</div>
-                      <div
-                        className={`text-xs font-mono font-bold mt-0.5 ${
-                          pair.max_abs_ar1 != null && pair.max_abs_ar1 > 0.40
-                            ? "text-amber-400"
-                            : "text-slate-300"
-                        }`}
-                      >
-                        {pair.max_abs_ar1 != null ? pair.max_abs_ar1.toFixed(2) : "N/A"}
-                      </div>
-                    </div>
-                  </div>
-
-                  {isInsufficientPeriods ? (
-                    <p className="text-[11px] text-slate-400 italic">
-                      Fast Snapshot samples a 14-day window ({pair.k_months || 0} months). Longitudinal Spearman correlation requires 12+ calendar months of history.
-                    </p>
-                  ) : pair.note ? (
-                    <p className="text-[11px] text-slate-400 italic line-clamp-2" title={pair.note}>
-                      {pair.note}
-                    </p>
-                  ) : null}
+            <div className="grid grid-cols-2 gap-3">
+              <div className="p-3 rounded-xl bg-slate-950/70 border border-slate-800/80">
+                <div className="text-[11px] text-slate-400">Recent Commits</div>
+                <div className="text-2xl font-bold text-white mt-0.5">
+                  {totalCommits.toLocaleString()}
                 </div>
+              </div>
+              <div className="p-3 rounded-xl bg-slate-950/70 border border-slate-800/80">
+                <div className="text-[11px] text-slate-400">Weekly Pace</div>
+                <div className="text-2xl font-bold text-indigo-300 mt-0.5">
+                  {trailing4w != null ? `${Math.round(trailing4w)}/wk` : `${activeWeeks} wks`}
+                </div>
+              </div>
+            </div>
 
-                {/* Dual-Line Trend Chart */}
-                {pair.monthly_points && pair.monthly_points.length > 0 && (
-                  <div className="h-36 w-full mt-3 pt-2 border-t border-slate-800/60">
-                    <ResponsiveContainer width="100%" height="100%">
-                      <LineChart data={pair.monthly_points} margin={{ top: 5, right: 10, left: -25, bottom: 0 }}>
-                        <CartesianGrid strokeDasharray="3 3" stroke="#334155" opacity={0.3} />
-                        <XAxis dataKey="month" stroke="#64748b" fontSize={9} tickLine={false} />
-                        <YAxis yAxisId="left" stroke="#818cf8" fontSize={9} tickLine={false} />
-                        <YAxis yAxisId="right" orientation="right" stroke="#38bdf8" fontSize={9} tickLine={false} />
-                        <Tooltip
-                          contentStyle={{
-                            backgroundColor: "#0f172a",
-                            borderColor: "#334155",
-                            borderRadius: "0.5rem",
-                            fontSize: "10px",
-                          }}
-                          labelStyle={{ color: "#f8fafc", fontWeight: "bold" }}
-                        />
-                        <Line
-                          yAxisId="left"
-                          type="monotone"
-                          dataKey="val_x"
-                          name={pair.label_x || "Series X"}
-                          stroke="#818cf8"
-                          strokeWidth={1.5}
-                          dot={false}
-                        />
-                        <Line
-                          yAxisId="right"
-                          type="monotone"
-                          dataKey="val_y"
-                          name={pair.label_y || "Series Y"}
-                          stroke="#38bdf8"
-                          strokeWidth={1.5}
-                          dot={false}
-                        />
-                      </LineChart>
-                    </ResponsiveContainer>
+            <div className="text-xs text-slate-400 flex items-center justify-between pt-1">
+              <span>Active weeks tracked: <strong className="text-slate-200">{activeWeeks}</strong></span>
+              {actData?.activity_rhythms?.peak_weekday?.name && (
+                <span>Busiest day: <strong className="text-slate-200">{actData.activity_rhythms.peak_weekday.name}</strong></span>
+              )}
+            </div>
+          </div>
+
+          {/* Card 2: Contributors */}
+          <div className="p-5 rounded-2xl border border-slate-800 bg-slate-900/60 space-y-4 hover:border-slate-700 transition-colors">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2 text-sm font-semibold text-white">
+                <Users className="w-4 h-4 text-cyan-400" />
+                <span>Contributors &amp; Team</span>
+              </div>
+              {bf50 != null && (
+                <span
+                  className={`text-[11px] px-2.5 py-0.5 rounded-full font-medium border ${
+                    bf50 <= 2
+                      ? "bg-amber-500/15 text-amber-300 border-amber-500/25"
+                      : "bg-cyan-500/15 text-cyan-300 border-cyan-500/25"
+                  }`}
+                >
+                  {bf50 === 1 ? "Single Key Maintainer" : `${bf50} Core Maintainers`}
+                </span>
+              )}
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div className="p-3 rounded-xl bg-slate-950/70 border border-slate-800/80">
+                <div className="text-[11px] text-slate-400">Total Contributors</div>
+                <div className="text-2xl font-bold text-white mt-0.5">
+                  {totalContributors.toLocaleString()}
+                </div>
+              </div>
+              <div className="p-3 rounded-xl bg-slate-950/70 border border-slate-800/80">
+                <div className="text-[11px] text-slate-400">Top Author Share</div>
+                <div className="text-2xl font-bold text-cyan-300 mt-0.5">
+                  {top1Share != null ? `${(top1Share * 100).toFixed(0)}%` : `${activeAuthors} active`}
+                </div>
+              </div>
+            </div>
+
+            <div className="text-xs text-slate-400 flex items-center justify-between pt-1">
+              <span>Active committers: <strong className="text-slate-200">{activeAuthors}</strong></span>
+              <span>
+                Balance:{" "}
+                <strong className="text-slate-200">
+                  {top1Share != null && top1Share >= 0.5 ? "Concentrated" : "Distributed"}
+                </strong>
+              </span>
+            </div>
+          </div>
+
+          {/* Card 3: Pull Requests */}
+          {totalPRs > 0 && (
+            <div className="p-5 rounded-2xl border border-slate-800 bg-slate-900/60 space-y-4 hover:border-slate-700 transition-colors">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2 text-sm font-semibold text-white">
+                  <GitPullRequest className="w-4 h-4 text-purple-400" />
+                  <span>Pull Requests</span>
+                </div>
+                <span className="text-[11px] px-2.5 py-0.5 rounded-full bg-purple-500/15 text-purple-300 border border-purple-500/25 font-medium">
+                  {totalPRs.toLocaleString()} Tracked
+                </span>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div className="p-3 rounded-xl bg-slate-950/70 border border-slate-800/80">
+                  <div className="text-[11px] text-slate-400">
+                    {firstResp ? "First Reply Speed" : mergeMedian ? "Median Merge Time" : "Open PRs"}
                   </div>
+                  <div className="text-2xl font-bold text-emerald-400 mt-0.5">
+                    {firstResp || mergeMedian || openPRs.toLocaleString()}
+                  </div>
+                </div>
+                <div className="p-3 rounded-xl bg-slate-950/70 border border-slate-800/80">
+                  <div className="text-[11px] text-slate-400">
+                    {mergeRate != null ? "GitHub Merge Rate" : "Open PRs"}
+                  </div>
+                  <div className="text-2xl font-bold text-white mt-0.5">
+                    {mergeRate != null ? `${(mergeRate * 100).toFixed(1)}%` : openPRs.toLocaleString()}
+                  </div>
+                </div>
+              </div>
+
+              <div className="text-xs text-slate-400 flex items-center justify-between pt-1">
+                <span>Currently open: <strong className="text-slate-200">{openPRs}</strong></span>
+                <span>
+                  {mergeMedian
+                    ? `Merge time: ${mergeMedian}`
+                    : mergeRate != null && mergeRate < 0.1
+                    ? "External patch workflow"
+                    : "Active review queue"}
+                </span>
+              </div>
+            </div>
+          )}
+
+          {/* Card 4: Issues (only show full KPIs if repository uses GitHub Issues) */}
+          {totalIssues > 0 && (
+            <div className="p-5 rounded-2xl border border-slate-800 bg-slate-900/60 space-y-4 hover:border-slate-700 transition-colors">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2 text-sm font-semibold text-white">
+                  <Inbox className="w-4 h-4 text-rose-400" />
+                  <span>Issues &amp; Backlog</span>
+                </div>
+                <span className="text-[11px] px-2.5 py-0.5 rounded-full bg-rose-500/15 text-rose-300 border border-rose-500/25 font-medium">
+                  AI Classified
+                </span>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div className="p-3 rounded-xl bg-slate-950/70 border border-slate-800/80">
+                  <div className="text-[11px] text-slate-400">Tracked Issues</div>
+                  <div className="text-2xl font-bold text-white mt-0.5">
+                    {totalIssues.toLocaleString()}
+                  </div>
+                </div>
+                <div className="p-3 rounded-xl bg-slate-950/70 border border-slate-800/80">
+                  <div className="text-[11px] text-slate-400">
+                    {issueCloseTime ? "Median Close Time" : "Open Issues"}
+                  </div>
+                  <div className="text-2xl font-bold text-cyan-300 mt-0.5">
+                    {issueCloseTime || openIssues.toLocaleString()}
+                  </div>
+                </div>
+              </div>
+
+              <div className="text-xs text-slate-400 flex items-center justify-between pt-1">
+                <span>Open now: <strong className="text-slate-200">{openIssues}</strong></span>
+                {closeRatio != null && (
+                  <span>Close ratio: <strong className="text-slate-200">{(closeRatio * 100).toFixed(0)}%</strong></span>
                 )}
               </div>
-            );
-          })}
+            </div>
+          )}
+
+          {/* Card 5: Releases (only show if releases/tags were found) */}
+          {totalReleases > 0 && (
+            <div className="p-5 rounded-2xl border border-slate-800 bg-slate-900/60 space-y-4 hover:border-slate-700 transition-colors">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2 text-sm font-semibold text-white">
+                  <Package className="w-4 h-4 text-amber-400" />
+                  <span>Releases</span>
+                </div>
+                {latestTag && (
+                  <span className="text-[11px] px-2.5 py-0.5 rounded-full bg-amber-500/15 text-amber-300 border border-amber-500/25 font-mono">
+                    {latestTag}
+                  </span>
+                )}
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div className="p-3 rounded-xl bg-slate-950/70 border border-slate-800/80">
+                  <div className="text-[11px] text-slate-400">Total Releases</div>
+                  <div className="text-2xl font-bold text-white mt-0.5">
+                    {totalReleases.toLocaleString()}
+                  </div>
+                </div>
+                <div className="p-3 rounded-xl bg-slate-950/70 border border-slate-800/80">
+                  <div className="text-[11px] text-slate-400">
+                    {semverRate != null ? "Standard Versioning" : "Last Release"}
+                  </div>
+                  <div className="text-2xl font-bold text-amber-300 mt-0.5">
+                    {semverRate != null
+                      ? `${(semverRate * 100).toFixed(0)}%`
+                      : daysSinceRelease != null
+                      ? `${daysSinceRelease}d ago`
+                      : "Active"}
+                  </div>
+                </div>
+              </div>
+
+              {daysSinceRelease != null && (
+                <div className="text-xs text-slate-400 pt-1">
+                  Last shipped <strong className="text-slate-200">{daysSinceRelease} days ago</strong>
+                </div>
+              )}
+            </div>
+          )}
         </div>
       </section>
 
-      {/* 3. Synthesized Findings Rules Feed */}
+      {/* 2. Historical Trend Correlations (ONLY rendered when real correlations are computed!) */}
+      {testablePairs.length > 0 && (
+        <section className="space-y-4">
+          <div>
+            <h2 className="text-lg font-bold text-white tracking-tight flex items-center gap-2">
+              <Compass className="w-5 h-5 text-cyan-400" />
+              <span>Long-Term Pattern Discovery</span>
+            </h2>
+            <p className="text-xs text-slate-400 mt-0.5">
+              Statistically verified relationships across 12+ months of repository history
+            </p>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            {testablePairs.map((pair) => {
+              const r = pair.spearman_r ?? 0;
+              const isSignificant = Boolean(pair.significant_fdr_05);
+              const chartSeries = (pair.monthly_points || []).map((pt) => ({
+                month: pt.month,
+                x: pt.val_x,
+                y: pt.val_y,
+              }));
+              const monthsCount = pair.k_months ?? pair.overlapping_months?.length ?? chartSeries.length;
+
+              return (
+                <div
+                  key={pair.pair_id}
+                  className="p-5 rounded-2xl border border-slate-800 bg-slate-900/60 space-y-3"
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-xs font-semibold text-white leading-snug">
+                      {pair.name || `${pair.label_x || pair.metric_x} vs ${pair.label_y || pair.metric_y}`}
+                    </span>
+                    <span
+                      className={`shrink-0 text-[10px] px-2 py-0.5 rounded-full font-medium ${
+                        isSignificant
+                          ? "bg-emerald-500/15 text-emerald-300 border border-emerald-500/30"
+                          : "bg-slate-800 text-slate-300"
+                      }`}
+                    >
+                      {isSignificant ? "Strong Link" : "Weak Link"}
+                    </span>
+                  </div>
+
+                  <div className="flex items-baseline gap-3">
+                    <div className="text-2xl font-bold text-indigo-300 font-mono">
+                      r = {r.toFixed(2)}
+                    </div>
+                    <div className="text-xs text-slate-400">
+                      across {monthsCount} months
+                    </div>
+                  </div>
+
+                  {chartSeries.length >= 2 && (
+                    <div className="h-28 w-full pt-1">
+                      <ResponsiveContainer width="100%" height="100%">
+                        <LineChart data={chartSeries}>
+                          <XAxis dataKey="month" hide />
+                          <YAxis hide />
+                          <Tooltip
+                            contentStyle={{
+                              backgroundColor: "#0f172a",
+                              borderColor: "#334155",
+                              borderRadius: "0.5rem",
+                              fontSize: "11px",
+                            }}
+                          />
+                          <Line type="monotone" dataKey="x" stroke="#818cf8" strokeWidth={2} dot={false} />
+                          <Line type="monotone" dataKey="y" stroke="#38bdf8" strokeWidth={2} dot={false} />
+                        </LineChart>
+                      </ResponsiveContainer>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </section>
+      )}
+
+      {/* 3. Plain-English Key Insights & Recommendations */}
       <section className="space-y-4">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <div>
             <h2 className="text-lg font-bold text-white tracking-tight flex items-center gap-2">
-              <Award className="w-5 h-5 text-amber-400" />
-              <span>Synthesized Intelligence Findings ({allRules.length})</span>
+              <CheckCircle2 className="w-5 h-5 text-emerald-400" />
+              <span>Key Insights &amp; Recommendations</span>
             </h2>
             <p className="text-xs text-slate-400 mt-0.5">
-              Deterministic rule detections derived directly from multi-domain telemetry
+              Automated takeaways highlighting strengths, bottlenecks, and suggested improvements
             </p>
           </div>
 
-          <div className="flex items-center gap-1.5 bg-slate-900 border border-slate-800 p-1 rounded-xl text-xs">
-            {["all", "warning", "positive", "info"].map((f) => (
-              <button
-                key={f}
-                onClick={() => setSeverityFilter(f)}
-                className={`px-3 py-1 rounded-lg font-medium capitalize transition-all cursor-pointer ${
-                  severityFilter === f
-                    ? "bg-indigo-600 text-white"
-                    : "text-slate-400 hover:text-white"
-                }`}
-              >
-                {f === "all" ? `All (${allRules.length})` : f === "warning" ? "Warnings & Bottlenecks" : f === "positive" ? "Positive Signals" : "Context"}
-              </button>
-            ))}
-          </div>
+          {rawRules.length > 0 && (
+            <div className="flex flex-wrap items-center gap-1.5 p-1 rounded-xl bg-slate-900 border border-slate-800 text-xs">
+              {[
+                { id: "all", label: `All (${rawRules.length})` },
+                { id: "warnings", label: `Attention (${warningRules.length})` },
+                { id: "positive", label: `Strengths (${positiveRules.length})` },
+              ].map((tab) => (
+                <button
+                  key={tab.id}
+                  onClick={() => setFilterSeverity(tab.id)}
+                  className={`px-3 py-1 rounded-lg transition-colors cursor-pointer ${
+                    filterSeverity === tab.id
+                      ? "bg-indigo-600 text-white font-semibold"
+                      : "text-slate-400 hover:text-white"
+                  }`}
+                >
+                  {tab.label}
+                </button>
+              ))}
+            </div>
+          )}
         </div>
 
-        {filteredRules.length === 0 ? (
-          <div className="p-8 rounded-2xl bg-slate-900/40 border border-slate-800 text-center text-slate-400 text-sm">
-            No findings matching the selected filter.
+        {visibleRules.length === 0 ? (
+          <div className="p-8 rounded-2xl border border-slate-800 bg-slate-900/40 text-center text-xs text-slate-400">
+            No insights in this category for the current snapshot.
           </div>
         ) : (
           <div className="space-y-3">
-            {filteredRules.map((rule, idx) => {
-              const sev = rule.severity;
-              const isWarning = sev === "warning" || sev === "critical" || sev === "high";
-              const isPositive = sev === "positive";
+            {visibleRules.map((rule, idx) => {
+              const isWarning =
+                rule.severity === "warning" ||
+                rule.severity === "high" ||
+                rule.severity === "critical";
+              const isPositive = rule.severity === "positive";
 
               return (
                 <div
                   key={`${rule.rule_id}-${idx}`}
-                  className={`p-4 rounded-xl border transition-all space-y-2 ${
+                  className={`p-4 rounded-xl border space-y-2 ${
                     isWarning
-                      ? "border-amber-500/30 bg-amber-950/10 hover:border-amber-500/50"
+                      ? "border-amber-500/25 bg-amber-500/5"
                       : isPositive
-                      ? "border-emerald-500/30 bg-emerald-950/10 hover:border-emerald-500/50"
-                      : "border-slate-800 bg-slate-900/60 hover:border-slate-700"
+                      ? "border-emerald-500/25 bg-emerald-500/5"
+                      : "border-slate-800 bg-slate-900/50"
                   }`}
                 >
-                  <div className="flex items-center justify-between gap-2">
-                    <div className="flex items-center gap-2">
-                      <span className="font-mono text-[10px] font-bold px-2 py-0.5 rounded bg-slate-800 text-slate-300 border border-slate-700">
-                        {rule.rule_id}
+                  <div className="flex items-center gap-2 text-xs">
+                    {isWarning ? (
+                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 font-semibold text-[11px]">
+                        <AlertTriangle className="w-3 h-3" />
+                        Needs Attention
                       </span>
-                      <span
-                        className={`text-[10px] uppercase font-extrabold tracking-wider px-2 py-0.5 rounded ${
-                          isWarning
-                            ? "bg-amber-500/20 text-amber-300"
-                            : isPositive
-                            ? "bg-emerald-500/20 text-emerald-300"
-                            : "bg-slate-800 text-slate-400"
-                        }`}
-                      >
-                        {sev}
+                    ) : isPositive ? (
+                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 font-semibold text-[11px]">
+                        <CheckCircle2 className="w-3 h-3" />
+                        Strength
                       </span>
-                      <span className="text-xs text-slate-400">
-                        Domain: <span className="text-slate-300 capitalize">{rule.domain.replace(/_/g, " ")}</span>
+                    ) : (
+                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-slate-800 text-slate-300 font-medium text-[11px]">
+                        <Info className="w-3 h-3" />
+                        Observation
                       </span>
-                    </div>
+                    )}
+                    <span className="text-slate-400 font-medium">
+                      {friendlyDomainName(rule.domain)}
+                    </span>
                   </div>
 
-                  <p className="text-sm font-semibold text-slate-200">
-                    {rule.finding}
+                  <p className="text-sm text-slate-100 leading-relaxed">
+                    {cleanFindingText(rule.finding)}
                   </p>
 
                   {rule.recommendation && (
-                    <div className="flex items-start gap-2 pt-1 text-xs text-amber-200/90 bg-amber-500/5 p-2 rounded-lg border border-amber-500/10">
-                      <Lightbulb className="w-3.5 h-3.5 text-amber-400 mt-0.5 shrink-0" />
-                      <span><strong>Prescriptive Action:</strong> {rule.recommendation}</span>
+                    <div className="text-xs text-amber-200/90 bg-slate-950/60 border border-slate-800/80 rounded-lg px-3 py-2">
+                      <strong className="text-amber-300">Suggested Action:</strong>{" "}
+                      {rule.recommendation}
                     </div>
                   )}
                 </div>
@@ -580,40 +606,6 @@ export default function TabOverview({ payload, confidence, rules = [] }: TabOver
           </div>
         )}
       </section>
-
-      {/* 4. Confidence Penalty Audit Log */}
-      {confidence?.penalties && confidence.penalties.length > 0 && (
-        <section className="space-y-3 pt-4 border-t border-slate-800">
-          <div className="flex items-center gap-2">
-            <ShieldCheck className="w-4 h-4 text-cyan-400" />
-            <h3 className="text-xs font-bold text-slate-300 uppercase tracking-wider">
-              Confidence Assessment & Penalty Audit Log
-            </h3>
-          </div>
-          <div className="rounded-xl border border-slate-800 overflow-hidden bg-slate-900/40">
-            <table className="w-full text-left text-xs">
-              <thead className="bg-slate-950/80 text-[10px] font-mono uppercase text-slate-400 border-b border-slate-800">
-                <tr>
-                  <th className="px-4 py-2.5">Rule</th>
-                  <th className="px-4 py-2.5">Domain</th>
-                  <th className="px-4 py-2.5">Penalty Impact</th>
-                  <th className="px-4 py-2.5">Underlying Trigger Reason</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-800/60 font-mono text-slate-300">
-                {confidence.penalties.map((p, i) => (
-                  <tr key={i} className="hover:bg-slate-850/50">
-                    <td className="px-4 py-2 text-cyan-400 font-bold">{p.rule}</td>
-                    <td className="px-4 py-2 text-slate-300 font-sans capitalize">{p.domain?.replace(/_/g, " ") || "Global"}</td>
-                    <td className="px-4 py-2 text-rose-400 font-bold">-{Math.round((p.penalty > 1 ? p.penalty / 100 : p.penalty) * 100)}%</td>
-                    <td className="px-4 py-2 text-slate-400 font-sans text-xs">{p.reason}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </section>
-      )}
     </div>
   );
 }

@@ -446,10 +446,20 @@ export interface PullRequestIntelligenceData {
     status?: string;
     review_latency_share?: number | null;
     maintainer_review_load?: {
-      top_reviewers?: Array<{ reviewer: string; reviews_count: number }>;
+      active_human_reviewers_count?: number;
+      total_human_formal_reviews?: number;
+      top1_reviewer_share?: number | null;
+      top_reviewers?: Array<{
+        reviewer: string;
+        formal_reviews_count?: number;
+        reviews_count?: number;
+        share?: number;
+      }>;
     };
     unreviewed_open_prs?: {
-      count: number;
+      open_prs_count?: number;
+      unreviewed_open_prs_count?: number;
+      count?: number;
       median_age_days?: number | null;
     };
   };
@@ -892,5 +902,32 @@ export interface TopicDiscoveryResponse {
   methodology: string;
   topics: DiscoveredTopicItem[];
   execution_time_ms: number;
+}
+
+export interface ClassifiedIssueItem {
+  issue_number: number;
+  title: string;
+  state: string;
+  author: string;
+  created_at?: string | null;
+  comments_count: number;
+  html_url: string;
+  github_labels: string[];
+  predicted_category: "bug" | "feature" | "documentation" | "question" | "other";
+  confidence: number;
+  is_uncertain: boolean;
+  probabilities: Record<string, number>;
+}
+
+export interface ClassifiedIssuesResponse {
+  repository: string;
+  state_filter: "open" | "closed" | "all";
+  total_open: number;
+  total_closed: number;
+  total_matching: number;
+  classified_count: number;
+  model_used: string;
+  category_counts: Record<string, number>;
+  items: ClassifiedIssueItem[];
 }
 

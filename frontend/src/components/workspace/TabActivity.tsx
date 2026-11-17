@@ -304,42 +304,93 @@ export default function TabActivity({ activity, releases }: TabActivityProps) {
           )}
         </div>
 
-        {/* Latencies & Churn Card (1 col) */}
+        {/* Side Card (1 col): Integration Speed if available, otherwise Activity Highlights (Zero N/A) */}
         <div className="space-y-4 rounded-2xl border border-slate-800 bg-slate-900/60 p-6 flex flex-col justify-between">
-          <div>
-            <h3 className="text-sm font-bold text-white flex items-center gap-2">
-              <Zap className="w-4 h-4 text-amber-400" />
-              <span>Commit Integration Delay</span>
-            </h3>
-            <p className="text-xs text-slate-400 mt-1">
-              Time from when a patch was authored to when it landed in the main branch
-            </p>
+          {landingP50 != null ? (
+            <div>
+              <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                <Zap className="w-4 h-4 text-amber-400" />
+                <span>Patch Integration Speed</span>
+              </h3>
+              <p className="text-xs text-slate-400 mt-1">
+                Typical time from when code is written to when it lands in the repository
+              </p>
 
-            <div className="grid grid-cols-3 gap-2 mt-4 text-center">
-              <div className="p-2.5 rounded-xl bg-slate-950/70 border border-slate-800">
-                <div className="text-[10px] text-slate-400">Median</div>
-                <div className="text-base font-bold text-white mt-1">
-                  {formatLatency(landingP50)}
+              <div className="grid grid-cols-3 gap-2 mt-4 text-center">
+                <div className="p-2.5 rounded-xl bg-slate-950/70 border border-slate-800">
+                  <div className="text-[10px] text-slate-400">Typical</div>
+                  <div className="text-base font-bold text-white mt-1">
+                    {formatLatency(landingP50)}
+                  </div>
                 </div>
+                {landingP75 != null && (
+                  <div className="p-2.5 rounded-xl bg-slate-950/70 border border-slate-800">
+                    <div className="text-[10px] text-slate-400">75% Under</div>
+                    <div className="text-base font-bold text-white mt-1">
+                      {formatLatency(landingP75)}
+                    </div>
+                  </div>
+                )}
+                {landingP90 != null && (
+                  <div className="p-2.5 rounded-xl bg-slate-950/70 border border-slate-800">
+                    <div className="text-[10px] text-slate-400">90% Under</div>
+                    <div className="text-base font-bold text-white mt-1">
+                      {formatLatency(landingP90)}
+                    </div>
+                  </div>
+                )}
               </div>
-              <div className="p-2.5 rounded-xl bg-slate-950/70 border border-slate-800">
-                <div className="text-[10px] text-slate-400">75th Pct</div>
-                <div className="text-base font-bold text-white mt-1">
-                  {formatLatency(landingP75)}
-                </div>
+            </div>
+          ) : (
+            <div className="space-y-3">
+              <div>
+                <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                  <Zap className="w-4 h-4 text-amber-400" />
+                  <span>Activity Highlights</span>
+                </h3>
+                <p className="text-xs text-slate-400 mt-1">
+                  When and how often developers push updates
+                </p>
               </div>
-              <div className="p-2.5 rounded-xl bg-slate-950/70 border border-slate-800">
-                <div className="text-[10px] text-slate-400">90th Pct</div>
-                <div className="text-base font-bold text-white mt-1">
-                  {formatLatency(landingP90)}
+
+              <div className="space-y-2.5 pt-1">
+                {rhythms?.peak_weekday && (
+                  <div className="p-3 rounded-xl bg-slate-950/70 border border-slate-800 flex items-center justify-between">
+                    <span className="text-xs text-slate-400">Most Active Day</span>
+                    <span className="text-sm font-bold text-white">
+                      {rhythms.peak_weekday.name} ({rhythms.peak_weekday.commit_count})
+                    </span>
+                  </div>
+                )}
+                {rhythms?.peak_utc_hour && (
+                  <div className="p-3 rounded-xl bg-slate-950/70 border border-slate-800 flex items-center justify-between">
+                    <span className="text-xs text-slate-400">Busiest Hour (UTC)</span>
+                    <span className="text-sm font-bold text-cyan-300">
+                      {String(rhythms.peak_utc_hour.hour_utc).padStart(2, "0")}:00 UTC
+                    </span>
+                  </div>
+                )}
+                {rhythms?.weekday_ratio != null && (
+                  <div className="p-3 rounded-xl bg-slate-950/70 border border-slate-800 flex items-center justify-between">
+                    <span className="text-xs text-slate-400">Workweek Pace</span>
+                    <span className="text-sm font-bold text-emerald-400">
+                      {(rhythms.weekday_ratio * 100).toFixed(0)}% Mon–Fri
+                    </span>
+                  </div>
+                )}
+                <div className="p-3 rounded-xl bg-slate-950/70 border border-slate-800 flex items-center justify-between">
+                  <span className="text-xs text-slate-400">Active Days Tracked</span>
+                  <span className="text-sm font-bold text-indigo-300">
+                    {summary.active_days_count ?? chartData.filter((d) => d.commits > 0).length} days
+                  </span>
                 </div>
               </div>
             </div>
-          </div>
+          )}
 
-          <div className="space-y-2 pt-4 border-t border-slate-800/80">
-            <div className="text-xs font-semibold text-slate-300">Sampled Code Churn Volume:</div>
-            {hasChurn ? (
+          {hasChurn && (
+            <div className="space-y-2 pt-4 border-t border-slate-800/80">
+              <div className="text-xs font-semibold text-slate-300">Code Changes Volume:</div>
               <div className="grid grid-cols-2 gap-2 text-xs font-mono">
                 <div className="p-2 rounded-lg bg-emerald-950/20 border border-emerald-500/20 text-emerald-400">
                   +{totalAdditions.toLocaleString()} lines
@@ -348,90 +399,69 @@ export default function TabActivity({ activity, releases }: TabActivityProps) {
                   -{totalDeletions.toLocaleString()} lines
                 </div>
               </div>
-            ) : (
-              <div className="text-[11px] text-slate-400 leading-relaxed">
-                Per-commit line diffs are skipped in Fast Snapshot mode to save GitHub API quota. Run Standard Diagnostic for diff churn metrics.
-              </div>
-            )}
-          </div>
+            </div>
+          )}
         </div>
       </div>
 
-      {/* 3. Release Evolution & SemVer Adoption */}
-      <section className="space-y-4 rounded-2xl border border-slate-800 bg-slate-900/60 p-6">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-          <div>
-            <h2 className="text-lg font-bold text-white tracking-tight flex items-center gap-2">
-              <Package className="w-5 h-5 text-amber-400" />
-              <span>Release Cadence & Versioning Evolution</span>
-            </h2>
-            <p className="text-xs text-slate-400 mt-0.5">
-              Release predictability, SemVer 2.0.0 versioning compliance, and pre-release activity surges
-            </p>
-          </div>
+      {/* 3. Release Evolution (only rendered when releases exist — no empty N/A card) */}
+      {(cadence?.total_releases ?? 0) > 0 && (
+        <section className="space-y-4 rounded-2xl border border-slate-800 bg-slate-900/60 p-6">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div>
+              <h2 className="text-lg font-bold text-white tracking-tight flex items-center gap-2">
+                <Package className="w-5 h-5 text-amber-400" />
+                <span>Release Schedule &amp; Versioning</span>
+              </h2>
+              <p className="text-xs text-slate-400 mt-0.5">
+                How regularly new versions are published and how consistently version numbering is followed
+              </p>
+            </div>
 
-          <div className="flex items-center gap-2">
-            {cadence?.cv_release != null && (
-              <span className="text-xs px-2.5 py-1 rounded-full bg-slate-800 text-slate-300 font-mono border border-slate-700">
-                Regularity CV: {cadence.cv_release.toFixed(2)}
+            <div className="flex items-center gap-2">
+              <span className="text-xs px-2.5 py-1 rounded-full bg-amber-500/10 text-amber-300 font-medium border border-amber-500/20">
+                {formatRegularity(cadence?.regularity_classification)}
               </span>
-            )}
-            <span className="text-xs px-2.5 py-1 rounded-full bg-amber-500/10 text-amber-300 font-medium border border-amber-500/20">
-              {formatRegularity(cadence?.regularity_classification)}
-            </span>
+            </div>
           </div>
-        </div>
 
-        {(cadence?.total_releases ?? 0) === 0 ? (
-          <div className="p-5 rounded-xl bg-slate-950/50 border border-slate-800/80 text-xs text-slate-400 leading-relaxed">
-            <strong className="text-slate-200">No GitHub Releases Recorded:</strong> This repository either publishes releases via plain Git tags without GitHub Release pages, or no dated releases were retrieved in this snapshot. Re-ingesting with updated tag fallback will automatically inspect Git tags for SemVer versions.
-          </div>
-        ) : (
-          <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
             <div className="p-4 rounded-xl bg-slate-950/70 border border-slate-800 space-y-1">
-              <div className="text-xs text-slate-400">Tracked Releases / Tags</div>
+              <div className="text-xs text-slate-400">Published Releases</div>
               <div className="text-2xl font-bold text-white">{cadence?.total_releases ?? 0}</div>
-              <div className="text-[11px] text-slate-500">
-                Latest Tag: <strong className="text-slate-300">{cadence?.latest_release_tag || "N/A"}</strong>
-              </div>
+              {cadence?.latest_release_tag && (
+                <div className="text-[11px] text-slate-400">
+                  Latest: <strong className="text-slate-200">{cadence.latest_release_tag}</strong>
+                </div>
+              )}
             </div>
 
-            <div className="p-4 rounded-xl bg-slate-950/70 border border-slate-800 space-y-1">
-              <div className="text-xs text-slate-400">SemVer 2.0 Compliance</div>
-              <div className="text-2xl font-bold text-indigo-300">
-                {semver?.semver_adoption_rate != null ? `${(semver.semver_adoption_rate * 100).toFixed(0)}%` : "N/A"}
+            {semver?.semver_adoption_rate != null && (
+              <div className="p-4 rounded-xl bg-slate-950/70 border border-slate-800 space-y-1">
+                <div className="text-xs text-slate-400">Standard Versioning (SemVer)</div>
+                <div className="text-2xl font-bold text-indigo-300">
+                  {(semver.semver_adoption_rate * 100).toFixed(0)}%
+                </div>
+                <div className="text-[11px] text-slate-400">
+                  Major: {semver.major_releases ?? 0} &middot; Minor: {semver.minor_releases ?? 0} &middot; Patch: {semver.patch_releases ?? 0}
+                </div>
               </div>
-              <div className="text-[11px] text-slate-500">
-                Major: {semver?.major_releases ?? 0} &middot; Minor: {semver?.minor_releases ?? 0} &middot; Patch: {semver?.patch_releases ?? 0}
-              </div>
-            </div>
+            )}
 
-            <div className="p-4 rounded-xl bg-slate-950/70 border border-slate-800 space-y-1">
-              <div className="text-xs text-slate-400">Days Since Last Release</div>
-              <div className="text-2xl font-bold text-white">
-                {cadence?.days_since_last_release != null ? `${cadence.days_since_last_release}d` : "N/A"}
+            {cadence?.days_since_last_release != null && (
+              <div className="p-4 rounded-xl bg-slate-950/70 border border-slate-800 space-y-1">
+                <div className="text-xs text-slate-400">Time Since Last Release</div>
+                <div className="text-2xl font-bold text-white">
+                  {cadence.days_since_last_release} days
+                </div>
+                <div className="text-[11px] text-slate-400">
+                  {cadence.days_since_last_release > 180 ? "Quiet release cycle" : "Actively shipping"}
+                </div>
               </div>
-              <div className="text-[11px] text-slate-500">
-                {cadence?.days_since_last_release && cadence.days_since_last_release > 180 ? "Dormant release cycle" : "Active release cycle"}
-              </div>
-            </div>
-
-            <div className="p-4 rounded-xl bg-slate-950/70 border border-slate-800 space-y-1">
-              <div className="text-xs text-slate-400">Pre-Release Activity</div>
-              <div className="text-2xl font-bold text-white">
-                {surges?.surge_detected ? (
-                  <span className="text-amber-400">Surge Detected</span>
-                ) : (
-                  <span className="text-emerald-400">Steady</span>
-                )}
-              </div>
-              <div className="text-[11px] text-slate-500">
-                Surge Ratio: {surges?.surge_ratio != null ? `${surges.surge_ratio.toFixed(2)}x` : "N/A"}
-              </div>
-            </div>
+            )}
           </div>
-        )}
-      </section>
+        </section>
+      )}
     </div>
   );
 }

@@ -1,13 +1,12 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import {
   Bar,
   CartesianGrid,
   Cell,
   ComposedChart,
   Legend,
-  Line,
   ResponsiveContainer,
   Tooltip,
   XAxis,
@@ -15,34 +14,26 @@ import {
 } from "recharts";
 import {
   AlertCircle,
-  AlertTriangle,
-  ArrowRight,
-  CheckCircle2,
-  ChevronDown,
-  ChevronUp,
+  BookOpen,
+  Bug,
   Clock,
   ExternalLink,
-  Flame,
   HelpCircle,
   Inbox,
   Layers,
   Loader2,
   MessageCircle,
-  MessageSquare,
-  Search,
   Sparkles,
   Tag,
   TrendingUp,
-  Zap,
+  Wrench,
 } from "lucide-react";
 import {
-  DiscoveredTopicItem,
+  ClassifiedIssuesResponse,
   IssueIntelligenceData,
-  SimilarCandidateItem,
-  SimilarQueryResponse,
   TopicDiscoveryResponse,
 } from "@/lib/types";
-import { getDiscoveredTopics, searchSimilarIssues } from "@/lib/api";
+import { getClassifiedIssues, getDiscoveredTopics } from "@/lib/api";
 
 interface TabIssuesProps {
   issues?: IssueIntelligenceData | null;
@@ -50,8 +41,44 @@ interface TabIssuesProps {
   name?: string;
 }
 
-function formatSlaHours(hours?: number | null): string {
-  if (hours == null || Number.isNaN(hours)) return "N/A";
+const CATEGORY_META: Record<
+  string,
+  { label: string; color: string; badgeClass: string; icon: React.ComponentType<{ className?: string }> }
+> = {
+  bug: {
+    label: "Bug Report",
+    color: "#f43f5e",
+    badgeClass: "bg-rose-500/15 text-rose-300 border-rose-500/30",
+    icon: Bug,
+  },
+  feature: {
+    label: "Feature Request",
+    color: "#8b5cf6",
+    badgeClass: "bg-purple-500/15 text-purple-300 border-purple-500/30",
+    icon: Sparkles,
+  },
+  documentation: {
+    label: "Documentation",
+    color: "#38bdf8",
+    badgeClass: "bg-sky-500/15 text-sky-300 border-sky-500/30",
+    icon: BookOpen,
+  },
+  question: {
+    label: "Question / Support",
+    color: "#f59e0b",
+    badgeClass: "bg-amber-500/15 text-amber-300 border-amber-500/30",
+    icon: HelpCircle,
+  },
+  other: {
+    label: "Maintenance / Other",
+    color: "#94a3b8",
+    badgeClass: "bg-slate-700/50 text-slate-300 border-slate-600/50",
+    icon: Wrench,
+  },
+};
+
+function formatDuration(hours?: number | null): string | null {
+  if (hours == null || Number.isNaN(hours)) return null;
   if (hours < 1) {
     const mins = Math.round(hours * 60);
     return mins <= 1 ? "< 1 min" : `${mins} mins`;
@@ -60,6 +87,18 @@ function formatSlaHours(hours?: number | null): string {
     return `${(hours / 24).toFixed(1)} days`;
   }
   return `${hours.toFixed(1)} hrs`;
+}
+
+function formatRelativeDate(iso?: string | null): string {
+  if (!iso) return "";
+  const dt = new Date(iso);
+  if (Number.isNaN(dt.getTime())) return "";
+  const days = Math.floor((Date.now() - dt.getTime()) / (1000 * 60 * 60 * 24));
+  if (days <= 0) return "today";
+  if (days === 1) return "1d ago";
+  if (days < 30) return `${days}d ago`;
+  if (days < 365) return `${Math.floor(days / 30)}mo ago`;
+  return `${(days / 365).toFixed(1)}y ago`;
 }
 
 export default function TabIssues({ issues, owner, name }: TabIssuesProps) {
@@ -73,16 +112,13 @@ export default function TabIssues({ issues, owner, name }: TabIssuesProps) {
 
   const totalOpened = obsFlow?.total_created_observed ?? legacyFlow?.total_opened ?? 0;
   const totalClosed = obsFlow?.total_closed_observed ?? legacyFlow?.total_closed ?? 0;
-  const total =
+  const totalTracked =
     issues?.scope?.eligible_issues_count ??
     obsFlow?.total_created_observed ??
     issues?.total_issues ??
     0;
 
-  const slaP50 = resDist?.p50_hours ?? legacySla?.p50;
-  const slaP75 = resDist?.p75_hours ?? legacySla?.p75;
-  const slaP90 = resDist?.p90_hours ?? legacySla?.p90;
-
+  const closeTimeMedian = formatDuration(resDist?.p50_hours ?? legacySla?.p50);
   const staleCount = aging?.stale_gt_90d_count ?? legacyAging?.open_stale_count ?? 0;
   const openCount = aging?.open_issues_count ?? legacyAging?.open_count ?? 0;
   const medianComments = discussion?.median_comments_per_issue;
@@ -95,180 +131,441 @@ export default function TabIssues({ issues, owner, name }: TabIssuesProps) {
     closed: m.closed ?? 0,
   }));
 
-  const isIssuesEmpty = total === 0 && totalOpened === 0 && openCount === 0;
+  // ─── Auto-Fetched AI Classified Issues State ───────────────────────────────
+  const [stateFilter, setStateFilter] = useState<"open" | "closed" | "all">("open");
+  const [categoryFilter, setCategoryFilter] = useState<string>("all");
+  const [classifiedData, setClassifiedData] = useState<ClassifiedIssuesResponse | null>(null);
+  const [isLoadingIssues, setIsLoadingIssues] = useState<boolean>(false);
+  const [issuesError, setIssuesError] = useState<string | null>(null);
 
-  // ─── Semantic Duplicate Search State ─────────────────────────────────────────
-  const [queryText, setQueryText] = useState("");
-  const [threshold, setThreshold] = useState(0.45);
-  const [includeDiscussions, setIncludeDiscussions] = useState(true);
-  const [isSearching, setIsSearching] = useState(false);
-  const [similarityResult, setSimilarityResult] =
-    useState<SimilarQueryResponse | null>(null);
-  const [searchError, setSearchError] = useState<string | null>(null);
+  // ─── Auto-Loaded AI Topic Clusters State ───────────────────────────────────
+  const [topicsData, setTopicsData] = useState<TopicDiscoveryResponse | null>(null);
 
-  // ─── Topic Discovery State ───────────────────────────────────────────────────
-  const [topicsResult, setTopicsResult] =
-    useState<TopicDiscoveryResponse | null>(null);
-  const [isLoadingTopics, setIsLoadingTopics] = useState(false);
-  const [topicError, setTopicError] = useState<string | null>(null);
-  const [expandedTopicId, setExpandedTopicId] = useState<number | null>(null);
-
-  const handleSearchSimilar = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!owner || !name || !queryText.trim()) return;
-
-    setIsSearching(true);
-    setSearchError(null);
-    try {
-      const res = await searchSimilarIssues(owner, name, {
-        query_text: queryText.trim(),
-        top_k: 5,
-        threshold: threshold,
-        include_discussions: includeDiscussions,
-      });
-      setSimilarityResult(res);
-    } catch (err: any) {
-      setSearchError(
-        err.message || "Failed to search semantically similar issues."
-      );
-    } finally {
-      setIsSearching(false);
-    }
-  };
-
-  const handleLoadTopics = async () => {
+  useEffect(() => {
     if (!owner || !name) return;
-    setIsLoadingTopics(true);
-    setTopicError(null);
-    try {
-      const res = await getDiscoveredTopics(owner, name, 8);
-      setTopicsResult(res);
-    } catch (err: any) {
-      setTopicError(err.message || "Failed to discover backlog topics.");
-    } finally {
-      setIsLoadingTopics(false);
-    }
-  };
+    let cancelled = false;
+
+    const loadClassified = async () => {
+      setIsLoadingIssues(true);
+      setIssuesError(null);
+      try {
+        const res = await getClassifiedIssues(owner, name, stateFilter, 60);
+        if (!cancelled) {
+          setClassifiedData(res);
+          // If open issues is 0 but closed issues exist, automatically switch to all on initial load
+          if (stateFilter === "open" && res.total_open === 0 && res.total_closed > 0) {
+            setStateFilter("all");
+          }
+        }
+      } catch (err: any) {
+        if (!cancelled) {
+          setIssuesError(err.message || "Could not load classified issues.");
+        }
+      } finally {
+        if (!cancelled) {
+          setIsLoadingIssues(false);
+        }
+      }
+    };
+
+    loadClassified();
+    return () => {
+      cancelled = true;
+    };
+  }, [owner, name, stateFilter]);
+
+  useEffect(() => {
+    if (!owner || !name || totalTracked < 6) return;
+    let cancelled = false;
+    getDiscoveredTopics(owner, name, 6)
+      .then((res) => {
+        if (!cancelled && res.topics && res.topics.length > 0) {
+          setTopicsData(res);
+        }
+      })
+      .catch(() => {
+        // Silently omit topic clusters if insufficient issues
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [owner, name, totalTracked]);
+
+  const hasAnyIssues =
+    totalTracked > 0 ||
+    openCount > 0 ||
+    (classifiedData != null && (classifiedData.total_open > 0 || classifiedData.total_closed > 0));
+
+  // Clean single-card empty state (ZERO N/A clutter!)
+  if (!isLoadingIssues && !hasAnyIssues) {
+    return (
+      <div className="p-10 rounded-2xl border border-slate-800 bg-slate-900/60 text-center max-w-2xl mx-auto my-8 space-y-4">
+        <div className="w-14 h-14 rounded-2xl bg-indigo-500/10 border border-indigo-500/25 flex items-center justify-center mx-auto text-indigo-400">
+          <Inbox className="w-7 h-7" />
+        </div>
+        <h3 className="text-lg font-bold text-white">
+          GitHub Issues Are Not Used by This Repository
+        </h3>
+        <p className="text-sm text-slate-400 leading-relaxed">
+          This repository has <strong className="text-slate-200">0 issues on GitHub</strong>. Projects like Git, Linux, and GCC track bug reports and feature discussions on external mailing lists or bug trackers. Try any GitHub-native repository (such as <code className="text-indigo-300">pallets/flask</code> or <code className="text-indigo-300">fastapi/fastapi</code>) to see automatic AI issue classification and topic discovery in action.
+        </p>
+      </div>
+    );
+  }
+
+  // Build ONLY non-null KPI cards
+  const kpiCards: Array<{
+    label: string;
+    value: string;
+    sub: string;
+    color: string;
+    icon: React.ComponentType<{ className?: string }>;
+  }> = [
+    {
+      label: "Open Issues",
+      value: (classifiedData?.total_open ?? openCount).toLocaleString(),
+      sub: `${(classifiedData?.total_closed ?? totalClosed).toLocaleString()} closed in snapshot`,
+      color: "text-emerald-400",
+      icon: Inbox,
+    },
+    ...(closeTimeMedian
+      ? [
+          {
+            label: "Typical Close Time",
+            value: closeTimeMedian,
+            sub: "Median time to resolve",
+            color: "text-cyan-300",
+            icon: Clock,
+          },
+        ]
+      : []),
+    ...(staleCount > 0
+      ? [
+          {
+            label: "Aging Backlog (>90d)",
+            value: staleCount.toLocaleString(),
+            sub: "Open longer than 3 months",
+            color: "text-rose-400",
+            icon: AlertCircle,
+          },
+        ]
+      : []),
+    ...(medianComments != null
+      ? [
+          {
+            label: "Comments per Issue",
+            value: medianComments.toFixed(1),
+            sub: "Typical discussion depth",
+            color: "text-amber-300",
+            icon: MessageCircle,
+          },
+        ]
+      : []),
+  ];
+
+  // Category distribution for AI summary bar
+  const categoryCounts = classifiedData?.category_counts || {};
+  const categoryBreakdown = Object.entries(CATEGORY_META)
+    .map(([key, meta]) => ({
+      key,
+      label: meta.label,
+      count: categoryCounts[key] ?? 0,
+      color: meta.color,
+      badgeClass: meta.badgeClass,
+      icon: meta.icon,
+    }))
+    .filter((c) => c.count > 0)
+    .sort((a, b) => b.count - a.count);
+
+  const visibleItems = (classifiedData?.items || []).filter(
+    (item) => categoryFilter === "all" || item.predicted_category === categoryFilter
+  );
 
   return (
     <div className="space-y-8">
-      {/* Empty Issues Notice (e.g., GitHub Issues disabled on git/git) */}
-      {isIssuesEmpty && (
-        <div className="p-4 rounded-xl border border-indigo-500/30 bg-indigo-500/10 flex items-start gap-3">
-          <HelpCircle className="w-5 h-5 text-indigo-400 shrink-0 mt-0.5" />
-          <div className="text-xs text-indigo-200/90 leading-relaxed">
-            <strong className="text-indigo-100 font-semibold">GitHub Issues Disabled or Unused:</strong>{" "}
-            This repository has 0 issues tracked on GitHub. Many large open-source projects (such as Git, Linux, and GCC) manage bug reports and feature tracking on external issue trackers or developer mailing lists.
-          </div>
-        </div>
-      )}
-
-      {/* 1. High-Level Backlog Indicators */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-        <div className="p-4 rounded-xl border border-slate-800 bg-slate-900/60">
-          <div className="flex items-center gap-2 text-xs text-slate-400">
-            <Inbox className="w-4 h-4 text-indigo-400" />
-            <span>Tracked GitHub Issues</span>
-          </div>
-          <div className="text-2xl font-bold text-white mt-1.5">
-            {total.toLocaleString()}
-          </div>
-          <div className="text-[11px] text-slate-500 mt-0.5">
-            {isIssuesEmpty ? "External tracker / disabled" : `${openCount.toLocaleString()} currently open`}
-          </div>
-        </div>
-
-        <div className="p-4 rounded-xl border border-slate-800 bg-slate-900/60">
-          <div className="flex items-center gap-2 text-xs text-slate-400">
-            <Clock className="w-4 h-4 text-cyan-400" />
-            <span>Median Close Time</span>
-          </div>
-          <div className="text-2xl font-bold text-white mt-1.5">
-            {formatSlaHours(slaP50)}
-          </div>
-          <div className="text-[11px] text-slate-500 mt-0.5">
-            75th: {formatSlaHours(slaP75)} &middot; 90th: {formatSlaHours(slaP90)}
-          </div>
-        </div>
-
-        <div className="p-4 rounded-xl border border-slate-800 bg-slate-900/60">
-          <div className="flex items-center gap-2 text-xs text-slate-400">
-            <AlertCircle className="w-4 h-4 text-rose-400" />
-            <span>Stale Open Backlog</span>
-          </div>
-          <div className="text-2xl font-bold text-rose-400 mt-1.5">
-            {staleCount.toLocaleString()}
-          </div>
-          <div className="text-[11px] text-slate-500 mt-0.5">
-            Open &gt; 90 days without close
-          </div>
-        </div>
-
-        <div className="p-4 rounded-xl border border-slate-800 bg-slate-900/60">
-          <div className="flex items-center gap-2 text-xs text-slate-400">
-            <MessageCircle className="w-4 h-4 text-amber-400" />
-            <span>Comments per Issue</span>
-          </div>
-          <div className="text-2xl font-bold text-amber-300 mt-1.5">
-            {medianComments != null ? medianComments.toFixed(1) : "N/A"}
-          </div>
-          <div className="text-[11px] text-slate-500 mt-0.5">
-            Median comments per thread
-          </div>
-        </div>
+      {/* 1. Dynamic KPI Row (ZERO N/A!) */}
+      <div
+        className={`grid grid-cols-2 ${
+          kpiCards.length >= 4
+            ? "sm:grid-cols-4"
+            : kpiCards.length === 3
+            ? "sm:grid-cols-3"
+            : "sm:grid-cols-2"
+        } gap-4`}
+      >
+        {kpiCards.map((card, i) => {
+          const Icon = card.icon;
+          return (
+            <div key={i} className="p-4 rounded-xl border border-slate-800 bg-slate-900/60">
+              <div className="flex items-center gap-2 text-xs text-slate-400">
+                <Icon className="w-4 h-4 text-indigo-400" />
+                <span>{card.label}</span>
+              </div>
+              <div className={`text-2xl font-bold mt-1.5 ${card.color}`}>
+                {card.value}
+              </div>
+              <div className="text-[11px] text-slate-400 mt-0.5">{card.sub}</div>
+            </div>
+          );
+        })}
       </div>
 
-      {/* 2. Monthly Issue Flow Chart */}
-      <section className="space-y-4 rounded-2xl border border-slate-800 bg-slate-900/60 p-6">
+      {/* 2. Automatic AI-Classified Open Issues Section */}
+      <section className="space-y-5 rounded-2xl border border-indigo-500/30 bg-slate-900/70 p-6">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-          <div>
-            <h2 className="text-lg font-bold text-white tracking-tight flex items-center gap-2">
-              <TrendingUp className="w-5 h-5 text-indigo-400" />
-              <span>Monthly Issue Opened vs. Closed Flow</span>
-            </h2>
-            <p className="text-xs text-slate-400 mt-0.5">
-              Compares incoming issue volume against maintainer resolution velocity over time
-            </p>
+          <div className="flex items-start gap-3">
+            <div className="w-10 h-10 rounded-xl bg-indigo-500/15 border border-indigo-500/30 flex items-center justify-center text-indigo-400 shrink-0">
+              <Sparkles className="w-5 h-5" />
+            </div>
+            <div>
+              <h2 className="text-base font-bold text-white tracking-tight flex flex-wrap items-center gap-2">
+                <span>Automatically Classified GitHub Issues</span>
+                <span className="px-2 py-0.5 rounded-full text-[10px] font-medium bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
+                  Powered by ML / NLP
+                </span>
+              </h2>
+              <p className="text-xs text-slate-400 mt-0.5">
+                Every fetched issue is automatically sorted into Bug, Feature Request, Documentation, Question, or Maintenance
+              </p>
+            </div>
           </div>
 
-          {!isIssuesEmpty && (
-            <div className="flex items-center gap-3 text-xs">
-              <span className="px-3 py-1 rounded-full bg-slate-800 text-slate-300 font-mono border border-slate-700">
-                Opened:{" "}
-                <strong className="text-white">{totalOpened.toLocaleString()}</strong>
-              </span>
-              <span className="px-3 py-1 rounded-full bg-slate-800 text-slate-300 font-mono border border-slate-700">
-                Closed:{" "}
-                <strong className="text-white">{totalClosed.toLocaleString()}</strong>
-              </span>
-            </div>
-          )}
+          {/* Open / Closed / All Switch */}
+          <div className="flex items-center gap-1 p-1 rounded-xl bg-slate-950 border border-slate-800 text-xs shrink-0">
+            {(
+              [
+                { id: "open", label: `Open (${classifiedData?.total_open ?? openCount})` },
+                { id: "closed", label: `Closed (${classifiedData?.total_closed ?? totalClosed})` },
+                { id: "all", label: "All" },
+              ] as const
+            ).map((s) => (
+              <button
+                key={s.id}
+                onClick={() => {
+                  setStateFilter(s.id);
+                  setCategoryFilter("all");
+                }}
+                className={`px-3 py-1.5 rounded-lg transition-colors cursor-pointer ${
+                  stateFilter === s.id
+                    ? "bg-indigo-600 text-white font-semibold"
+                    : "text-slate-400 hover:text-white"
+                }`}
+              >
+                {s.label}
+              </button>
+            ))}
+          </div>
         </div>
 
-        {chartData.length === 0 ? (
-          <div className="h-56 flex items-center justify-center text-slate-400 text-xs bg-slate-950/40 rounded-xl border border-slate-800/70">
-            {isIssuesEmpty
-              ? "No GitHub issues exist for this repository."
-              : "Insufficient monthly issue records to plot timeline."}
+        {/* Loading state */}
+        {isLoadingIssues && (
+          <div className="py-12 flex flex-col items-center justify-center gap-3 text-slate-400 text-xs">
+            <Loader2 className="w-6 h-6 animate-spin text-indigo-400" />
+            <span>Running AI classifier across repository issues...</span>
           </div>
-        ) : (
-          <div className="h-72 w-full pt-4">
+        )}
+
+        {/* Error state */}
+        {issuesError && (
+          <div className="p-4 rounded-xl bg-rose-500/10 border border-rose-500/25 text-rose-300 text-xs">
+            {issuesError}
+          </div>
+        )}
+
+        {/* Category Breakdown Pills + Filter */}
+        {!isLoadingIssues && classifiedData && classifiedData.items.length > 0 && (
+          <>
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                onClick={() => setCategoryFilter("all")}
+                className={`px-3 py-1.5 rounded-xl text-xs font-medium border transition-all cursor-pointer ${
+                  categoryFilter === "all"
+                    ? "bg-indigo-600 text-white border-indigo-500"
+                    : "bg-slate-950/70 text-slate-300 border-slate-800 hover:border-slate-700"
+                }`}
+              >
+                All Categories ({classifiedData.items.length})
+              </button>
+
+              {categoryBreakdown.map((cat) => {
+                const Icon = cat.icon;
+                const active = categoryFilter === cat.key;
+                const pct = Math.round((cat.count / classifiedData.items.length) * 100);
+                return (
+                  <button
+                    key={cat.key}
+                    onClick={() => setCategoryFilter(active ? "all" : cat.key)}
+                    className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-medium border transition-all cursor-pointer ${
+                      active
+                        ? "bg-indigo-600 text-white border-indigo-500"
+                        : `${cat.badgeClass} hover:brightness-110`
+                    }`}
+                  >
+                    <Icon className="w-3.5 h-3.5" />
+                    <span>{cat.label}</span>
+                    <span className="font-mono font-bold">
+                      {cat.count} ({pct}%)
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* Classified Issues List */}
+            <div className="divide-y divide-slate-800/70 rounded-xl border border-slate-800 bg-slate-950/60 overflow-hidden max-h-[560px] overflow-y-auto">
+              {visibleItems.map((item) => {
+                const meta = CATEGORY_META[item.predicted_category] || CATEGORY_META.other;
+                const Icon = meta.icon;
+                const confPct = Math.round((item.confidence || 0) * 100);
+
+                return (
+                  <div
+                    key={item.issue_number}
+                    className="p-4 hover:bg-slate-900/70 transition-colors flex flex-col sm:flex-row sm:items-center justify-between gap-3"
+                  >
+                    <div className="space-y-1.5 min-w-0 flex-1">
+                      <div className="flex items-start gap-2">
+                        <span className="text-xs font-mono text-slate-500 shrink-0 mt-0.5">
+                          #{item.issue_number}
+                        </span>
+                        <a
+                          href={item.html_url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-sm font-medium text-slate-100 hover:text-indigo-300 transition-colors line-clamp-2 inline-flex items-center gap-1.5"
+                        >
+                          <span>{item.title}</span>
+                          <ExternalLink className="w-3 h-3 shrink-0 opacity-60" />
+                        </a>
+                      </div>
+
+                      <div className="flex flex-wrap items-center gap-2 text-[11px] text-slate-400">
+                        <span>by @{item.author}</span>
+                        {item.created_at && <span>&middot; {formatRelativeDate(item.created_at)}</span>}
+                        {item.comments_count > 0 && (
+                          <span className="inline-flex items-center gap-1">
+                            &middot; <MessageCircle className="w-3 h-3" /> {item.comments_count}
+                          </span>
+                        )}
+                        {item.github_labels.slice(0, 3).map((lbl, idx) => (
+                          <span
+                            key={idx}
+                            className="px-1.5 py-0.5 rounded bg-slate-800 text-slate-300 border border-slate-700/70 text-[10px]"
+                          >
+                            {lbl}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* AI Predicted Category Badge */}
+                    <div className="flex items-center gap-2 shrink-0">
+                      <span
+                        className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold border ${meta.badgeClass}`}
+                      >
+                        <Icon className="w-3.5 h-3.5" />
+                        <span>{meta.label}</span>
+                        {confPct > 0 && (
+                          <span className="text-[10px] opacity-80 font-mono">{confPct}%</span>
+                        )}
+                      </span>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </>
+        )}
+
+        {!isLoadingIssues && classifiedData && classifiedData.items.length === 0 && (
+          <div className="p-6 text-center text-xs text-slate-400 bg-slate-950/50 rounded-xl border border-slate-800">
+            No {stateFilter === "all" ? "" : stateFilter} issues found in this snapshot.
+          </div>
+        )}
+      </section>
+
+      {/* 3. Auto-Discovered AI Topic Themes (Sentence-Transformers + KMeans, shown only when topics exist) */}
+      {topicsData && topicsData.topics.length > 0 && (
+        <section className="space-y-4 rounded-2xl border border-slate-800 bg-slate-900/60 p-6">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+            <div>
+              <h2 className="text-base font-bold text-white tracking-tight flex items-center gap-2">
+                <Layers className="w-4 h-4 text-cyan-400" />
+                <span>Main Recurring Themes in Issues</span>
+                <span className="px-2 py-0.5 rounded-full text-[10px] font-medium bg-cyan-500/15 text-cyan-300 border border-cyan-500/30">
+                  Deep Learning Clustering
+                </span>
+              </h2>
+              <p className="text-xs text-slate-400 mt-0.5">
+                Automatically grouped similar issues using neural sentence embeddings
+              </p>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            {topicsData.topics.map((topic) => (
+              <div
+                key={topic.cluster_id}
+                className="p-4 rounded-xl bg-slate-950/70 border border-slate-800 space-y-2.5"
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <h3 className="text-sm font-semibold text-white truncate">
+                    {topic.title}
+                  </h3>
+                  <span className="shrink-0 text-xs font-mono px-2 py-0.5 rounded-full bg-indigo-500/15 text-indigo-300">
+                    {topic.total_count} issues
+                  </span>
+                </div>
+
+                <div className="flex flex-wrap gap-1.5">
+                  {topic.keywords.slice(0, 5).map((kw, i) => (
+                    <span
+                      key={i}
+                      className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-slate-800 text-slate-300 text-[10px]"
+                    >
+                      <Tag className="w-2.5 h-2.5 text-cyan-400" />
+                      {kw}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
+
+      {/* 4. Monthly Issue Opened vs Closed Chart (only when data exists) */}
+      {chartData.length > 0 && (
+        <section className="space-y-4 rounded-2xl border border-slate-800 bg-slate-900/60 p-6">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+            <div>
+              <h2 className="text-base font-bold text-white tracking-tight flex items-center gap-2">
+                <TrendingUp className="w-4 h-4 text-indigo-400" />
+                <span>Issues Opened vs. Closed Over Time</span>
+              </h2>
+              <p className="text-xs text-slate-400 mt-0.5">
+                Shows whether maintainers are keeping pace with incoming issues
+              </p>
+            </div>
+
+            <div className="flex items-center gap-3 text-xs">
+              <span className="px-3 py-1 rounded-full bg-slate-800 text-slate-300 font-mono border border-slate-700">
+                Opened: <strong className="text-white">{totalOpened.toLocaleString()}</strong>
+              </span>
+              <span className="px-3 py-1 rounded-full bg-slate-800 text-slate-300 font-mono border border-slate-700">
+                Closed: <strong className="text-white">{totalClosed.toLocaleString()}</strong>
+              </span>
+            </div>
+          </div>
+
+          <div className="h-72 w-full pt-2">
             <ResponsiveContainer width="100%" height="100%">
               <ComposedChart
                 data={chartData}
                 margin={{ top: 10, right: 10, left: -20, bottom: 0 }}
               >
-                <CartesianGrid
-                  strokeDasharray="3 3"
-                  stroke="#334155"
-                  opacity={0.5}
-                />
-                <XAxis
-                  dataKey="month"
-                  stroke="#94a3b8"
-                  fontSize={11}
-                  tickLine={false}
-                />
+                <CartesianGrid strokeDasharray="3 3" stroke="#334155" opacity={0.5} />
+                <XAxis dataKey="month" stroke="#94a3b8" fontSize={11} tickLine={false} />
                 <YAxis stroke="#94a3b8" fontSize={11} tickLine={false} />
                 <Tooltip
                   contentStyle={{
@@ -280,456 +577,13 @@ export default function TabIssues({ issues, owner, name }: TabIssuesProps) {
                   }}
                 />
                 <Legend wrapperStyle={{ fontSize: "12px", paddingTop: "10px" }} />
-                <Bar
-                  dataKey="opened"
-                  name="Issues Opened"
-                  fill="#6366f1"
-                  radius={[4, 4, 0, 0]}
-                  opacity={0.8}
-                />
-                <Bar
-                  dataKey="closed"
-                  name="Issues Closed"
-                  fill="#10b981"
-                  radius={[4, 4, 0, 0]}
-                  opacity={0.8}
-                />
+                <Bar dataKey="opened" name="Issues Opened" fill="#6366f1" radius={[4, 4, 0, 0]} opacity={0.85} />
+                <Bar dataKey="closed" name="Issues Closed" fill="#10b981" radius={[4, 4, 0, 0]} opacity={0.85} />
               </ComposedChart>
             </ResponsiveContainer>
           </div>
-        )}
-      </section>
-
-      {/* 3. Applied Intelligence: Semantic Duplicate Finder */}
-      <section className="space-y-5 rounded-2xl border border-indigo-500/30 bg-slate-900/80 p-6 backdrop-blur-xl">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-          <div className="flex items-center gap-3">
-            <div className="w-9 h-9 rounded-xl bg-indigo-500/10 border border-indigo-500/30 flex items-center justify-center text-indigo-400">
-              <Sparkles className="w-5 h-5" />
-            </div>
-            <div>
-              <h2 className="text-base font-bold text-white tracking-tight flex items-center gap-2">
-                <span>Semantic Duplicate &amp; Related Issue Finder</span>
-                <span className="px-2 py-0.5 rounded text-[10px] font-mono bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
-                  Dense Vectors &middot; all-MiniLM-L6-v2
-                </span>
-              </h2>
-              <p className="text-xs text-slate-400 mt-0.5">
-                Query candidate bug reports or feature ideas to detect duplicates
-                or find overlapping discussion threads in this repository
-              </p>
-            </div>
-          </div>
-        </div>
-
-        {/* Search Input Bar */}
-        <form onSubmit={handleSearchSimilar} className="space-y-3">
-          <div className="relative">
-            <Search className="absolute left-3.5 top-3.5 w-4 h-4 text-slate-400" />
-            <input
-              type="text"
-              value={queryText}
-              onChange={(e) => setQueryText(e.target.value)}
-              placeholder="Paste a bug report title, description, or stack trace error..."
-              className="w-full pl-10 pr-32 py-3 rounded-xl bg-slate-950/80 border border-slate-700/80 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 text-sm text-slate-100 placeholder-slate-500 outline-none transition-all"
-            />
-            <button
-              type="submit"
-              disabled={isSearching || !queryText.trim()}
-              className="absolute right-2 top-2 bottom-2 px-4 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold transition-all disabled:opacity-40 cursor-pointer flex items-center gap-1.5"
-            >
-              {isSearching ? (
-                <Loader2 className="w-3.5 h-3.5 animate-spin" />
-              ) : (
-                <Zap className="w-3.5 h-3.5" />
-              )}
-              <span>Find Matches</span>
-            </button>
-          </div>
-
-          <div className="flex flex-wrap items-center justify-between text-xs text-slate-400 gap-3 pt-1">
-            <div className="flex items-center gap-4">
-              <label className="flex items-center gap-2 cursor-pointer">
-                <span>Sensitivity Cutoff:</span>
-                <select
-                  value={threshold}
-                  onChange={(e) => setThreshold(parseFloat(e.target.value))}
-                  className="bg-slate-800 border border-slate-700 rounded-lg px-2 py-1 text-slate-200 text-xs outline-none"
-                >
-                  <option value={0.7}>High / Duplicate Only (&ge; 70%)</option>
-                  <option value={0.55}>Medium Related (&ge; 55%)</option>
-                  <option value={0.45}>Broad Context (&ge; 45%)</option>
-                </select>
-              </label>
-
-              <label className="flex items-center gap-1.5 cursor-pointer text-slate-300">
-                <input
-                  type="checkbox"
-                  checked={includeDiscussions}
-                  onChange={(e) => setIncludeDiscussions(e.target.checked)}
-                  className="rounded border-slate-700 bg-slate-800 text-indigo-500 focus:ring-0"
-                />
-                <span>Include Community Discussions</span>
-              </label>
-            </div>
-
-            {similarityResult && (
-              <span className="font-mono text-[11px] text-slate-500">
-                Latency: {similarityResult.latency_ms}ms
-              </span>
-            )}
-          </div>
-        </form>
-
-        {/* Search Error */}
-        {searchError && (
-          <div className="p-3.5 rounded-xl bg-rose-500/10 border border-rose-500/25 text-rose-300 text-xs">
-            {searchError}
-          </div>
-        )}
-
-        {/* Results Container */}
-        {similarityResult && (
-          <div className="space-y-4 pt-2 border-t border-slate-800">
-            {/* Recommendation Alert Banner */}
-            <div
-              className={`p-4 rounded-xl border text-xs flex items-start gap-3 ${
-                similarityResult.has_potential_duplicate
-                  ? "bg-amber-500/10 border-amber-500/30 text-amber-200"
-                  : similarityResult.total_candidates_found > 0
-                  ? "bg-indigo-500/10 border-indigo-500/25 text-indigo-200"
-                  : "bg-slate-800/60 border-slate-700 text-slate-300"
-              }`}
-            >
-              {similarityResult.has_potential_duplicate ? (
-                <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
-              ) : (
-                <Sparkles className="w-4 h-4 text-indigo-400 shrink-0 mt-0.5" />
-              )}
-              <div>
-                <strong className="font-semibold block mb-0.5">
-                  {similarityResult.has_potential_duplicate
-                    ? "Potential Duplicate Candidate Detected"
-                    : "Semantic Search Analysis"}
-                </strong>
-                <p className="leading-relaxed">
-                  {similarityResult.primary_recommendation}
-                </p>
-              </div>
-            </div>
-
-            {/* Candidate List */}
-            {similarityResult.candidates.length > 0 && (
-              <div className="space-y-2.5">
-                {similarityResult.candidates.map((cand) => {
-                  const pct = Math.round(cand.similarity_score * 100);
-                  const isDup = cand.duplicate_candidate;
-                  return (
-                    <div
-                      key={`${cand.entity_type}-${cand.id}`}
-                      className="p-3.5 rounded-xl bg-slate-950/70 border border-slate-800 hover:border-slate-700 transition-colors flex items-center justify-between gap-4"
-                    >
-                      <div className="min-w-0 flex-1">
-                        <div className="flex flex-wrap items-center gap-2 mb-1">
-                          <span className="font-mono text-xs text-slate-400">
-                            #{cand.number}
-                          </span>
-                          <span className="px-2 py-0.5 rounded text-[10px] uppercase font-semibold tracking-wider bg-slate-800 text-slate-300 border border-slate-700">
-                            {cand.entity_type}
-                          </span>
-                          <span
-                            className={`px-2 py-0.5 rounded text-[10px] font-medium capitalize ${
-                              cand.state === "open"
-                                ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20"
-                                : "bg-slate-800 text-slate-400"
-                            }`}
-                          >
-                            {cand.state}
-                          </span>
-                          {cand.canonical_label && (
-                            <span className="px-2 py-0.5 rounded text-[10px] bg-indigo-500/10 text-indigo-300 border border-indigo-500/20">
-                              {cand.canonical_label}
-                            </span>
-                          )}
-                          {cand.category && (
-                            <span className="px-2 py-0.5 rounded text-[10px] bg-cyan-500/10 text-cyan-300 border border-cyan-500/20">
-                              {cand.category}
-                            </span>
-                          )}
-                        </div>
-                        <div className="text-sm font-medium text-slate-100 truncate">
-                          {cand.title}
-                        </div>
-                      </div>
-
-                      <div className="flex items-center gap-3 shrink-0">
-                        {/* Similarity Pill */}
-                        <div
-                          className={`px-3 py-1.5 rounded-xl border text-xs font-mono font-bold flex items-center gap-1.5 ${
-                            isDup
-                              ? "bg-amber-500/15 text-amber-300 border-amber-500/40"
-                              : cand.confidence_tier === "MEDIUM"
-                              ? "bg-cyan-500/15 text-cyan-300 border-cyan-500/30"
-                              : "bg-slate-800 text-slate-300 border-slate-700"
-                          }`}
-                        >
-                          <span>{pct}%</span>
-                          <span className="text-[10px] font-sans font-normal opacity-80">
-                            {isDup ? "Duplicate" : "Related"}
-                          </span>
-                        </div>
-
-                        {/* GitHub External Link */}
-                        {owner && name && (
-                          <a
-                            href={
-                              cand.entity_type === "discussion"
-                                ? `https://github.com/${owner}/${name}/discussions/${cand.number}`
-                                : `https://github.com/${owner}/${name}/issues/${cand.number}`
-                            }
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="p-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white transition-colors"
-                            title="View on GitHub"
-                          >
-                            <ExternalLink className="w-3.5 h-3.5" />
-                          </a>
-                        )}
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </div>
-        )}
-      </section>
-
-      {/* 4. Applied Intelligence: Unsupervised Backlog Topics Explorer */}
-      <section className="space-y-5 rounded-2xl border border-slate-800 bg-slate-900/60 p-6">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-          <div>
-            <h2 className="text-base font-bold text-white tracking-tight flex items-center gap-2">
-              <Layers className="w-5 h-5 text-indigo-400" />
-              <span>Discovered Backlog Themes &amp; Topic Clusters</span>
-            </h2>
-            <p className="text-xs text-slate-400 mt-0.5">
-              Unsupervised Spherical KMeans + c-TF-IDF keyword discovery across
-              all issues and discussions
-            </p>
-          </div>
-
-          <button
-            onClick={handleLoadTopics}
-            disabled={isLoadingTopics}
-            className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-750 text-slate-200 text-xs font-semibold border border-slate-700 hover:border-slate-600 transition-all cursor-pointer disabled:opacity-50 self-start sm:self-auto"
-          >
-            {isLoadingTopics ? (
-              <Loader2 className="w-3.5 h-3.5 animate-spin text-indigo-400" />
-            ) : (
-              <Sparkles className="w-3.5 h-3.5 text-indigo-400" />
-            )}
-            <span>
-              {topicsResult ? "Refresh Themes" : "Discover Themes"}
-            </span>
-          </button>
-        </div>
-
-        {topicError && (
-          <div className="p-3.5 rounded-xl bg-rose-500/10 border border-rose-500/25 text-rose-300 text-xs">
-            {topicError}
-          </div>
-        )}
-
-        {/* Topic Grid */}
-        {topicsResult && (
-          <div className="space-y-4 pt-1">
-            <div className="flex items-center justify-between text-xs text-slate-400">
-              <span>
-                Discovered{" "}
-                <strong className="text-slate-200">
-                  {topicsResult.total_topics_discovered}
-                </strong>{" "}
-                thematic clusters across{" "}
-                <strong className="text-slate-200">
-                  {topicsResult.total_items_clustered}
-                </strong>{" "}
-                threads
-              </span>
-              <span className="font-mono text-[11px] text-slate-500">
-                {topicsResult.execution_time_ms}ms &middot; {topicsResult.methodology}
-              </span>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {topicsResult.topics.map((topic) => {
-                const isExpanded = expandedTopicId === topic.cluster_id;
-                return (
-                  <div
-                    key={topic.cluster_id}
-                    className="p-5 rounded-xl bg-slate-950/70 border border-slate-800 hover:border-slate-700/80 transition-all space-y-3"
-                  >
-                    <div className="flex items-start justify-between gap-3">
-                      <div>
-                        <div className="text-xs font-mono text-indigo-400 mb-0.5">
-                          Cluster #{topic.cluster_id + 1}
-                        </div>
-                        <h3 className="text-sm font-bold text-white tracking-tight">
-                          {topic.title}
-                        </h3>
-                      </div>
-                      <span className="px-2.5 py-1 rounded-full text-xs font-mono bg-slate-800 text-slate-200 border border-slate-700 shrink-0">
-                        {topic.total_count} items
-                      </span>
-                    </div>
-
-                    {/* Keywords pills */}
-                    <div className="flex flex-wrap gap-1.5 pt-1">
-                      {topic.keywords.map((kw, i) => (
-                        <span
-                          key={i}
-                          className="px-2 py-0.5 rounded text-[11px] font-mono bg-indigo-500/10 text-indigo-300 border border-indigo-500/20"
-                        >
-                          #{kw}
-                        </span>
-                      ))}
-                    </div>
-
-                    {/* Open vs Closed ratio */}
-                    <div className="flex items-center justify-between text-xs text-slate-400 pt-2 border-t border-slate-800/80">
-                      <div className="flex items-center gap-3">
-                        <span className="flex items-center gap-1 text-emerald-400">
-                          <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
-                          {topic.open_count} open
-                        </span>
-                        <span className="flex items-center gap-1 text-slate-400">
-                          <span className="w-1.5 h-1.5 rounded-full bg-slate-500" />
-                          {topic.closed_count} closed
-                        </span>
-                      </div>
-
-                      <button
-                        onClick={() =>
-                          setExpandedTopicId(isExpanded ? null : topic.cluster_id)
-                        }
-                        className="inline-flex items-center gap-1 text-indigo-400 hover:text-indigo-300 cursor-pointer"
-                      >
-                        <span>{isExpanded ? "Hide Samples" : "View Samples"}</span>
-                        {isExpanded ? (
-                          <ChevronUp className="w-3.5 h-3.5" />
-                        ) : (
-                          <ChevronDown className="w-3.5 h-3.5" />
-                        )}
-                      </button>
-                    </div>
-
-                    {/* Expandable Representative Items */}
-                    {isExpanded && topic.representative_items.length > 0 && (
-                      <div className="pt-2 space-y-1.5 border-t border-slate-800/60">
-                        <div className="text-[10px] uppercase font-semibold text-slate-500 tracking-wider mb-1">
-                          Representative Issues (Closest to Centroid)
-                        </div>
-                        {topic.representative_items.map((item, idx) => (
-                          <div
-                            key={idx}
-                            className="flex items-center justify-between gap-2 p-2 rounded-lg bg-slate-900 border border-slate-800 text-xs"
-                          >
-                            <div className="truncate flex-1">
-                              <span className="font-mono text-slate-400 mr-1.5">
-                                #{item.number}
-                              </span>
-                              <span className="text-slate-200">{item.title}</span>
-                            </div>
-                            {owner && name && (
-                              <a
-                                href={
-                                  item.entity_type === "discussion"
-                                    ? `https://github.com/${owner}/${name}/discussions/${item.number}`
-                                    : `https://github.com/${owner}/${name}/issues/${item.number}`
-                                }
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                className="text-slate-400 hover:text-indigo-400 transition-colors shrink-0"
-                              >
-                                <ExternalLink className="w-3.5 h-3.5" />
-                              </a>
-                            )}
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        )}
-      </section>
-
-      {/* 5. Backlog Aging Dynamics & Collaboration Diagnostics */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
-        <div className="p-6 rounded-2xl border border-slate-800 bg-slate-900/60 space-y-3">
-          <h3 className="text-sm font-bold text-white flex items-center gap-2">
-            <Clock className="w-4 h-4 text-cyan-400" />
-            <span>Backlog Aging Dynamics</span>
-          </h3>
-          <p className="text-xs text-slate-400 leading-relaxed">
-            Tracks accumulation of unresolved issues and dormancy risks across the
-            backlog.
-          </p>
-          <div className="grid grid-cols-2 gap-3 pt-2 text-xs">
-            <div className="p-3 rounded-xl bg-slate-950/70 border border-slate-800">
-              <div className="text-[10px] text-slate-400">Median Age</div>
-              <div className="text-lg font-bold text-white mt-1">
-                {aging?.median_age_days != null
-                  ? `${aging.median_age_days.toFixed(0)} days`
-                  : legacyAging?.median_age_days != null
-                  ? `${legacyAging.median_age_days.toFixed(0)} days`
-                  : "N/A"}
-              </div>
-            </div>
-            <div className="p-3 rounded-xl bg-slate-950/70 border border-slate-800">
-              <div className="text-[10px] text-slate-400">Stale Ratio</div>
-              <div className="text-lg font-bold text-rose-400 mt-1">
-                {aging?.stale_fraction != null
-                  ? `${(aging.stale_fraction * 100).toFixed(0)}%`
-                  : openCount > 0
-                  ? `${((staleCount / openCount) * 100).toFixed(0)}%`
-                  : "N/A"}
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <div className="p-6 rounded-2xl border border-slate-800 bg-slate-900/60 space-y-3">
-          <h3 className="text-sm font-bold text-white flex items-center gap-2">
-            <MessageSquare className="w-4 h-4 text-indigo-400" />
-            <span>Community Collaboration Intensity</span>
-          </h3>
-          <p className="text-xs text-slate-400 leading-relaxed">
-            Analyzes discussion density and response engagement on bug reports and
-            feature requests.
-          </p>
-          <div className="grid grid-cols-2 gap-3 pt-2 text-xs">
-            <div className="p-3 rounded-xl bg-slate-950/70 border border-slate-800">
-              <div className="text-[10px] text-slate-400">Mean Comments</div>
-              <div className="text-lg font-bold text-white mt-1">
-                {discussion?.mean_comments_per_issue != null
-                  ? discussion.mean_comments_per_issue.toFixed(1)
-                  : "N/A"}
-              </div>
-            </div>
-            <div className="p-3 rounded-xl bg-slate-950/70 border border-slate-800">
-              <div className="text-[10px] text-slate-400">Median Comments</div>
-              <div className="text-lg font-bold text-white mt-1">
-                {medianComments != null
-                  ? medianComments.toFixed(1)
-                  : "N/A"}
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
+        </section>
+      )}
     </div>
   );
 }
