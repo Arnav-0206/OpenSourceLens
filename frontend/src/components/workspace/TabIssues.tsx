@@ -123,13 +123,28 @@ export default function TabIssues({ issues, owner, name }: TabIssuesProps) {
   const openCount = aging?.open_issues_count ?? legacyAging?.open_count ?? 0;
   const medianComments = discussion?.median_comments_per_issue;
 
-  const rawMonthly: Array<{ month: string; created?: number; opened?: number; closed: number }> =
-    obsFlow?.monthly_series || legacyFlow?.monthly_flow || [];
-  const chartData = rawMonthly.map((m) => ({
+  const rawMonthly: Array<{
+    month: string;
+    created_count?: number;
+    closed_count?: number;
+    created?: number;
+    opened?: number;
+    closed?: number;
+  }> = obsFlow?.monthly_series || legacyFlow?.monthly_flow || [];
+
+  const allMonthlyData = rawMonthly.map((m) => ({
     month: m.month,
-    opened: m.created ?? m.opened ?? 0,
-    closed: m.closed ?? 0,
+    opened: m.created_count ?? m.created ?? m.opened ?? 0,
+    closed: m.closed_count ?? m.closed ?? 0,
   }));
+
+  // If history spans > 24 months with mostly empty months, show active months (capped at latest 24) so bars stay wide & readable
+  const chartData =
+    allMonthlyData.length > 24
+      ? allMonthlyData
+          .filter((pt) => pt.opened > 0 || pt.closed > 0)
+          .slice(-24)
+      : allMonthlyData;
 
   // ─── Auto-Fetched AI Classified Issues State ───────────────────────────────
   const [stateFilter, setStateFilter] = useState<"open" | "closed" | "all">("open");

@@ -502,7 +502,15 @@ export interface IssueIntelligenceData {
     total_closed_observed: number;
     flow_ratio?: number | null;
     net_flow_differential?: number;
-    monthly_series?: Array<{ month: string; created: number; closed: number; net: number }>;
+    monthly_series?: Array<{
+      month: string;
+      created_count?: number;
+      closed_count?: number;
+      created?: number;
+      closed?: number;
+      net_flow_differential?: number;
+      net?: number;
+    }>;
   };
   backlog_stock_summary?: {
     status?: string;
